@@ -1,0 +1,252 @@
+package com.soloit.doubleentry.data
+
+import androidx.room.withTransaction
+import com.soloit.doubleentry.data.local.AccountEntity
+import com.soloit.doubleentry.data.local.AppDatabase
+import com.soloit.doubleentry.data.local.EntryEntity
+import com.soloit.doubleentry.data.local.TransactionEntity
+import com.soloit.doubleentry.data.local.nowMicros
+import com.soloit.doubleentry.data.local.toDomain
+import com.soloit.doubleentry.domain.Account
+import com.soloit.doubleentry.domain.AccountType
+import com.soloit.doubleentry.domain.DefaultAccountPlan
+import com.soloit.doubleentry.domain.Depreciation
+import com.soloit.doubleentry.domain.LedgerException
+import com.soloit.doubleentry.domain.Transaction
+import com.soloit.doubleentry.domain.TransactionDraft
+import com.soloit.doubleentry.domain.TransactionValidator
+import com.soloit.doubleentry.domain.newId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import java.time.YearMonth
+
+/** Notified after every local mutation so the change can be pushed to the cloud. */
+fun interface SyncTrigger {
+    fun requestSync()
+}
+
+/**
+ * Accounts, transactions and balances. All deletes are soft (tombstones) so they replicate; every
+ * mutation stamps `updated_at`/`is_dirty` and asks the sync layer to push.
+ */
+class LedgerRepository(
+    private val db: AppDatabase,
+    private val sync: SyncTrigger,
+) {
+    private val accountDao = db.accounts()
+    private val transactionDao = db.transactions()
+    private val entryDao = db.entries()
+
+    /** Emits whenever any ledger table changes, including changes pulled from the cloud. */
+    val changes: Flow<Unit> = db.ledgerChanges()
+
+    val accounts: Flow<List<Account>> = accountDao.observeLive().map { list -> list.map { it.toDomain() } }
+
+    suspend fun getAccounts(): List<Account> = accountDao.live().map { it.toDomain() }
+
+    suspend fun getAccount(id: String): Account? = accountDao.byId(id)?.takeIf { it.deletedAt == null }?.toDomain()
+
+    suspend fun createAccount(number: Int, name: String, type: AccountType): Account {
+        validateAccount(number, name)
+        val account = db.withTransaction {
+            if (accountDao.numberInUse(number)) throw LedgerException("An account with number $number already exists.")
+            AccountEntity(newId(), number, name.trim(), type.ordinal, nowMicros()).also { accountDao.upsert(it) }
+        }
+        sync.requestSync()
+        return account.toDomain()
+    }
+
+    /**
+     * Seeds the default chart of accounts. Ids are deterministic, so accounts that already exist
+     * (for example pulled from another device) are left untouched and numbers in use are skipped.
+     */
+    suspend fun seedDefaultPlan(): Int {
+        var created = 0
+        db.withTransaction {
+            for (entry in DefaultAccountPlan.accounts) {
+                if (accountDao.byId(entry.id) != null) continue
+                if (accountDao.numberInUse(entry.number)) continue
+                // Oldest possible timestamp: if the cloud already holds this account (renamed or
+                // deleted elsewhere), the cloud version wins instead of the default name.
+                accountDao.upsert(AccountEntity(entry.id, entry.number, entry.name, entry.type.ordinal, updatedAt = SEED_TIMESTAMP))
+                created++
+            }
+        }
+        if (created > 0) sync.requestSync()
+        return created
+    }
+
+    suspend fun updateAccount(id: String, number: Int, name: String, type: AccountType): Account {
+        validateAccount(number, name)
+        val updated = db.withTransaction {
+            val existing = accountDao.byId(id)?.takeIf { it.deletedAt == null } ?: throw LedgerException("Account not found.")
+            if (number != existing.number && accountDao.numberInUse(number, excludeId = id)) {
+                throw LedgerException("An account with number $number already exists.")
+            }
+            val changed = existing.copy(number = number, name = name.trim(), type = type.ordinal)
+            if (changed == existing) return@withTransaction existing
+            changed.copy(updatedAt = nowMicros(), isDirty = true).also { accountDao.upsert(it) }
+        }
+        sync.requestSync()
+        return updated.toDomain()
+    }
+
+    suspend fun accountHasTransactions(accountId: String): Boolean = transactionDao.countForAccount(accountId) > 0
+
+    suspend fun deleteAccount(id: String) {
+        db.withTransaction {
+            val existing = accountDao.byId(id)?.takeIf { it.deletedAt == null } ?: throw LedgerException("Account not found.")
+            if (db.assets().usesAccount(id)) {
+                throw LedgerException("This account is used by an asset's depreciation and cannot be deleted. Delete the asset first.")
+            }
+            if (transactionDao.countForAccount(id) > 0) {
+                throw LedgerException("This account has transactions. Delete them before deleting the account.")
+            }
+            val now = nowMicros()
+            accountDao.upsert(existing.copy(deletedAt = now, updatedAt = now, isDirty = true))
+        }
+        sync.requestSync()
+    }
+
+    /** Balance of every live account as of [asOf] (inclusive), on each account's normal side. */
+    suspend fun getBalances(asOf: LocalDate): Map<String, Long> =
+        signed(entryDao.totalsAsOf(asOf).associate { it.accountId to (it.debits to it.credits) })
+
+    /** Change of every live account's balance between [from] and [to] (inclusive). */
+    suspend fun getMovements(from: LocalDate, to: LocalDate): Map<String, Long> =
+        signed(entryDao.totalsBetween(from, to).associate { it.accountId to (it.debits to it.credits) })
+
+    /** Per account, the balance change of each month between [from] and [to]. */
+    suspend fun getMonthlyMovements(from: YearMonth, to: YearMonth): Map<String, Map<YearMonth, Long>> {
+        val types = accountDao.live().associate { it.id to AccountType.fromOrdinal(it.type) }
+        return entryDao.monthlyTotals(from.atDay(1), to.atEndOfMonth())
+            .filter { it.accountId in types }
+            .groupBy { it.accountId }
+            .mapValues { (accountId, rows) ->
+                val debitNormal = types.getValue(accountId).isDebitNormal
+                rows.associate { YearMonth.parse(it.month) to if (debitNormal) it.debits - it.credits else it.credits - it.debits }
+            }
+    }
+
+    private suspend fun signed(totals: Map<String, Pair<Long, Long>>): Map<String, Long> =
+        accountDao.live().associate { a ->
+            val (debits, credits) = totals[a.id] ?: (0L to 0L)
+            a.id to a.toDomain().signedBalance(debits, credits)
+        }
+
+    suspend fun mostUsedAccountIds(limit: Int = 8): List<String> = entryDao.mostUsedAccountIds(limit)
+
+    suspend fun getTransaction(id: String): Transaction? {
+        val tx = transactionDao.byId(id)?.takeIf { it.deletedAt == null } ?: return null
+        return tx.toDomain(entryDao.liveOf(id).map { it.toDomain() })
+    }
+
+    /** Transactions ordered by date, optionally restricted to those touching [accountId]. */
+    suspend fun getTransactions(
+        from: LocalDate = LocalDate.of(1, 1, 1),
+        to: LocalDate = LocalDate.of(9999, 12, 31),
+        accountId: String? = null,
+    ): List<Transaction> {
+        val transactions = transactionDao.liveInRange(from, to)
+        val entries = entryDao.liveInRange(from, to).groupBy({ it.transactionId }, { it.toDomain() })
+        return transactions
+            .map { it.toDomain(entries[it.id].orEmpty()) }
+            .filter { accountId == null || it.entries.any { e -> e.account.id == accountId } }
+    }
+
+    /** Validates and stores a new transaction; returns its id. */
+    suspend fun post(draft: TransactionDraft): String {
+        val id = db.withTransaction { insertTransaction(draft) }
+        sync.requestSync()
+        return id
+    }
+
+    /** For use inside an outer [AppDatabase.withTransaction] by other repositories. */
+    internal suspend fun insertTransaction(draft: TransactionDraft): String {
+        TransactionValidator.validate(draft)
+        requireLiveAccounts(draft)
+        val now = nowMicros()
+        val id = draft.id ?: newId()
+        if (transactionDao.byId(id) != null) throw LedgerException("A transaction with this id already exists.")
+        transactionDao.upsert(TransactionEntity(id, draft.date, draft.title.trim(), draft.description.trim(), now))
+        entryDao.upsertAll(draft.lines.map { EntryEntity(it.id ?: newId(), id, it.accountId, it.amount, it.type.ordinal, now) })
+        return id
+    }
+
+    /** Replaces the header and lines of an existing transaction (old lines become tombstones). */
+    suspend fun updateTransaction(id: String, draft: TransactionDraft) {
+        db.withTransaction { replaceTransaction(id, draft) }
+        sync.requestSync()
+    }
+
+    internal suspend fun replaceTransaction(id: String, draft: TransactionDraft) {
+        TransactionValidator.validate(draft)
+        requireLiveAccounts(draft)
+        val existing = transactionDao.byId(id)?.takeIf { it.deletedAt == null } ?: throw LedgerException("Transaction not found.")
+        val now = nowMicros()
+        transactionDao.upsert(
+            existing.copy(date = draft.date, title = draft.title.trim(), description = draft.description.trim(), updatedAt = now, isDirty = true),
+        )
+        entryDao.softDeleteOf(id, now)
+        entryDao.upsertAll(draft.lines.map { EntryEntity(newId(), id, it.accountId, it.amount, it.type.ordinal, now) })
+    }
+
+    /** True when [transactionId] is an automatic depreciation posting of a live asset. */
+    suspend fun isDepreciationTransaction(transactionId: String): Boolean =
+        db.assets().live().any { transactionId in Depreciation.writeoffIds(it.toDomain()) }
+
+    /**
+     * Deletes a transaction. Automatic depreciation postings are owned by their asset and can only
+     * be removed by deleting the asset.
+     */
+    suspend fun deleteTransaction(id: String) {
+        if (isDepreciationTransaction(id)) {
+            throw LedgerException(
+                "This is an automatic depreciation posting and cannot be deleted directly. Delete the asset to remove its depreciation.",
+            )
+        }
+        db.withTransaction { softDeleteTransaction(id) }
+        sync.requestSync()
+    }
+
+    internal suspend fun softDeleteTransaction(id: String) {
+        val now = nowMicros()
+        entryDao.softDeleteOf(id, now)
+        transactionDao.softDelete(id, now)
+    }
+
+    /** Soft-deletes everything except settings; the deletions replicate to the cloud. */
+    suspend fun deleteAllData() {
+        db.withTransaction {
+            val now = nowMicros()
+            db.invoices().softDeleteAll(now)
+            db.assets().softDeleteAll(now)
+            entryDao.softDeleteAll(now)
+            transactionDao.softDeleteAll(now)
+            accountDao.softDeleteAll(now)
+        }
+        sync.requestSync()
+    }
+
+    /** Hard-wipes the local database without producing tombstones (cloud data is untouched). */
+    suspend fun wipeLocalDatabase() = withContext(Dispatchers.IO) { db.clearAllTables() }
+
+    private suspend fun requireLiveAccounts(draft: TransactionDraft) {
+        val ids = draft.lines.map { it.accountId }.distinct()
+        val live = accountDao.byIds(ids).filter { it.deletedAt == null }.map { it.id }.toSet()
+        if (ids.any { it !in live }) throw LedgerException("One of the selected accounts no longer exists.")
+    }
+
+    private fun validateAccount(number: Int, name: String) {
+        if (number <= 0) throw LedgerException("Account number must be a positive integer.")
+        if (name.isBlank()) throw LedgerException("Account name is required.")
+    }
+
+    private companion object {
+        /** `updated_at` of seeded default-plan rows (1 µs after the epoch): any server row is newer. */
+        const val SEED_TIMESTAMP = 1L
+    }
+}

@@ -1,0 +1,55 @@
+name: Supabase
+
+# Validates every migration on a throwaway local Supabase stack, previews the changes
+# against the real project on pull requests and applies them on push to the main branch.
+#
+# Deploying needs (Settings → Secrets and variables → Actions):
+#   variable SUPABASE_PROJECT_ID     the project ref, e.g. abcdefghijklmnopqrst
+#   secret   SUPABASE_ACCESS_TOKEN   https://supabase.com/dashboard/account/tokens
+#   secret   SUPABASE_DB_PASSWORD    the database password of the project
+# Without them only the validation job runs.
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['supabase/**', '.github/workflows/supabase.yml']
+  pull_request:
+    paths: ['supabase/**', '.github/workflows/supabase.yml']
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: supabase/setup-cli@v3
+        with:
+          version: latest
+      - name: Apply all migrations to a fresh database
+        run: supabase start -x studio,imgproxy,vector,logflare,mailpit,edge-runtime,storage-api,postgres-meta,supavisor
+      - name: Migrations are re-runnable
+        run: |
+          for f in supabase/migrations/*.sql; do
+            psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+      - run: supabase stop --no-backup
+
+  deploy:
+    needs: validate
+    if: vars.SUPABASE_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: supabase/setup-cli@v3
+        with:
+          version: latest
+      - run: supabase link --project-ref "${{ vars.SUPABASE_PROJECT_ID }}"
+      - name: Preview pending migrations
+        if: github.event_name == 'pull_request'
+        run: supabase db push --dry-run --include-all
+      - name: Apply pending migrations
+        if: github.event_name != 'pull_request'
+        run: supabase db push --include-all

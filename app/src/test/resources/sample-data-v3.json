@@ -1,0 +1,811 @@
+{
+  "schemaVersion": 3,
+  "exportedAt": "2026-05-01T00:00:00+00:00",
+  "accounts": [
+    { "number": 1010, "name": "Cash on Hand", "type": "Asset" },
+    { "number": 1810, "name": "Home / Property", "type": "Asset" },
+    { "number": 1910, "name": "Checking Account", "type": "Asset" },
+    { "number": 1920, "name": "Savings Account", "type": "Asset" },
+    { "number": 1930, "name": "Investment Account (ISK)", "type": "Asset" },
+    { "number": 2010, "name": "Opening Balance / Net Worth", "type": "Equity" },
+    { "number": 2350, "name": "Mortgage", "type": "Liability" },
+    { "number": 2410, "name": "Credit Card", "type": "Liability" },
+    { "number": 3010, "name": "Salary", "type": "Revenue" },
+    { "number": 3310, "name": "Interest Income", "type": "Revenue" },
+    { "number": 3320, "name": "Dividends", "type": "Revenue" },
+    { "number": 5010, "name": "Rent", "type": "Expense" },
+    { "number": 5020, "name": "Mortgage Interest", "type": "Expense" },
+    { "number": 5030, "name": "Electricity", "type": "Expense" },
+    { "number": 5060, "name": "Internet & TV", "type": "Expense" },
+    { "number": 5610, "name": "Fuel", "type": "Expense" },
+    { "number": 5620, "name": "Vehicle Insurance", "type": "Expense" },
+    { "number": 6010, "name": "Groceries", "type": "Expense" },
+    { "number": 6020, "name": "Restaurants & Dining Out", "type": "Expense" },
+    { "number": 6210, "name": "Mobile Phone", "type": "Expense" },
+    { "number": 6410, "name": "Healthcare", "type": "Expense" },
+    { "number": 7010, "name": "Streaming Services", "type": "Expense" },
+    { "number": 7110, "name": "Books & Education", "type": "Expense" },
+    { "number": 7210, "name": "Gym & Sports", "type": "Expense" },
+    { "number": 7310, "name": "Travel & Vacation", "type": "Expense" }
+  ],
+  "transactions": [
+    {
+      "date": "2025-11-01",
+      "title": "Opening Balance",
+      "description": "Initial net worth snapshot",
+      "entries": [
+        { "accountNumber": 1910, "amount": 28500.00, "entryType": "Debit" },
+        { "accountNumber": 1920, "amount": 42000.00, "entryType": "Debit" },
+        { "accountNumber": 1930, "amount": 85000.00, "entryType": "Debit" },
+        { "accountNumber": 1810, "amount": 2599000.00, "entryType": "Debit" },
+        { "accountNumber": 2350, "amount": 1450000.00, "entryType": "Credit" },
+        { "accountNumber": 2010, "amount": 1304500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-25",
+      "title": "November Salary",
+      "description": "Monthly net salary deposit",
+      "entries": [
+        { "accountNumber": 1910, "amount": 32500.00, "entryType": "Debit" },
+        { "accountNumber": 3010, "amount": 32500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-01",
+      "title": "Rent – November",
+      "description": "",
+      "entries": [
+        { "accountNumber": 5010, "amount": 9800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 9800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-03",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1240.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1240.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-10",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 980.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 980.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-17",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1105.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1105.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-05",
+      "title": "Electricity Bill",
+      "description": "Monthly electricity invoice",
+      "entries": [
+        { "accountNumber": 5030, "amount": 620.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 620.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-05",
+      "title": "Internet & TV",
+      "description": "Monthly broadband + TV package",
+      "entries": [
+        { "accountNumber": 5060, "amount": 399.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 399.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-08",
+      "title": "Fuel",
+      "description": "Petrol station",
+      "entries": [
+        { "accountNumber": 5610, "amount": 760.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 760.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-12",
+      "title": "Dinner with friends",
+      "description": "Restaurant",
+      "entries": [
+        { "accountNumber": 6020, "amount": 490.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 490.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-15",
+      "title": "Streaming Services",
+      "description": "Netflix + Spotify",
+      "entries": [
+        { "accountNumber": 7010, "amount": 249.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 249.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-20",
+      "title": "Gym Membership",
+      "description": "Monthly gym fee",
+      "entries": [
+        { "accountNumber": 7210, "amount": 350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-11-28",
+      "title": "Savings Transfer",
+      "description": "Monthly transfer to savings",
+      "entries": [
+        { "accountNumber": 1920, "amount": 5000.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 5000.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-25",
+      "title": "December Salary",
+      "description": "Monthly net salary deposit",
+      "entries": [
+        { "accountNumber": 1910, "amount": 32500.00, "entryType": "Debit" },
+        { "accountNumber": 3010, "amount": 32500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-01",
+      "title": "Rent – December",
+      "description": "",
+      "entries": [
+        { "accountNumber": 5010, "amount": 9800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 9800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-03",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-10",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1560.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1560.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-05",
+      "title": "Electricity Bill",
+      "description": "Monthly electricity invoice",
+      "entries": [
+        { "accountNumber": 5030, "amount": 890.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 890.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-05",
+      "title": "Internet & TV",
+      "description": "Monthly broadband + TV package",
+      "entries": [
+        { "accountNumber": 5060, "amount": 399.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 399.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-08",
+      "title": "Fuel",
+      "description": "Petrol station",
+      "entries": [
+        { "accountNumber": 5610, "amount": 810.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 810.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-15",
+      "title": "Streaming Services",
+      "description": "Netflix + Spotify",
+      "entries": [
+        { "accountNumber": 7010, "amount": 249.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 249.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-18",
+      "title": "Christmas Dinner",
+      "description": "Restaurant dinner with family",
+      "entries": [
+        { "accountNumber": 6020, "amount": 1850.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1850.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-20",
+      "title": "Gym Membership",
+      "description": "Monthly gym fee",
+      "entries": [
+        { "accountNumber": 7210, "amount": 350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-22",
+      "title": "Travel – Christmas Trip",
+      "description": "Train tickets and hotel",
+      "entries": [
+        { "accountNumber": 7310, "amount": 3200.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 3200.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2025-12-28",
+      "title": "Savings Transfer",
+      "description": "Monthly transfer to savings",
+      "entries": [
+        { "accountNumber": 1920, "amount": 5000.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 5000.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-25",
+      "title": "January Salary",
+      "description": "Monthly net salary deposit",
+      "entries": [
+        { "accountNumber": 1910, "amount": 32500.00, "entryType": "Debit" },
+        { "accountNumber": 3010, "amount": 32500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-01",
+      "title": "Rent – January",
+      "description": "",
+      "entries": [
+        { "accountNumber": 5010, "amount": 9800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 9800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-04",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1180.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1180.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-11",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1020.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1020.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-06",
+      "title": "Electricity Bill",
+      "description": "Monthly electricity invoice",
+      "entries": [
+        { "accountNumber": 5030, "amount": 950.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 950.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-05",
+      "title": "Internet & TV",
+      "description": "Monthly broadband + TV package",
+      "entries": [
+        { "accountNumber": 5060, "amount": 399.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 399.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-07",
+      "title": "Fuel",
+      "description": "Petrol station",
+      "entries": [
+        { "accountNumber": 5610, "amount": 730.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 730.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-10",
+      "title": "Doctor Visit",
+      "description": "GP appointment",
+      "entries": [
+        { "accountNumber": 6410, "amount": 200.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 200.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-15",
+      "title": "Streaming Services",
+      "description": "Netflix + Spotify",
+      "entries": [
+        { "accountNumber": 7010, "amount": 249.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 249.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-20",
+      "title": "Gym Membership",
+      "description": "Monthly gym fee",
+      "entries": [
+        { "accountNumber": 7210, "amount": 350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-15",
+      "title": "Dividends",
+      "description": "ISK dividend payout Q4 2025",
+      "entries": [
+        { "accountNumber": 1930, "amount": 1250.00, "entryType": "Debit" },
+        { "accountNumber": 3320, "amount": 1250.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-01-28",
+      "title": "Savings Transfer",
+      "description": "Monthly transfer to savings",
+      "entries": [
+        { "accountNumber": 1920, "amount": 5000.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 5000.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-25",
+      "title": "February Salary",
+      "description": "Monthly net salary deposit",
+      "entries": [
+        { "accountNumber": 1910, "amount": 32500.00, "entryType": "Debit" },
+        { "accountNumber": 3010, "amount": 32500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-01",
+      "title": "Rent – February",
+      "description": "",
+      "entries": [
+        { "accountNumber": 5010, "amount": 9800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 9800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-03",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1090.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1090.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-10",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1310.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1310.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-05",
+      "title": "Electricity Bill",
+      "description": "Monthly electricity invoice",
+      "entries": [
+        { "accountNumber": 5030, "amount": 870.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 870.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-05",
+      "title": "Internet & TV",
+      "description": "Monthly broadband + TV package",
+      "entries": [
+        { "accountNumber": 5060, "amount": 399.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 399.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-06",
+      "title": "Fuel",
+      "description": "Petrol station",
+      "entries": [
+        { "accountNumber": 5610, "amount": 690.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 690.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-14",
+      "title": "Valentine's Dinner",
+      "description": "Restaurant",
+      "entries": [
+        { "accountNumber": 6020, "amount": 980.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 980.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-15",
+      "title": "Streaming Services",
+      "description": "Netflix + Spotify",
+      "entries": [
+        { "accountNumber": 7010, "amount": 249.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 249.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-20",
+      "title": "Gym Membership",
+      "description": "Monthly gym fee",
+      "entries": [
+        { "accountNumber": 7210, "amount": 350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-18",
+      "title": "Books – Programming",
+      "description": "Technical books online",
+      "entries": [
+        { "accountNumber": 7110, "amount": 440.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 440.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-02-28",
+      "title": "Savings Transfer",
+      "description": "Monthly transfer to savings",
+      "entries": [
+        { "accountNumber": 1920, "amount": 5000.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 5000.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-25",
+      "title": "March Salary",
+      "description": "Monthly net salary deposit",
+      "entries": [
+        { "accountNumber": 1910, "amount": 32500.00, "entryType": "Debit" },
+        { "accountNumber": 3010, "amount": 32500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-01",
+      "title": "Rent – March",
+      "description": "",
+      "entries": [
+        { "accountNumber": 5010, "amount": 9800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 9800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-03",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1150.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1150.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-10",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1280.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1280.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-05",
+      "title": "Electricity Bill",
+      "description": "Monthly electricity invoice",
+      "entries": [
+        { "accountNumber": 5030, "amount": 710.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 710.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-05",
+      "title": "Internet & TV",
+      "description": "Monthly broadband + TV package",
+      "entries": [
+        { "accountNumber": 5060, "amount": 399.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 399.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-08",
+      "title": "Fuel",
+      "description": "Petrol station",
+      "entries": [
+        { "accountNumber": 5610, "amount": 770.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 770.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-15",
+      "title": "Streaming Services",
+      "description": "Netflix + Spotify",
+      "entries": [
+        { "accountNumber": 7010, "amount": 249.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 249.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-20",
+      "title": "Gym Membership",
+      "description": "Monthly gym fee",
+      "entries": [
+        { "accountNumber": 7210, "amount": 350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-22",
+      "title": "Travel – Easter Weekend",
+      "description": "Hotel and transport",
+      "entries": [
+        { "accountNumber": 7310, "amount": 2800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 2800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-25",
+      "title": "Interest Income",
+      "description": "Savings account interest Q1",
+      "entries": [
+        { "accountNumber": 1920, "amount": 310.00, "entryType": "Debit" },
+        { "accountNumber": 3310, "amount": 310.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-03-28",
+      "title": "Savings Transfer",
+      "description": "Monthly transfer to savings",
+      "entries": [
+        { "accountNumber": 1920, "amount": 5000.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 5000.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-25",
+      "title": "April Salary",
+      "description": "Monthly net salary deposit",
+      "entries": [
+        { "accountNumber": 1910, "amount": 32500.00, "entryType": "Debit" },
+        { "accountNumber": 3010, "amount": 32500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-01",
+      "title": "Rent – April",
+      "description": "",
+      "entries": [
+        { "accountNumber": 5010, "amount": 9800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 9800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-03",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1070.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1070.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-10",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1190.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1190.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-05",
+      "title": "Electricity Bill",
+      "description": "Monthly electricity invoice",
+      "entries": [
+        { "accountNumber": 5030, "amount": 520.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 520.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-05",
+      "title": "Internet & TV",
+      "description": "Monthly broadband + TV package",
+      "entries": [
+        { "accountNumber": 5060, "amount": 399.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 399.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-07",
+      "title": "Fuel",
+      "description": "Petrol station",
+      "entries": [
+        { "accountNumber": 5610, "amount": 680.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 680.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-15",
+      "title": "Streaming Services",
+      "description": "Netflix + Spotify",
+      "entries": [
+        { "accountNumber": 7010, "amount": 249.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 249.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-20",
+      "title": "Gym Membership",
+      "description": "Monthly gym fee",
+      "entries": [
+        { "accountNumber": 7210, "amount": 350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-12",
+      "title": "Dinner out",
+      "description": "Sushi restaurant",
+      "entries": [
+        { "accountNumber": 6020, "amount": 640.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 640.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-18",
+      "title": "Vehicle Insurance",
+      "description": "Semi-annual vehicle insurance payment",
+      "entries": [
+        { "accountNumber": 5620, "amount": 3200.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 3200.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-22",
+      "title": "Dividends",
+      "description": "ISK dividend payout Q1 2026",
+      "entries": [
+        { "accountNumber": 1930, "amount": 1450.00, "entryType": "Debit" },
+        { "accountNumber": 3320, "amount": 1450.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-04-28",
+      "title": "Savings Transfer",
+      "description": "Monthly transfer to savings",
+      "entries": [
+        { "accountNumber": 1920, "amount": 5000.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 5000.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-25",
+      "title": "May Salary",
+      "description": "Monthly net salary deposit",
+      "entries": [
+        { "accountNumber": 1910, "amount": 32500.00, "entryType": "Debit" },
+        { "accountNumber": 3010, "amount": 32500.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-01",
+      "title": "Rent – May",
+      "description": "",
+      "entries": [
+        { "accountNumber": 5010, "amount": 9800.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 9800.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-04",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 1130.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1130.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-11",
+      "title": "Groceries – ICA",
+      "description": "Weekly grocery run",
+      "entries": [
+        { "accountNumber": 6010, "amount": 995.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 995.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-05",
+      "title": "Electricity Bill",
+      "description": "Monthly electricity invoice",
+      "entries": [
+        { "accountNumber": 5030, "amount": 430.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 430.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-05",
+      "title": "Internet & TV",
+      "description": "Monthly broadband + TV package",
+      "entries": [
+        { "accountNumber": 5060, "amount": 399.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 399.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-06",
+      "title": "Fuel",
+      "description": "Petrol station",
+      "entries": [
+        { "accountNumber": 5610, "amount": 720.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 720.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-15",
+      "title": "Streaming Services",
+      "description": "Netflix + Spotify",
+      "entries": [
+        { "accountNumber": 7010, "amount": 249.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 249.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-20",
+      "title": "Gym Membership",
+      "description": "Monthly gym fee",
+      "entries": [
+        { "accountNumber": 7210, "amount": 350.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 350.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-17",
+      "title": "BBQ Groceries",
+      "description": "Extra groceries for outdoor BBQ",
+      "entries": [
+        { "accountNumber": 6010, "amount": 780.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 780.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-22",
+      "title": "Travel – Long Weekend",
+      "description": "Cabin rental for Ascension Day weekend",
+      "entries": [
+        { "accountNumber": 7310, "amount": 1900.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 1900.00, "entryType": "Credit" }
+      ]
+    },
+    {
+      "date": "2026-05-28",
+      "title": "Savings Transfer",
+      "description": "Monthly transfer to savings",
+      "entries": [
+        { "accountNumber": 1920, "amount": 5000.00, "entryType": "Debit" },
+        { "accountNumber": 1910, "amount": 5000.00, "entryType": "Credit" }
+      ]
+    }
+  ]
+}

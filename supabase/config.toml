@@ -1,0 +1,39 @@
+# Supabase CLI configuration (https://supabase.com/docs/guides/local-development/cli/config).
+# Only what this project needs; `supabase init --force` regenerates the full template.
+# Remote settings are not changed by this file unless you run `supabase config push`.
+
+project_id = "DoubleEntry"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+# The app pages through rows 1000 at a time; keep this at 1000 or higher.
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[db.migrations]
+enabled = true
+
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+# Personal app: create the user in the dashboard instead of allowing sign-ups.
+enable_signup = false
+
+[auth.email]
+enable_signup = false

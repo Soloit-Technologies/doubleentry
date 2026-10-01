@@ -1,0 +1,108 @@
+# DoubleEntry for Android
+
+Personal double-entry bookkeeping for Android, written in Kotlin with Jetpack Compose and
+Material 3. A native rewrite of the .NET MAUI app: same features, same data model, same
+Supabase backend.
+
+- **Accounts.** Net worth at a glance, accounts grouped by type, monthly ledger per account with running balance.
+- **Transactions.** Balanced multi-line entries with an account picker, auto-balancing, edit, duplicate and delete.
+- **Reports.** Balance sheet, income statement (EBITDA/EBDA/EBT, spendable net income), cash flow and a cost-trends chart.
+- **Assets.** Automatic monthly depreciation write-offs, with a repair tool for missing ones.
+- **Invoices.** Booking, due-date tracking, mark as paid from a chosen account.
+- **Cloud sync.** Offline-first local database, last-write-wins sync with Supabase, realtime updates between devices.
+- **Backups.** JSON export/import, compatible with backups made by the MAUI app.
+- Light/dark theme and optional Material You (wallpaper) colors.
+
+## Build and run
+
+1. Open this folder in Android Studio (*File → Open*). Use the bundled JDK (Android Studio's JBR, Java 21).
+2. Let Gradle sync, then run the **app** configuration on a device or emulator (Android 8.0 / API 26+).
+
+From a terminal: `./gradlew assembleDebug` builds `app/build/outputs/apk/debug/app-debug.apk`,
+`./gradlew testDebugUnitTest` runs the unit tests.
+
+Build types:
+
+| Build | Application id | Name on device | Notes |
+|---|---|---|---|
+| debug | `com.soloit.doubleentry.dev` | DoubleEntry Dev | Installs next to the MAUI/release app. Allows plain HTTP to a local Supabase stack. |
+| release | `com.soloit.doubleentry` | DoubleEntry | Same id as the MAUI app (`versionCode` 13 > 12), so it can ship as an update in Google Play. |
+
+To sign release builds, create `keystore.properties` in the project root (git-ignored):
+
+```properties
+storeFile=/path/to/upload-key.jks
+storePassword=…
+keyAlias=…
+keyPassword=…
+```
+
+Publishing as an update of the existing Play listing requires the same upload key as the MAUI app.
+
+## Configure Supabase
+
+Add your project settings to `local.properties` (git-ignored; Android Studio created it with `sdk.dir`):
+
+```properties
+supabase.url=https://<project-ref>.supabase.co
+supabase.anonKey=<anon / publishable key from Project Settings → API>
+```
+
+Without them the app builds and works offline; the cloud sync settings are simply hidden.
+`cloudSync.enabled=false` hides cloud sync even when a project is configured. CI reads the
+same values from the `SUPABASE_URL` / `SUPABASE_ANON_KEY` environment variables.
+
+Everything on the server (tables, row-level security, triggers, realtime) lives in
+[`supabase/`](supabase/README.md) and can be deployed from the repository.
+
+## Moving from the MAUI app
+
+The local database of the MAUI app is not migrated on the device. Bring your data over in one of two ways:
+
+- **Cloud sync (recommended).** Install the new app and tap *Sign in to restore from the cloud* on
+  the welcome screen. Both apps can run against the same Supabase project during the transition.
+  Deterministic ids (default chart of accounts, depreciation postings, settings rows) are
+  byte-for-byte identical to the .NET implementation, so the two apps converge instead of
+  duplicating rows.
+- **JSON backup.** In the MAUI app use *Export to JSON*, then *Settings → Data management →
+  Import from JSON* here. Schema versions 2–7 are supported.
+
+## Behavior changes compared with the MAUI app
+
+Everything else follows the original logic.
+
+- **Default plan seeding.** Seeded accounts get the oldest possible timestamp, so accounts already
+  in the cloud (renamed or deleted elsewhere) win over freshly seeded defaults when you sign in.
+- **Tiny assets.** An asset whose monthly write-off rounds to 0.00 is written off at least 0.01 per
+  month. The .NET schedule looped forever in that case.
+- **Deleting an asset** also removes its legacy depreciation postings (made before deterministic ids).
+- **Deleting an account** with transactions is refused by the data layer itself, not only by the UI.
+- **Cash flow** only counts asset accounts that match a cash group's prefixes.
+- **Transaction lines.** A line with an amount but no account is an error instead of being silently dropped.
+- **Balance sheet** hides zero-balance accounts unless *Show empty accounts* is selected.
+- **Backups.** Exports include the deferred-asset prefixes, which the MAUI export omitted.
+- **Sync** runs when the app comes to the foreground, refreshes an expired session once
+  before failing, and the realtime connection reconnects with backoff.
+
+## Project structure
+
+```
+app/src/main/java/com/soloit/doubleentry/
+  domain/          Pure Kotlin: models, money, deterministic ids, depreciation, report calculators
+  data/            Room database and repositories (ledger, assets, invoices, settings, backup)
+  sync/            Supabase auth + PostgREST client, push/pull engine, realtime, session storage
+  ui/              Compose screens per feature, shared components and theme
+app/src/test/      Unit tests (incl. compatibility tests against values produced by the .NET app)
+app/schemas/       Exported Room schema (keep under version control for migrations)
+supabase/          Migrations, maintenance queries and CLI config for the backend
+```
+
+Amounts are stored as `Long` cents everywhere; dates as ISO `yyyy-MM-dd`. All deletes are soft
+(tombstones) so they replicate.
+
+## Continuous integration
+
+- `.github/workflows/android.yml` runs the unit tests and builds a debug APK on every push and pull request.
+- `.github/workflows/supabase.yml` validates the migrations on a throwaway Supabase stack, previews
+  them on pull requests and applies them to your project on push. Setup is in
+  [`supabase/README.md`](supabase/README.md#deploy-from-github).

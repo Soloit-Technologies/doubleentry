@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Session tokens are encrypted with a device-bound Keystore key, so they can never be restored
+     elsewhere; the sync state only makes sense together with them. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="supabase_tokens.xml" />
+        <exclude domain="sharedpref" path="supabase_sync.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="supabase_tokens.xml" />
+        <exclude domain="sharedpref" path="supabase_sync.xml" />
+    </device-transfer>
+</data-extraction-rules>

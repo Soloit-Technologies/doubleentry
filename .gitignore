@@ -1,0 +1,24 @@
+# Gradle / Android Studio
+.gradle/
+build/
+/captures
+.externalNativeBuild/
+.cxx/
+*.iml
+.idea/
+.kotlin/
+
+# Machine-specific and secret configuration
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# Supabase CLI local state
+supabase/.branches/
+supabase/.temp/
+supabase/.env
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,230 @@
+package com.soloit.doubleentry.ui.settings
+
+import android.content.ContentResolver
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Upload
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import com.soloit.doubleentry.AppContainer
+import com.soloit.doubleentry.ui.appViewModel
+import com.soloit.doubleentry.ui.components.ConfirmDialog
+import com.soloit.doubleentry.ui.components.GroupedItem
+import com.soloit.doubleentry.ui.components.MessageDialog
+import com.soloit.doubleentry.ui.components.SectionHeader
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+
+data class DialogMessage(val title: String, val text: String)
+
+class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
+    val busy = MutableStateFlow(false)
+    val result = MutableStateFlow<DialogMessage?>(null)
+    val signedIn: Boolean get() = c.sync.status.value.isSignedIn
+
+    private fun run(title: String, block: suspend () -> String) {
+        if (busy.value) return
+        busy.value = true
+        viewModelScope.launch {
+            // Data operations must finish even if the user leaves the screen.
+            withContext(NonCancellable) {
+                result.value = try {
+                    DialogMessage(title, block())
+                } catch (e: Exception) {
+                    DialogMessage("$title failed", e.message ?: "Something went wrong.")
+                } finally {
+                    busy.value = false
+                }
+            }
+        }
+    }
+
+    fun export(resolver: ContentResolver, uri: Uri) = run("Export") {
+        resolver.openOutputStream(uri, "wt")?.use { c.backup.export(it) } ?: error("Could not open the selected file.")
+        "Your data was exported."
+    }
+
+    fun import(resolver: ContentResolver, uri: Uri) = run("Import") {
+        resolver.openInputStream(uri)?.use { c.backup.import(it) } ?: error("Could not open the selected file.")
+        "Your ledger has been replaced with the imported data."
+    }
+
+    fun repair() = run("Repair depreciation") {
+        val repaired = c.assets.reconcileWriteoffs(LocalDate.now())
+        if (repaired == 0) "No issues found. Your depreciation postings are up to date." else "Repaired $repaired depreciation posting(s)."
+    }
+
+    fun deleteAll() = run("Delete all data") {
+        c.ledger.deleteAllData()
+        "All data has been deleted."
+    }
+
+    /** Signs out and wipes the local database without touching the cloud copy. */
+    fun factoryReset() = run("Reset device") {
+        c.sync.signOut()
+        c.ledger.wipeLocalDatabase()
+        "All local data has been cleared. Sign in again to restore your data from the cloud."
+    }
+}
+
+private enum class Confirm { Import, DeleteFirst, DeleteSecond, Repair, Reset }
+
+@Composable
+fun DataManagementScreen(onBack: () -> Unit) {
+    val vm = appViewModel { DataManagementViewModel(it) }
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val result by vm.result.collectAsStateWithLifecycle()
+    val resolver = LocalContext.current.contentResolver
+    var confirm by remember { mutableStateOf<Confirm?>(null) }
+    var pendingImport by remember { mutableStateOf<Uri?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let { vm.export(resolver, it) }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            pendingImport = uri
+            confirm = Confirm.Import
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Data management") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            LazyColumn(contentPadding = PaddingValues(16.dp, 0.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                item { SectionHeader("Backup") }
+                item {
+                    Column {
+                        GroupedItem(0, 2, onClick = {
+                            if (!busy) exportLauncher.launch("doubleentry-${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}.json")
+                        }) {
+                            SettingRow(Icons.Rounded.Download, "Export to JSON", "Save a full backup file (compatible with the previous app)")
+                        }
+                        GroupedItem(1, 2, onClick = { if (!busy) importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) {
+                            SettingRow(Icons.Rounded.Upload, "Import from JSON", "Replace all data with a backup file")
+                        }
+                    }
+                }
+                item { SectionHeader("Maintenance") }
+                item {
+                    GroupedItem(0, 1, onClick = { if (!busy) confirm = Confirm.Repair }) {
+                        SettingRow(Icons.Rounded.Build, "Repair depreciation", "Restore missing or accidentally deleted write-offs")
+                    }
+                }
+                item { SectionHeader("Danger zone") }
+                item {
+                    Column {
+                        GroupedItem(0, 2, onClick = { if (!busy) confirm = Confirm.DeleteFirst }) {
+                            SettingRow(
+                                Icons.Rounded.DeleteForever,
+                                if (vm.signedIn) "Delete all data (including cloud)" else "Delete all data",
+                                "Permanently removes accounts, transactions, assets and invoices",
+                            )
+                        }
+                        GroupedItem(1, 2, onClick = { if (!busy) confirm = Confirm.Reset }) {
+                            SettingRow(Icons.Rounded.RestartAlt, "Reset this device", "Sign out and clear local data. Cloud data is kept.")
+                        }
+                    }
+                }
+                item {
+                    Text(
+                        "Backups contain accounts, transactions, assets, invoices and report settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 16.dp, start = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+
+    when (confirm) {
+        Confirm.Import -> ConfirmDialog(
+            title = "Import from JSON?",
+            message = "All current accounts, transactions, assets and invoices will be replaced with the contents of the file. This cannot be undone.",
+            confirmLabel = "Replace data",
+            destructive = true,
+            onConfirm = { confirm = null; pendingImport?.let { vm.import(resolver, it) } },
+            onDismiss = { confirm = null },
+        )
+        Confirm.Repair -> ConfirmDialog(
+            title = "Repair depreciation?",
+            message = "Checks every asset and restores any missing or deleted depreciation postings.",
+            confirmLabel = "Repair",
+            onConfirm = { confirm = null; vm.repair() },
+            onDismiss = { confirm = null },
+        )
+        Confirm.DeleteFirst -> ConfirmDialog(
+            title = if (vm.signedIn) "Delete all data, including the cloud?" else "Delete all data?",
+            message = if (vm.signedIn) {
+                "This permanently deletes all accounts and transactions from this device and from the cloud."
+            } else {
+                "This permanently deletes all accounts and transactions."
+            },
+            confirmLabel = "Continue",
+            destructive = true,
+            onConfirm = { confirm = Confirm.DeleteSecond },
+            onDismiss = { confirm = null },
+        )
+        Confirm.DeleteSecond -> ConfirmDialog(
+            title = "Are you absolutely sure?",
+            message = "There is no undo. All your financial data will be gone.",
+            confirmLabel = "Delete everything",
+            destructive = true,
+            onConfirm = { confirm = null; vm.deleteAll() },
+            onDismiss = { confirm = null },
+        )
+        Confirm.Reset -> ConfirmDialog(
+            title = "Reset this device?",
+            message = "You will be signed out and all local data deleted. Your cloud data is not touched, so you can sign in again to restore it.",
+            confirmLabel = "Reset",
+            destructive = true,
+            onConfirm = { confirm = null; vm.factoryReset() },
+            onDismiss = { confirm = null },
+        )
+        null -> Unit
+    }
+    result?.let { MessageDialog(it.title, it.text) { vm.result.value = null } }
+}

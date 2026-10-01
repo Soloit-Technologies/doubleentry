@@ -1,0 +1,246 @@
+package com.soloit.doubleentry.ui.components
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.UnfoldMore
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.soloit.doubleentry.domain.Account
+import com.soloit.doubleentry.domain.DraftLine
+import com.soloit.doubleentry.domain.EntryType
+import com.soloit.doubleentry.domain.Money
+import com.soloit.doubleentry.ui.theme.AppTheme
+import com.soloit.doubleentry.ui.theme.tabular
+
+/** Editable state of one bookkeeping line. Exactly one of [debit]/[credit] should hold an amount. */
+data class LineInput(
+    val key: Long,
+    val accountId: String? = null,
+    val debit: String = "",
+    val credit: String = "",
+    /** Managed by the app (e.g. the fixed invoice credit line); account and amount can't be edited. */
+    val locked: Boolean = false,
+) {
+    val debitCents: Long? get() = Money.parse(debit)?.takeIf { it > 0 }
+    val creditCents: Long? get() = Money.parse(credit)?.takeIf { it > 0 }
+    val hasAmount: Boolean get() = debitCents != null || creditCents != null
+}
+
+/** Line bookkeeping shared by the transaction and invoice editors. */
+object Lines {
+    fun totals(lines: List<LineInput>): Pair<Long, Long> =
+        lines.sumOf { it.debitCents ?: 0L } to lines.sumOf { it.creditCents ?: 0L }
+
+    fun isBalanced(lines: List<LineInput>): Boolean = totals(lines).let { it.first == it.second }
+
+    fun populatedCount(lines: List<LineInput>): Int = lines.count { it.accountId != null && it.hasAmount }
+
+    /**
+     * When the focused line is empty and every other line has an amount, fills in the difference
+     * on the side that balances the entry (debit when credits exceed debits, and vice versa).
+     */
+    fun autoFill(lines: List<LineInput>, key: Long, debitSide: Boolean): List<LineInput> {
+        val target = lines.firstOrNull { it.key == key } ?: return lines
+        if (target.hasAmount || target.locked) return lines
+        val others = lines.filter { it.key != key }
+        if (others.isEmpty() || others.any { !it.hasAmount }) return lines
+        val (debits, credits) = totals(others)
+        val diff = debits - credits
+        return when {
+            debitSide && diff < 0 -> lines.map { if (it.key == key) it.copy(debit = Money.toInput(-diff)) else it }
+            !debitSide && diff > 0 -> lines.map { if (it.key == key) it.copy(credit = Money.toInput(diff)) else it }
+            else -> lines
+        }
+    }
+
+    /** Validates the lines and converts them to draft lines, or returns a user-facing error. */
+    fun toDraft(lines: List<LineInput>, requireBothSides: Boolean = true): Result<List<DraftLine>> {
+        if (lines.any { it.accountId == null && it.hasAmount }) return failure("Choose an account for every line with an amount.")
+        val populated = lines.filter { it.accountId != null && (it.debit.isNotBlank() || it.credit.isNotBlank()) }
+        if (populated.size < 2) return failure("Please fill at least two lines with an account and an amount.")
+        val result = mutableListOf<DraftLine>()
+        for (line in populated) {
+            val debit = line.debitCents
+            val credit = line.creditCents
+            if (debit != null && credit != null) return failure("Each line must have either a debit or a credit amount, not both.")
+            if (debit == null && credit == null) return failure("Each line must have a debit or credit amount greater than zero.")
+            result += if (debit != null) DraftLine(line.accountId!!, debit, EntryType.Debit) else DraftLine(line.accountId!!, credit!!, EntryType.Credit)
+        }
+        val debits = result.filter { it.type == EntryType.Debit }.sumOf { it.amount }
+        val credits = result.filter { it.type == EntryType.Credit }.sumOf { it.amount }
+        if (requireBothSides && (debits == 0L || credits == 0L)) return failure("The entry must have at least one debit and one credit.")
+        if (debits != credits) return failure("Debits (${Money.format(debits)}) must equal credits (${Money.format(credits)}).")
+        return Result.success(result)
+    }
+
+    private fun failure(message: String) = Result.failure<List<DraftLine>>(IllegalArgumentException(message))
+}
+
+@Composable
+fun LinesEditor(
+    lines: List<LineInput>,
+    accounts: Map<String, Account>,
+    onPickAccount: (Long) -> Unit,
+    onDebitChange: (Long, String) -> Unit,
+    onCreditChange: (Long, String) -> Unit,
+    onFocusDebit: (Long) -> Unit,
+    onFocusCredit: (Long) -> Unit,
+    onRemove: (Long) -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        lines.forEachIndexed { index, line ->
+            LineCard(
+                index = index,
+                line = line,
+                account = line.accountId?.let(accounts::get),
+                canRemove = !line.locked && lines.size > 1,
+                onPickAccount = { onPickAccount(line.key) },
+                onDebitChange = { onDebitChange(line.key, it) },
+                onCreditChange = { onCreditChange(line.key, it) },
+                onFocusDebit = { onFocusDebit(line.key) },
+                onFocusCredit = { onFocusCredit(line.key) },
+                onRemove = { onRemove(line.key) },
+            )
+        }
+        OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Rounded.Add, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Add line")
+        }
+        BalanceSummary(lines)
+    }
+}
+
+@Composable
+private fun LineCard(
+    index: Int,
+    line: LineInput,
+    account: Account?,
+    canRemove: Boolean,
+    onPickAccount: () -> Unit,
+    onDebitChange: (String) -> Unit,
+    onCreditChange: (String) -> Unit,
+    onFocusDebit: () -> Unit,
+    onFocusCredit: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    SectionCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier.weight(1f).clickable(enabled = !line.locked, onClick = onPickAccount),
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (account != null) AccountTypeAvatar(account.type, size = 32) else IconAvatar(Icons.Rounded.UnfoldMore, MaterialTheme.colorScheme.onSurfaceVariant, size = 32)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            account?.name ?: "Line ${index + 1}: choose account",
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            color = if (account == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            account?.let { "#${it.number} · ${it.type.name}" } ?: "Tap to select",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (line.locked) Icon(Icons.Rounded.Lock, "Fixed by invoice settings", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+            }
+            if (canRemove) {
+                IconButton(onClick = onRemove) { Icon(Icons.Rounded.DeleteOutline, "Remove line") }
+            }
+        }
+        Spacer(Modifier.size(8.dp))
+        FieldRow {
+            AmountField(
+                value = line.debit,
+                onValueChange = onDebitChange,
+                label = "Debit",
+                enabled = !line.locked && line.creditCents == null,
+                modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onFocusDebit() },
+            )
+            AmountField(
+                value = line.credit,
+                onValueChange = onCreditChange,
+                label = "Credit",
+                enabled = !line.locked && line.debitCents == null,
+                modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onFocusCredit() },
+            )
+        }
+    }
+}
+
+/** Debit/credit totals with a balanced/unbalanced indicator. */
+@Composable
+fun BalanceSummary(lines: List<LineInput>) {
+    val (debits, credits) = Lines.totals(lines)
+    val finance = AppTheme.finance
+    val empty = debits == 0L && credits == 0L
+    val balanced = debits == credits
+    val container by animateColorAsState(
+        when {
+            empty -> MaterialTheme.colorScheme.surfaceContainerHigh
+            balanced -> finance.positiveContainer
+            else -> finance.warningContainer
+        },
+        label = "balance",
+    )
+    val content = when {
+        empty -> MaterialTheme.colorScheme.onSurfaceVariant
+        balanced -> finance.onPositiveContainer
+        else -> finance.onWarningContainer
+    }
+    Surface(shape = MaterialTheme.shapes.medium, color = container, contentColor = content, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (balanced) Icons.Rounded.CheckCircle else Icons.Rounded.ErrorOutline, null)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when {
+                        empty -> "Enter amounts"
+                        balanced -> "Balanced"
+                        debits > credits -> "Debits exceed credits by ${Money.format(debits - credits)}"
+                        else -> "Credits exceed debits by ${Money.format(credits - debits)}"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "Debit ${Money.format(debits)}  ·  Credit ${Money.format(credits)}",
+                    style = MaterialTheme.typography.bodySmall.tabular(),
+                    fontWeight = FontWeight.Normal,
+                )
+            }
+        }
+    }
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- DoubleEntry brand emerald, carried over from the MAUI app icon. -->
+    <color name="brand">#0F7D6B</color>
+    <color name="window_background">#F5FBF8</color>
+</resources>
