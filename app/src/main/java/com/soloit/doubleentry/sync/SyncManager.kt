@@ -18,14 +18,18 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration.Companion.minutes
 
 data class SyncStatus(
-    /** Feature flag on and Supabase configured for this build. */
-    val available: Boolean,
+    /** The cloud sync feature is switched on for this build (`cloudSync.enabled`). */
+    val featureEnabled: Boolean,
+    /** A Supabase URL and key were compiled into this build. */
+    val configured: Boolean,
     val signedInEmail: String?,
     val enabled: Boolean,
     val isSyncing: Boolean = false,
     val lastError: String? = null,
     val lastSyncAtMillis: Long? = null,
 ) {
+    /** Feature flag on and Supabase configured: signing in is possible. */
+    val available: Boolean get() = featureEnabled && configured
     val isSignedIn: Boolean get() = signedInEmail != null
     val isActive: Boolean get() = available && enabled && isSignedIn
 }
@@ -210,7 +214,8 @@ class SyncManager(
     }
 
     private fun snapshot() = SyncStatus(
-        available = config.isAvailable,
+        featureEnabled = config.featureEnabled,
+        configured = config.isConfigured,
         signedInEmail = prefs.userId?.let { prefs.userEmail ?: "Signed in" },
         enabled = prefs.enabled,
         lastSyncAtMillis = prefs.lastSyncAtMillis,

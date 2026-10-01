@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -43,6 +45,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -122,7 +125,9 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                 }
             }
 
-            if (!status.isSignedIn) {
+            if (!status.configured) {
+                NotConfiguredCard()
+            } else if (!status.isSignedIn) {
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it },
@@ -201,6 +206,35 @@ fun CloudSyncScreen(onBack: () -> Unit) {
             confirmLabel = "Sign out",
             onConfirm = { confirmSignOut = false; scope.launch { sync.signOut() } },
             onDismiss = { confirmSignOut = false },
+        )
+    }
+}
+
+/** Shown in builds compiled without a Supabase project; explains how to add one. */
+@Composable
+private fun NotConfiguredCard() {
+    SectionCard(contentPadding = PaddingValues(20.dp)) {
+        Text("Not set up in this build", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "This build was compiled without a Supabase project. Add these two lines to local.properties " +
+                "in the project folder, then rebuild and reinstall the app:",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHighest, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "supabase.url=https://<project-ref>.supabase.co\nsupabase.anonKey=<anon key>",
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.padding(12.dp),
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Both values are in the Supabase dashboard under Project Settings → API.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

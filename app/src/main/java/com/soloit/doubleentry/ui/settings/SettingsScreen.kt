@@ -96,11 +96,12 @@ fun SettingsScreen(
                 }
             }
 
-            if (sync.available) {
+            if (sync.featureEnabled) {
                 item { SectionHeader("Cloud") }
                 item {
                     GroupedItem(0, 1, onClick = onCloudSync) {
                         val subtitle = when {
+                            !sync.configured -> "Not set up in this build"
                             !sync.isSignedIn -> "Sign in to sync between devices"
                             !sync.enabled -> "Paused · ${sync.signedInEmail}"
                             sync.lastError != null -> sync.lastError!!
