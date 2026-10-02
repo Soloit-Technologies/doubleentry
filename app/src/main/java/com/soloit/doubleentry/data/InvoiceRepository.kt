@@ -112,11 +112,12 @@ class InvoiceRepository(
                     DraftLine(invoice.outstandingAccountId, amount, EntryType.Credit),
                 )
             }
+            val bookingTitle = ledger.getTransaction(invoice.bookingTransactionId)?.title
             val paymentId = ledger.insertTransaction(
                 TransactionDraft(
                     date = paidDate,
-                    title = "Invoice payment",
-                    description = "Payment from ${paymentAccount.name} for invoice dated ${invoice.invoiceDate}.",
+                    title = if (bookingTitle.isNullOrBlank()) "Invoice payment" else "Payment: $bookingTitle",
+                    description = "Paid from ${paymentAccount.name} for invoice dated ${invoice.invoiceDate}.",
                     lines = lines,
                 ),
             )

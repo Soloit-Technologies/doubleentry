@@ -62,11 +62,15 @@ object Depreciation {
 
     fun title(assetName: String): String = "Depreciation: $assetName"
 
-    /** Stable per-asset suffix, also used to find legacy postings with random ids. */
-    fun assetMarker(assetId: String): String = "(Asset #${assetId.lowercase()})"
+    /** User-facing description; postings are identified by their deterministic id, not by text. */
+    fun description(month: LocalDate): String = "Monthly depreciation for ${month.format(monthFormat)}"
 
-    fun description(assetId: String, month: LocalDate): String =
-        "Monthly writeoff for ${month.format(monthFormat)} ${assetMarker(assetId)}"
+    /** Per-asset suffix of the legacy description, used to find legacy postings with random ids. */
+    fun legacyAssetMarker(assetId: String): String = "(Asset #${assetId.lowercase()})"
+
+    /** Description written by older versions, still matched when repairing legacy postings. */
+    fun legacyDescription(assetId: String, month: LocalDate): String =
+        "Monthly writeoff for ${month.format(monthFormat)} ${legacyAssetMarker(assetId)}"
 
     /** Deterministic ids of every non-zero posting in the asset's full schedule. */
     fun writeoffIds(asset: Asset): Set<String> =
