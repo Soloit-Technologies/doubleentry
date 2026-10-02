@@ -125,8 +125,8 @@ class AssetRepository(
 
     /**
      * Repairs depreciation: every due month gets exactly one live posting (deleted ones are revived,
-     * missing ones re-created, legacy duplicates removed) and each asset's totals are reconciled.
-     * Returns the number of postings revived, created or removed.
+     * missing ones re-created, legacy duplicates removed, legacy descriptions rewritten) and each
+     * asset's totals are reconciled. Returns the number of postings revived, created, rewritten or removed.
      */
     suspend fun reconcileWriteoffs(today: LocalDate = LocalDate.now()): Int = writeoffLock.withLock {
         var repaired = 0
@@ -144,8 +144,16 @@ class AssetRepository(
                     if (slot.amount <= 0) continue
                     if (ensurePosting(asset, slot)) repaired++
 
+                    // Replace the old GUID-bearing description with the user-facing one.
                     val txId = DeterministicIds.writeoffTransactionId(asset.id, slot.month)
-                    for (duplicate in transactionDao.liveByDescription(Depreciation.description(asset.id, slot.month), excludeId = txId)) {
+                    val legacyDescription = Depreciation.legacyDescription(asset.id, slot.month)
+                    val canonical = transactionDao.byId(txId)
+                    if (canonical != null && canonical.description == legacyDescription) {
+                        transactionDao.upsert(canonical.copy(description = Depreciation.description(slot.month), updatedAt = nowMicros(), isDirty = true))
+                        repaired++
+                    }
+
+                    for (duplicate in transactionDao.liveByDescription(legacyDescription, excludeId = txId)) {
                         ledger.softDeleteTransaction(duplicate.id)
                         repaired++
                     }
@@ -177,7 +185,7 @@ class AssetRepository(
             .flatMap { transactionDao.byIds(it) }
             .filter { it.deletedAt == null }
             .map { it.id }
-        val byMarker = transactionDao.liveByDescriptionSuffix(Depreciation.assetMarker(asset.id)).map { it.id }
+        val byMarker = transactionDao.liveByDescriptionSuffix(Depreciation.legacyAssetMarker(asset.id)).map { it.id }
         return (byId + byMarker).toSet()
     }
 
@@ -194,7 +202,7 @@ class AssetRepository(
                         id = txId,
                         date = Depreciation.postingDate(slot.month),
                         title = Depreciation.title(asset.name),
-                        description = Depreciation.description(asset.id, slot.month),
+                        description = Depreciation.description(slot.month),
                         lines = listOf(
                             DraftLine(asset.debitAccountId, slot.amount, EntryType.Debit, id = debitId),
                             DraftLine(asset.creditAccountId, slot.amount, EntryType.Credit, id = creditId),
