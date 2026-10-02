@@ -60,6 +60,28 @@ class SettingsRepository(
         Keys.INVOICE_PAYMENT_ACCOUNTS to json.encodeToString(intList, settings.paymentAccountNumbers),
     )
 
+    /**
+     * Live values of every key starting with [prefix], keyed by the remainder of the key. Used for
+     * per-item records (recurring rules, reconciliations, invoice instalments) that sync as settings
+     * so they need no backend schema change and stay invisible to the .NET app.
+     */
+    fun observePrefix(prefix: String): Flow<Map<String, String>> =
+        values.map { all -> all.filterKeys { it.startsWith(prefix) }.mapKeys { it.key.removePrefix(prefix) } }.distinctUntilChanged()
+
+    suspend fun livePrefix(prefix: String): Map<String, String> =
+        dao.liveWithPrefix(prefix).associate { it.key.removePrefix(prefix) to it.value }
+
+    suspend fun get(key: String): String? = dao.byKey(key)?.takeIf { it.deletedAt == null }?.value
+
+    /** Stores [value] under [key]; `null` soft-deletes it. Safe to call inside an outer transaction. */
+    suspend fun put(key: String, value: String?) = set(key to value)
+
+    /** Soft-deletes [key] with an explicit [stamp], so it can be restored together with the rows deleted alongside it. */
+    internal suspend fun softDelete(key: String, stamp: Long) {
+        val row = dao.byKey(key) ?: return
+        if (row.deletedAt == null) dao.upsert(row.copy(deletedAt = stamp, updatedAt = stamp, isDirty = true))
+    }
+
     /** Writes several keys in one transaction; `null` soft-deletes a key so the deletion syncs. */
     private suspend fun set(vararg entries: Pair<String, String?>) {
         var changed = false
@@ -95,6 +117,14 @@ class SettingsRepository(
         const val DEFERRED_PREFIXES = "IncomeStatement.DeferredAssetPrefixes"
         const val INVOICE_CREDIT_ACCOUNT = "Invoice.CreditAccountNumber"
         const val INVOICE_PAYMENT_ACCOUNTS = "Invoice.PaymentAccountNumbers"
+
+        // Per-item prefixes (Android only). The suffix is the id of the rule, account or invoice.
+        const val RECURRING_PREFIX = "Recurring."
+        const val RECONCILIATION_PREFIX = "Reconciliation."
+        const val INVOICE_PAYMENTS_PREFIX = "Invoice.Payments."
+
+        /** Settings that describe ledger data rather than preferences; removed by "Delete all data". */
+        val DATA_PREFIXES = listOf(RECURRING_PREFIX, RECONCILIATION_PREFIX, INVOICE_PAYMENTS_PREFIX)
     }
 
     /** Mirrors the .NET `record GroupDto(string Name, List<string> Prefixes)`. */

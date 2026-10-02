@@ -84,6 +84,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric: repository and sync tests run against a real (in-memory) Room database.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -127,7 +129,12 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.fragment)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

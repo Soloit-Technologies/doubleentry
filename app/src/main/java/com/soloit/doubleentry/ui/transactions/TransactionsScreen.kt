@@ -54,6 +54,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
@@ -75,6 +77,9 @@ data class TransactionsUiState(
     val query: String = "",
     val days: List<Pair<LocalDate, List<TransactionRowUi>>> = emptyList(),
     val count: Int = 0,
+    /** A search covers every month, not just the selected one. */
+    val searching: Boolean = false,
+    val truncated: Boolean = false,
 )
 
 /** "Checking Account → Groceries", with "+n" when a side has several accounts. */
@@ -97,44 +102,55 @@ internal fun Transaction.categoryType(): AccountType = when {
     else -> entries.firstOrNull { it.type == EntryType.Debit }?.account?.type ?: AccountType.Asset
 }
 
+internal fun Transaction.toRow() = TransactionRowUi(
+    id = id,
+    date = date,
+    title = title,
+    flow = flowSummary(),
+    amount = totalDebits,
+    categoryType = categoryType(),
+    searchText = buildString {
+        append(title).append(' ').append(description).append(' ')
+        entries.forEach { append(it.account.name).append(' ').append(it.account.number).append(' ') }
+        append(Money.format(totalDebits)).append(' ').append(Money.toInput(totalDebits))
+    },
+)
+
+private val newestFirst = compareByDescending<Transaction> { it.date }.thenBy { it.title }
+
 class TransactionsViewModel(ledger: LedgerRepository) : ViewModel() {
     private val month = MutableStateFlow(YearMonth.now())
     private val query = MutableStateFlow("")
 
     private val loaded = combine(month, ledger.changes) { m, _ -> m }.mapLatest { m ->
-        m to ledger.getTransactions(m.firstDay(), m.lastDay())
-            .sortedWith(compareByDescending<Transaction> { it.date }.thenBy { it.title })
-            .map { tx ->
-                TransactionRowUi(
-                    id = tx.id,
-                    date = tx.date,
-                    title = tx.title,
-                    flow = tx.flowSummary(),
-                    amount = tx.totalDebits,
-                    categoryType = tx.categoryType(),
-                    searchText = buildString {
-                        append(tx.title).append(' ').append(tx.description).append(' ')
-                        tx.entries.forEach { append(it.account.name).append(' ').append(it.account.number).append(' ') }
-                        append(Money.format(tx.totalDebits)).append(' ').append(Money.toInput(tx.totalDebits))
-                    },
-                )
-            }
+        m to ledger.getTransactions(m.firstDay(), m.lastDay()).sortedWith(newestFirst).map { it.toRow() }
     }
 
-    val state: StateFlow<TransactionsUiState> = combine(loaded, query) { (m, rows), q ->
+    /** Every transaction, loaded only while a search is active (null otherwise). */
+    private val everything = combine(query.map { it.isNotBlank() }.distinctUntilChanged(), ledger.changes) { active, _ -> active }
+        .mapLatest { active -> if (active) ledger.getTransactions().sortedWith(newestFirst).map { it.toRow() } else null }
+
+    val state: StateFlow<TransactionsUiState> = combine(loaded, query, everything) { (m, rows), q, all ->
         val search = q.trim()
-        val visible = if (search.isEmpty()) rows else rows.filter { it.searchText.contains(search, ignoreCase = true) }
+        val matches = if (search.isEmpty()) rows else (all ?: rows).filter { it.searchText.contains(search, ignoreCase = true) }
+        val visible = matches.take(MAX_RESULTS)
         TransactionsUiState(
-            loading = false,
+            loading = search.isNotEmpty() && all == null,
             month = m,
             query = q,
             days = visible.groupBy { it.date }.toList(),
-            count = visible.size,
+            count = matches.size,
+            searching = search.isNotEmpty(),
+            truncated = matches.size > visible.size,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState())
 
     fun setMonth(value: YearMonth) { month.value = value }
     fun setQuery(value: String) { query.value = value }
+
+    private companion object {
+        const val MAX_RESULTS = 300
+    }
 }
 
 @Composable
@@ -159,20 +175,25 @@ fun TransactionsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettin
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = ScreenPadding) {
             item { MonthSelector(state.month, vm::setMonth) }
-            item { SearchField(state.query, vm::setQuery, "Search title, account or amount", Modifier.padding(vertical = 12.dp)) }
+            item { SearchField(state.query, vm::setQuery, "Search all months: title, account or amount", Modifier.padding(vertical = 12.dp)) }
             when {
                 state.loading -> item { LoadingState() }
                 state.days.isEmpty() -> item {
                     EmptyState(
                         Icons.AutoMirrored.Rounded.ReceiptLong,
                         if (state.query.isBlank()) "No transactions this month" else "No matches",
-                        if (state.query.isBlank()) "Tap Transaction to record money moving between two accounts." else "Try a different search.",
+                        if (state.query.isBlank()) "Tap Transaction to record money moving between two accounts." else "Nothing in any month matches. Try a different search.",
                     )
                 }
                 else -> {
                     item {
+                        val noun = "${state.count} ${if (state.searching) "match" else "transaction"}${if (state.count == 1) "" else if (state.searching) "es" else "s"}"
                         Text(
-                            "${state.count} transaction${if (state.count == 1) "" else "s"}",
+                            when {
+                                state.truncated -> "$noun in all months · showing the newest ${state.days.sumOf { it.second.size }}"
+                                state.searching -> "$noun in all months"
+                                else -> noun
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),

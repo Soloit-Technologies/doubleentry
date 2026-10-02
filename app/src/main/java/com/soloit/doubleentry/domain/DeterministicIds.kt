@@ -18,6 +18,7 @@ object DeterministicIds {
 
     private val planNamespace = UUID.fromString("3f8b0a3a-0a7e-4f6a-9b9b-1d6f8f6a0d10")
     private val writeoffNamespace = UUID.fromString("b6c2f1e4-3a7d-4c19-9f0b-2e5a8d7c4f11")
+    private val recurringNamespace = UUID.fromString("5d0c7e2a-8f41-4b6e-a3c9-7b18e0f2d6a4")
     private val monthFormat = DateTimeFormatter.ofPattern("yyyy-MM")
 
     /** UUIDv5(planNamespace, number) — id of a default-plan account. */
@@ -38,12 +39,23 @@ object DeterministicIds {
     fun writeoffEntryId(transactionId: String, type: EntryType): String =
         namespacedGuid("${compact(transactionId)}:${type.name}")
 
+    /**
+     * Id of the posting of recurring rule [ruleId] on [date]. Devices that post the same occurrence
+     * independently converge on one transaction.
+     */
+    fun recurringTransactionId(ruleId: String, date: LocalDate): String =
+        namespacedGuid("${compact(ruleId)}:$date", recurringNamespace)
+
+    /** Id of line [index] of a recurring posting. */
+    fun recurringEntryId(transactionId: String, index: Int): String =
+        namespacedGuid("${compact(transactionId)}:$index", recurringNamespace)
+
     /** Id of a synced user setting, derived from its key. */
     fun settingId(key: String): String =
         dotNetGuidFromBytes(sha256(key.toByteArray(Charsets.UTF_8)))
 
-    private fun namespacedGuid(name: String): String =
-        dotNetGuidFromBytes(sha256(dotNetBytes(writeoffNamespace) + name.toByteArray(Charsets.UTF_8)))
+    private fun namespacedGuid(name: String, namespace: UUID = writeoffNamespace): String =
+        dotNetGuidFromBytes(sha256(dotNetBytes(namespace) + name.toByteArray(Charsets.UTF_8)))
 
     private fun compact(id: String): String = id.lowercase().replace("-", "")
 

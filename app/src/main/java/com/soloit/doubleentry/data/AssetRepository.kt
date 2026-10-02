@@ -74,15 +74,19 @@ class AssetRepository(
         return entity.toDomain()
     }
 
-    /** Deletes the asset together with its depreciation postings (the only way to remove them). */
-    suspend fun deleteAsset(id: String) {
+    /**
+     * Deletes the asset together with its depreciation postings (the only way to remove them).
+     * Returns the deletion stamp for [LedgerRepository.restoreDeleted].
+     */
+    suspend fun deleteAsset(id: String): Long {
+        val now = nowMicros()
         db.withTransaction {
             val asset = assetDao.liveById(id) ?: throw LedgerException("Asset not found.")
-            for (tx in writeoffTransactionEntities(asset.toDomain())) ledger.softDeleteTransaction(tx)
-            val now = nowMicros()
+            for (tx in writeoffTransactionEntities(asset.toDomain())) ledger.softDeleteTransaction(tx, now)
             assetDao.upsert(asset.copy(deletedAt = now, updatedAt = now, isDirty = true))
         }
         sync.requestSync()
+        return now
     }
 
     /**

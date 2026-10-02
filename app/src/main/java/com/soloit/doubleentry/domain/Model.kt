@@ -127,7 +127,40 @@ data class Invoice(
     val paidDate: LocalDate?,
     val paymentTransactionId: String?,
     val paidFromAccountId: String?,
+    /** Instalments recorded before the invoice was fully paid (live payment transactions only). */
+    val partialPayments: List<InvoicePayment> = emptyList(),
+) {
+    val partiallyPaid: Long get() = partialPayments.sumOf { it.amount }
+
+    /** What is still owed. */
+    val remaining: Long get() = if (isPaid) 0 else (amountDue - partiallyPaid).coerceAtLeast(0)
+}
+
+/** One instalment of an invoice: a settlement transaction for part of the amount due. */
+data class InvoicePayment(
+    val transactionId: String,
+    val date: LocalDate,
+    val amount: Long,
+    val accountId: String?,
 )
+
+/** The user confirmed that [accountId] matched a statement balance of [statementBalance] on [date]. */
+data class Reconciliation(
+    val accountId: String,
+    val date: LocalDate,
+    val statementBalance: Long,
+)
+
+/** A reconciliation checked against the ledger as it is now. */
+data class ReconciliationStatus(
+    val reconciliation: Reconciliation,
+    /** The account's balance as of the reconciled date, computed from the current ledger. */
+    val bookBalance: Long,
+) {
+    /** Non-zero when transactions on or before the reconciled date were added, edited or deleted since. */
+    val drift: Long get() = bookBalance - reconciliation.statementBalance
+    val inSync: Boolean get() = drift == 0L
+}
 
 /** A named group of accounts matched by account-number prefixes (used by reports). */
 data class AccountGroup(

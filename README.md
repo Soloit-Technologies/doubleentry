@@ -5,13 +5,20 @@ Material 3. A native rewrite of the .NET MAUI app: same features, same data mode
 Supabase backend.
 
 - **Accounts.** Net worth at a glance, accounts grouped by type, monthly ledger per account with running balance.
-- **Transactions.** Balanced multi-line entries with an account picker, auto-balancing, edit, duplicate and delete.
+  Reconcile an account against a bank statement (optionally posting the difference as an adjustment);
+  later changes to the reconciled period show up as drift.
+- **Transactions.** Balanced multi-line entries with an account picker, auto-balancing, edit, duplicate and delete
+  (with undo). Typing a title suggests earlier transactions and copies their lines. Search covers all months.
+- **Recurring transactions.** Weekly, monthly, quarterly or yearly postings (rent, salary, subscriptions) that post
+  themselves when the app opens.
 - **Reports.** Balance sheet, income statement (EBITDA/EBDA/EBT, spendable net income), cash flow and a cost-trends chart.
+  Month, year-to-date or year, with comparison against the previous period or the same period last year.
 - **Assets.** Automatic monthly depreciation write-offs, with a repair tool for missing ones.
-- **Invoices.** Booking, due-date tracking, mark as paid from a chosen account.
+- **Invoices.** Booking, due-date tracking, payment in full or in instalments, and an optional daily reminder notification.
 - **Cloud sync.** Offline-first local database, last-write-wins sync with Supabase, realtime updates between devices.
-- **Backups.** JSON export/import, compatible with backups made by the MAUI app.
-- Light/dark theme and optional Material You (wallpaper) colors.
+- **Backups.** JSON export/import, compatible with backups made by the MAUI app. CSV export of transactions and balances.
+- Light/dark theme, optional Material You (wallpaper) colors, optional app lock (screen lock or biometrics),
+  a net-worth home-screen widget and launcher shortcuts.
 
 ## Build and run
 
@@ -71,6 +78,16 @@ The local database of the MAUI app is not migrated on the device. Bring your dat
 
 Everything else follows the original logic.
 
+- **Android-only data** (recurring rules, reconciliations, invoice instalments) is stored as synced
+  `user_settings` rows (`Recurring.<id>`, `Reconciliation.<accountId>`, `Invoice.Payments.<invoiceId>`), so it
+  needs no backend change and the MAUI app simply ignores it. Recurring postings use ids derived from
+  (rule, date), like depreciation, so two devices posting the same occurrence converge on one transaction.
+  Backups carry this data in the `android` extension.
+- **Instalments.** An invoice row is only marked paid by the payment that settles the rest, so the MAUI app sees
+  a partly paid invoice as unpaid.
+- **Concurrent edits.** When two devices edited the lines of the same transaction before syncing, the lines of
+  the version whose header wins are kept (instead of both line sets).
+
 - **Default plan seeding.** Seeded accounts get the oldest possible timestamp, so accounts already
   in the cloud (renamed or deleted elsewhere) win over freshly seeded defaults when you sign in.
 - **Tiny assets.** An asset whose monthly write-off rounds to 0.00 is written off at least 0.01 per
@@ -91,8 +108,10 @@ app/src/main/java/com/soloit/doubleentry/
   domain/          Pure Kotlin: models, money, deterministic ids, depreciation, report calculators
   data/            Room database and repositories (ledger, assets, invoices, settings, backup)
   sync/            Supabase auth + PostgREST client, push/pull engine, realtime, session storage
+  system/          Invoice reminders (WorkManager), app lock, home-screen widget, launcher shortcuts
   ui/              Compose screens per feature, shared components and theme
-app/src/test/      Unit tests (incl. compatibility tests against values produced by the .NET app)
+app/src/test/      Unit tests (incl. compatibility tests against values produced by the .NET app) and
+                   Robolectric tests of the repositories and of sync between two devices (fake PostgREST)
 app/schemas/       Exported Room schema (keep under version control for migrations)
 supabase/          Migrations, maintenance queries and CLI config for the backend
 ```

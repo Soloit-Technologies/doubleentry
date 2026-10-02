@@ -17,6 +17,7 @@ import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.TableView
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,11 +38,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.AppContainer
+import com.soloit.doubleentry.data.CsvExport
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.ConfirmDialog
 import com.soloit.doubleentry.ui.components.GroupedItem
 import com.soloit.doubleentry.ui.components.MessageDialog
 import com.soloit.doubleentry.ui.components.SectionHeader
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -77,6 +80,29 @@ class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
     fun export(resolver: ContentResolver, uri: Uri) = run("Export") {
         resolver.openOutputStream(uri, "wt")?.use { c.backup.export(it) } ?: error("Could not open the selected file.")
         "Your data was exported."
+    }
+
+    fun exportTransactionsCsv(resolver: ContentResolver, uri: Uri) = run("Export") {
+        val transactions = c.ledger.getTransactions()
+        writeCsv(resolver, uri) { CsvExport.transactions(transactions, it) }
+        "Exported ${transactions.size} transaction${if (transactions.size == 1) "" else "s"}."
+    }
+
+    fun exportBalancesCsv(resolver: ContentResolver, uri: Uri) = run("Export") {
+        val today = LocalDate.now()
+        val accounts = c.ledger.getAccounts()
+        val balances = c.ledger.getBalances(today)
+        writeCsv(resolver, uri) { CsvExport.balances(accounts, balances, today, it) }
+        "Exported the balances of ${accounts.size} accounts."
+    }
+
+    private suspend fun writeCsv(resolver: ContentResolver, uri: Uri, write: (java.io.Writer) -> Unit) = withContext(Dispatchers.IO) {
+        val stream = resolver.openOutputStream(uri, "wt") ?: error("Could not open the selected file.")
+        stream.bufferedWriter(Charsets.UTF_8).use { writer ->
+            // A byte order mark makes Excel read the file as UTF-8 (å, ä, ö …).
+            writer.write("\uFEFF")
+            write(writer)
+        }
     }
 
     fun import(resolver: ContentResolver, uri: Uri) = run("Import") {
@@ -116,6 +142,12 @@ fun DataManagementScreen(onBack: () -> Unit) {
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri?.let { vm.export(resolver, it) }
     }
+    val transactionsCsvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let { vm.exportTransactionsCsv(resolver, it) }
+    }
+    val balancesCsvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let { vm.exportBalancesCsv(resolver, it) }
+    }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             pendingImport = uri
@@ -147,6 +179,18 @@ fun DataManagementScreen(onBack: () -> Unit) {
                         }
                     }
                 }
+                item { SectionHeader("Spreadsheets") }
+                item {
+                    val stamp = LocalDate.now().toString()
+                    Column {
+                        GroupedItem(0, 2, onClick = { if (!busy) transactionsCsvLauncher.launch("doubleentry-transactions-$stamp.csv") }) {
+                            SettingRow(Icons.Rounded.TableView, "Export transactions (CSV)", "Every transaction line with date, account, debit and credit")
+                        }
+                        GroupedItem(1, 2, onClick = { if (!busy) balancesCsvLauncher.launch("doubleentry-balances-$stamp.csv") }) {
+                            SettingRow(Icons.Rounded.TableView, "Export balances (CSV)", "Each account's balance as of today")
+                        }
+                    }
+                }
                 item { SectionHeader("Maintenance") }
                 item {
                     GroupedItem(0, 1, onClick = { if (!busy) confirm = Confirm.Repair }) {
@@ -170,7 +214,8 @@ fun DataManagementScreen(onBack: () -> Unit) {
                 }
                 item {
                     Text(
-                        "Backups contain accounts, transactions, assets, invoices and report settings.",
+                        "Backups contain accounts, transactions, assets, invoices, recurring transactions, reconciliations and report settings. " +
+                            "CSV files are for spreadsheets and can't be imported.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 16.dp, start = 4.dp),

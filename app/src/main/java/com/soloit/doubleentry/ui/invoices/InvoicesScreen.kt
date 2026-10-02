@@ -42,6 +42,7 @@ import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.data.InvoiceRepository
 import com.soloit.doubleentry.data.LedgerRepository
 import com.soloit.doubleentry.domain.Invoice
+import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.formatMedium
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.EmptyState
@@ -128,7 +129,7 @@ class InvoicesViewModel(invoices: InvoiceRepository, private val ledger: LedgerR
                 .let { if (t == InvoiceTab.Paid) it.sortedByDescending { r -> r.invoice.paidDate ?: r.invoice.dueDate } else it },
             unpaidCount = unpaid.size,
             paidCount = all.size - unpaid.size,
-            outstanding = unpaid.sumOf { it.invoice.amountDue },
+            outstanding = unpaid.sumOf { it.invoice.remaining },
             overdueCount = unpaid.count { it.invoice.dueDate < today },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), InvoicesUiState())
@@ -218,7 +219,13 @@ private fun InvoiceCard(row: InvoiceRowUi, onClick: () -> Unit) {
                     Text("Invoice date ${row.invoice.invoiceDate.formatMedium()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(12.dp))
-                MoneyText(row.invoice.amountDue, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Column(horizontalAlignment = Alignment.End) {
+                    val partial = !row.invoice.isPaid && row.invoice.partiallyPaid > 0
+                    MoneyText(if (partial) row.invoice.remaining else row.invoice.amountDue, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (partial) {
+                        Text("left of ${Money.format(row.invoice.amountDue)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
             DueStatusChip(row.invoice.dueStatus())
         }

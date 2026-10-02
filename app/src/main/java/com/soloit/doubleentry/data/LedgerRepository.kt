@@ -96,7 +96,9 @@ class LedgerRepository(
 
     suspend fun accountHasTransactions(accountId: String): Boolean = transactionDao.countForAccount(accountId) > 0
 
-    suspend fun deleteAccount(id: String) {
+    /** Soft-deletes an account; returns the deletion stamp for [restoreDeleted]. */
+    suspend fun deleteAccount(id: String): Long {
+        val now = nowMicros()
         db.withTransaction {
             val existing = accountDao.byId(id)?.takeIf { it.deletedAt == null } ?: throw LedgerException("Account not found.")
             if (db.assets().usesAccount(id)) {
@@ -105,10 +107,11 @@ class LedgerRepository(
             if (transactionDao.countForAccount(id) > 0) {
                 throw LedgerException("This account has transactions. Delete them before deleting the account.")
             }
-            val now = nowMicros()
             accountDao.upsert(existing.copy(deletedAt = now, updatedAt = now, isDirty = true))
+            db.settings().softDeleteWithPrefix(SettingsRepository.Keys.RECONCILIATION_PREFIX + id, now)
         }
         sync.requestSync()
+        return now
     }
 
     /** Balance of every live account as of [asOf] (inclusive), on each account's normal side. */
@@ -138,6 +141,20 @@ class LedgerRepository(
         }
 
     suspend fun mostUsedAccountIds(limit: Int = 8): List<String> = entryDao.mostUsedAccountIds(limit)
+
+    /**
+     * The most recent transaction for each distinct title containing [text], newest first. Used to
+     * suggest earlier transactions (and their lines) while typing a title.
+     */
+    suspend fun suggestByTitle(text: String, limit: Int = 5): List<Transaction> {
+        val needle = text.trim()
+        if (needle.isEmpty()) return emptyList()
+        val escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return transactionDao.liveWithTitleLike(escaped, limit = 100)
+            .distinctBy { it.title.trim().lowercase() }
+            .take(limit)
+            .map { it.toDomain(entryDao.liveOf(it.id).map { e -> e.toDomain() }) }
+    }
 
     suspend fun getTransaction(id: String): Transaction? {
         val tx = transactionDao.byId(id)?.takeIf { it.deletedAt == null } ?: return null
@@ -202,23 +219,43 @@ class LedgerRepository(
      * Deletes a transaction. Automatic depreciation postings are owned by their asset and can only
      * be removed by deleting the asset.
      */
-    suspend fun deleteTransaction(id: String) {
+    suspend fun deleteTransaction(id: String): Long {
         if (isDepreciationTransaction(id)) {
             throw LedgerException(
                 "This is an automatic depreciation posting and cannot be deleted directly. Delete the asset to remove its depreciation.",
             )
         }
-        db.withTransaction { softDeleteTransaction(id) }
+        val now = nowMicros()
+        db.withTransaction { softDeleteTransaction(id, now) }
         sync.requestSync()
+        return now
     }
 
-    internal suspend fun softDeleteTransaction(id: String) {
-        val now = nowMicros()
+    /** Soft-deletes a transaction and its lines with [now] as the shared deletion stamp. */
+    internal suspend fun softDeleteTransaction(id: String, now: Long = nowMicros()) {
         entryDao.softDeleteOf(id, now)
         transactionDao.softDelete(id, now)
     }
 
-    /** Soft-deletes everything except settings; the deletions replicate to the cloud. */
+    /**
+     * Undoes a delete: every row in every table soft-deleted at exactly [stamp] is revived (a delete
+     * operation stamps all rows it removes with the same value). Returns the number of rows restored.
+     */
+    suspend fun restoreDeleted(stamp: Long): Int {
+        val restored = db.withTransaction {
+            val now = nowMicros()
+            accountDao.restoreDeletedAt(stamp, now) +
+                transactionDao.restoreDeletedAt(stamp, now) +
+                entryDao.restoreDeletedAt(stamp, now) +
+                db.assets().restoreDeletedAt(stamp, now) +
+                db.invoices().restoreDeletedAt(stamp, now) +
+                db.settings().restoreDeletedAt(stamp, now)
+        }
+        if (restored > 0) sync.requestSync()
+        return restored
+    }
+
+    /** Soft-deletes everything except report and invoice settings; the deletions replicate to the cloud. */
     suspend fun deleteAllData() {
         db.withTransaction {
             val now = nowMicros()
@@ -227,6 +264,7 @@ class LedgerRepository(
             entryDao.softDeleteAll(now)
             transactionDao.softDeleteAll(now)
             accountDao.softDeleteAll(now)
+            SettingsRepository.Keys.DATA_PREFIXES.forEach { db.settings().softDeleteWithPrefix(it, now) }
         }
         sync.requestSync()
     }
