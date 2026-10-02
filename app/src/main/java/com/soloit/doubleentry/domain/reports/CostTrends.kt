@@ -6,12 +6,14 @@ import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.indexOfGroupFor
 import java.time.YearMonth
 
-/** Monthly expense figures for one expense group or one ungrouped expense account. */
+/** Monthly expense figures for one expense group, the other-expenses bucket, or one expense account. */
 data class CostSeries(
     val key: String,
     val name: String,
     val monthly: List<Long>,
     val isGroup: Boolean,
+    /** For a group, one series per expense account in it, in account number order. */
+    val accounts: List<CostSeries> = emptyList(),
 ) {
     val total: Long get() = monthly.sum()
     val latest: Long get() = monthly.lastOrNull() ?: 0L
@@ -26,6 +28,8 @@ data class CostTrendResult(
 
 object CostTrendCalculator {
 
+    const val OTHER_KEY = "other"
+
     /** Every month from [start] to [end] inclusive; swapped when given in reverse. */
     fun months(start: YearMonth, end: YearMonth): List<YearMonth> {
         val (from, to) = if (end < start) end to start else start to end
@@ -34,34 +38,28 @@ object CostTrendCalculator {
 
     /**
      * @param monthlyMovements per account id, the balance change for each month (normal side).
-     * Groups with data come first (in configured order), followed by ungrouped accounts.
+     * @param useGroups when true, groups with data come first (in configured order), followed by one
+     * "Other expenses" series holding every expense account outside the groups; when false, one series per account.
      */
     fun compute(
         accounts: List<Account>,
         months: List<YearMonth>,
         monthlyMovements: Map<String, Map<YearMonth, Long>>,
         groups: List<AccountGroup>,
+        useGroups: Boolean = true,
     ): CostTrendResult {
-        val expenseAccounts = accounts.filter { it.type == AccountType.Expense }.sortedBy { it.number }
-        val groupTotals = List(groups.size) { LongArray(months.size) }
-        val groupHasData = BooleanArray(groups.size)
-        val ungrouped = mutableListOf<CostSeries>()
-
-        for (account in expenseAccounts) {
+        val accountSeries = accounts.filter { it.type == AccountType.Expense }.sortedBy { it.number }.map { account ->
             val perMonth = monthlyMovements[account.id].orEmpty()
-            val monthly = months.map { perMonth[it] ?: 0L }
-            val gi = groups.indexOfGroupFor(account.number)
-            if (gi >= 0) {
-                monthly.forEachIndexed { m, v -> groupTotals[gi][m] += v }
-                groupHasData[gi] = true
-            } else {
-                ungrouped += CostSeries("acct:${account.number}", "${account.number} · ${account.name}", monthly, isGroup = false)
-            }
+            CostSeries("acct:${account.number}", "${account.number} · ${account.name}", months.map { perMonth[it] ?: 0L }, isGroup = false) to account
         }
+        if (!useGroups) return CostTrendResult(months, accountSeries.map { it.first })
 
-        val series = groups.indices
-            .filter { groupHasData[it] }
-            .map { CostSeries("group:$it", groups[it].name, groupTotals[it].toList(), isGroup = true) } + ungrouped
+        val byGroup = accountSeries.groupBy({ (_, account) -> groups.indexOfGroupFor(account.number) }, { it.first })
+        fun groupSeries(key: String, name: String, members: List<CostSeries>) = CostSeries(
+            key, name, months.indices.map { m -> members.sumOf { it.monthly[m] } }, isGroup = true, accounts = members,
+        )
+        val series = groups.indices.mapNotNull { gi -> byGroup[gi]?.let { groupSeries("group:$gi", groups[gi].name, it) } } +
+            listOfNotNull(byGroup[-1]?.let { groupSeries(OTHER_KEY, "Other expenses", it) })
 
         return CostTrendResult(months, series)
     }

@@ -1,5 +1,11 @@
 package com.soloit.doubleentry.ui.reports
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +23,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.automirrored.rounded.ShowChart
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
@@ -35,14 +42,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.data.LedgerRepository
 import com.soloit.doubleentry.data.SettingsRepository
+import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.monthAbbreviation
 import com.soloit.doubleentry.domain.reports.CostSeries
 import com.soloit.doubleentry.domain.reports.CostTrendCalculator
@@ -65,10 +76,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import java.time.YearMonth
+import kotlin.math.roundToInt
 
 enum class TrendRange(val label: String) { Last12("12 months"), ThisYear("This year"), Custom("Custom") }
 
-data class TrendQuery(val range: TrendRange = TrendRange.Last12, val customStart: YearMonth = YearMonth.now().withMonth(1), val customEnd: YearMonth = YearMonth.now()) {
+enum class TrendGrouping(val label: String) { Groups("My groups"), Accounts("Accounts") }
+
+data class TrendQuery(val range: TrendRange = TrendRange.Last12, val grouping: TrendGrouping = TrendGrouping.Groups, val customStart: YearMonth = YearMonth.now().withMonth(1), val customEnd: YearMonth = YearMonth.now()) {
     val months: Pair<YearMonth, YearMonth>
         get() {
             val now = YearMonth.now()
@@ -86,6 +100,7 @@ data class CostTrendsUiState(
     val selected: CostSeries? = null,
     val selectedIndex: Int = 0,
     val selectedMonth: Int? = null,
+    val expanded: Set<String> = emptySet(),
 ) {
     val topCosts: List<CostSeries> get() = result?.series.orEmpty().filter { it.total != 0L }.sortedByDescending { it.total }
 }
@@ -94,27 +109,32 @@ class CostTrendsViewModel(ledger: LedgerRepository, settings: SettingsRepository
     val query = MutableStateFlow(TrendQuery())
     val selectedKey = MutableStateFlow<String?>(null)
     val selectedMonth = MutableStateFlow<Int?>(null)
+    val expanded = MutableStateFlow<Set<String>>(emptySet())
 
     private val result = combine(query, settings.incomeStatement, ledger.changes) { q, s, _ -> q to s }.mapLatest { (q, s) ->
         val (start, end) = q.months
         val months = CostTrendCalculator.months(start, end)
-        CostTrendCalculator.compute(ledger.getAccounts(), months, ledger.getMonthlyMovements(months.first(), months.last()), s.expenseGroups)
+        CostTrendCalculator.compute(ledger.getAccounts(), months, ledger.getMonthlyMovements(months.first(), months.last()), s.expenseGroups, q.grouping == TrendGrouping.Groups)
     }
 
-    val state: StateFlow<CostTrendsUiState> = combine(query, result, selectedKey, selectedMonth) { q, r, key, month ->
-        val base = CostTrendsUiState(query = q, result = r)
-        val series = r.series.firstOrNull { it.key == key } ?: base.topCosts.firstOrNull() ?: r.series.firstOrNull()
+    val state: StateFlow<CostTrendsUiState> = combine(query, result, selectedKey, selectedMonth, expanded) { q, r, key, month, open ->
+        val base = CostTrendsUiState(query = q, result = r, expanded = open)
+        // A selected account inside a group is charted in its group's colour.
+        val parent = r.series.firstOrNull { it.key == key || it.accounts.any { a -> a.key == key } }
+        val series = parent?.let { p -> p.accounts.firstOrNull { it.key == key } ?: p } ?: base.topCosts.firstOrNull() ?: r.series.firstOrNull()
         base.copy(
             selected = series,
-            selectedIndex = r.series.indexOf(series).coerceAtLeast(0),
+            selectedIndex = r.series.indexOf(parent ?: series).coerceAtLeast(0),
             selectedMonth = month?.takeIf { it in r.months.indices } ?: r.months.lastIndex.takeIf { it >= 0 },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CostTrendsUiState())
 
     fun setRange(range: TrendRange) { query.value = query.value.copy(range = range); selectedMonth.value = null }
+    fun setGrouping(grouping: TrendGrouping) { query.value = query.value.copy(grouping = grouping); selectedKey.value = null; expanded.value = emptySet() }
     fun setCustomStart(value: YearMonth) { query.value = query.value.copy(customStart = value); selectedMonth.value = null }
     fun setCustomEnd(value: YearMonth) { query.value = query.value.copy(customEnd = value); selectedMonth.value = null }
     fun select(series: CostSeries) { selectedKey.value = series.key }
+    fun toggleExpanded(series: CostSeries) { expanded.value = expanded.value.let { if (series.key in it) it - series.key else it + series.key } }
     fun selectMonth(index: Int) { selectedMonth.value = index }
 }
 
@@ -132,6 +152,9 @@ fun CostTrendsReportPage(onOpenSettings: () -> Unit) {
                 SegmentedChoice(TrendRange.entries, state.query.range, vm::setRange, { it.label }, Modifier.weight(1f))
                 SettingsShortcut(onOpenSettings)
             }
+        }
+        item {
+            SegmentedChoice(TrendGrouping.entries, state.query.grouping, vm::setGrouping, { it.label })
         }
         if (state.query.range == TrendRange.Custom) {
             item {
@@ -183,7 +206,16 @@ fun CostTrendsReportPage(onOpenSettings: () -> Unit) {
                 val max = top.first().total.coerceAtLeast(1)
                 itemsIndexed(top, key = { _, s -> s.key }) { rank, s ->
                     val color = palette[result.series.indexOf(s) % palette.size]
-                    TopCostRow(rank + 1, s, s.total.toFloat() / max, color, selected = s.key == series.key) { vm.select(s) }
+                    TopCostRow(
+                        rank = rank + 1,
+                        series = s,
+                        share = s.total.toFloat() / max,
+                        color = color,
+                        selectedKey = series.key,
+                        expanded = s.key in state.expanded,
+                        onClick = { vm.select(s); if (s.accounts.isNotEmpty()) vm.toggleExpanded(s) },
+                        onSelectAccount = vm::select,
+                    )
                 }
             }
         }
@@ -227,11 +259,21 @@ private fun Figure(label: String, cents: Long, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TopCostRow(rank: Int, series: CostSeries, share: Float, color: androidx.compose.ui.graphics.Color, selected: Boolean, onClick: () -> Unit) {
+private fun TopCostRow(
+    rank: Int,
+    series: CostSeries,
+    share: Float,
+    color: Color,
+    selectedKey: String,
+    expanded: Boolean,
+    onClick: () -> Unit,
+    onSelectAccount: (CostSeries) -> Unit,
+) {
+    val breakdown = series.accounts.filter { it.total != 0L }.sortedByDescending { it.total }
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.large,
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+        color = if (series.key == selectedKey) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -245,21 +287,68 @@ private fun TopCostRow(rank: Int, series: CostSeries, share: Float, color: andro
                 Column(Modifier.weight(1f)) {
                     Text(series.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        (if (series.isGroup) "Group · " else "") + "avg ${com.soloit.doubleentry.domain.Money.formatWhole(series.perMonth)} / month",
+                        (if (series.isGroup) "Group · " else "") + "avg ${Money.formatWhole(series.perMonth)} / month",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 MoneyText(series.total, fontWeight = FontWeight.Medium)
+                if (breakdown.isNotEmpty()) {
+                    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
+                    Icon(
+                        Icons.Rounded.ExpandMore,
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        modifier = Modifier.padding(start = 4.dp).rotate(rotation),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Spacer(Modifier.height(10.dp))
-            LinearProgressIndicator(
-                progress = { share.coerceIn(0f, 1f) },
-                color = color,
-                trackColor = color.copy(alpha = 0.12f),
-                drawStopIndicator = {},
-                modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
-            )
+            ShareBar(share, color)
+            AnimatedVisibility(expanded && breakdown.isNotEmpty(), enter = expandVertically(), exit = shrinkVertically()) {
+                Column(Modifier.padding(top = 8.dp)) {
+                    val groupTotal = series.total.takeIf { it != 0L } ?: 1L
+                    breakdown.forEach { account ->
+                        AccountShareRow(account, account.total.toFloat() / groupTotal, color, account.key == selectedKey) { onSelectAccount(account) }
+                    }
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun AccountShareRow(account: CostSeries, share: Float, color: Color, selected: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHighest else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(start = 36.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(account.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(
+                "${(share * 100).roundToInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp),
+            )
+            MoneyText(account.total, style = MaterialTheme.typography.bodyMedium)
+        }
+        Spacer(Modifier.height(6.dp))
+        ShareBar(share, color.copy(alpha = 0.7f), height = 4.dp)
+    }
+}
+
+@Composable
+private fun ShareBar(share: Float, color: Color, height: Dp = 6.dp) {
+    LinearProgressIndicator(
+        progress = { share.coerceIn(0f, 1f) },
+        color = color,
+        trackColor = color.copy(alpha = 0.12f),
+        drawStopIndicator = {},
+        modifier = Modifier.fillMaxWidth().height(height).clip(CircleShape),
+    )
 }
