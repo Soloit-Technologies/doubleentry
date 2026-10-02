@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- DoubleEntry brand emerald, carried over from the MAUI app icon. -->
-    <color name="brand">#0F7D6B</color>
+    <!-- DoubleEntry brand emerald, as a diagonal gradient behind the logo. -->
+    <color name="brand_gradient_start">#1BAE8F</color>
+    <color name="brand_gradient_end">#075247</color>
     <color name="window_background">#F5FBF8</color>
 </resources>

@@ -6,7 +6,7 @@
     android:viewportWidth="48"
     android:viewportHeight="48">
     <path
-        android:fillColor="@color/shortcut_background"
+        android:fillColor="@color/brand_gradient_start"
         android:pathData="M24,0a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z" />
     <group
         android:translateX="12"
