@@ -98,18 +98,31 @@ class ReportsTest {
     }
 
     @Test
-    fun costTrendsGroupFirstThenAccounts() {
+    fun costTrendsGroupsThenOther() {
         val months = CostTrendCalculator.months(YearMonth.of(2026, 3), YearMonth.of(2026, 1))
         assertEquals(listOf(YearMonth.of(2026, 1), YearMonth.of(2026, 2), YearMonth.of(2026, 3)), months)
-        val movements = mapOf(
-            "rent" to mapOf(YearMonth.of(2026, 1) to 10_000L, YearMonth.of(2026, 2) to 10_000L),
-            "food" to mapOf(YearMonth.of(2026, 3) to 3_000L),
-            "tax" to mapOf(YearMonth.of(2026, 2) to 1_000L),
-        )
-        val result = CostTrendCalculator.compute(accounts, months, movements, listOf(AccountGroup("Home", listOf("5"))))
-        assertEquals(listOf("group:0", "acct:6010", "acct:8910"), result.series.map { it.key })
+        val result = CostTrendCalculator.compute(accounts, months, trendMovements, listOf(AccountGroup("Home", listOf("5"))))
+        assertEquals(listOf("group:0", CostTrendCalculator.OTHER_KEY), result.series.map { it.key })
         assertEquals(listOf(10_000L, 10_000L, 0L), result.series[0].monthly)
+        assertEquals("Other expenses", result.series[1].name)
+        assertEquals(listOf(0L, 1_000L, 3_000L), result.series[1].monthly)
+        assertEquals(listOf("acct:5010"), result.series[0].accounts.map { it.key })
+        assertEquals(listOf("acct:6010", "acct:8910"), result.series[1].accounts.map { it.key })
+        assertEquals(1_000L, result.series[1].accounts[1].total)
+    }
+
+    @Test
+    fun costTrendsRawAccounts() {
+        val months = CostTrendCalculator.months(YearMonth.of(2026, 1), YearMonth.of(2026, 3))
+        val result = CostTrendCalculator.compute(accounts, months, trendMovements, listOf(AccountGroup("Home", listOf("5"))), useGroups = false)
+        assertEquals(listOf("acct:5010", "acct:6010", "acct:8910"), result.series.map { it.key })
         assertEquals("6010 · Groceries", result.series[1].name)
         assertEquals(3_000L, result.series[1].latest)
     }
+
+    private val trendMovements = mapOf(
+        "rent" to mapOf(YearMonth.of(2026, 1) to 10_000L, YearMonth.of(2026, 2) to 10_000L),
+        "food" to mapOf(YearMonth.of(2026, 3) to 3_000L),
+        "tax" to mapOf(YearMonth.of(2026, 2) to 1_000L),
+    )
 }
