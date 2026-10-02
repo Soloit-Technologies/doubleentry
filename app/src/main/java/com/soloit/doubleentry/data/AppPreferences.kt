@@ -14,16 +14,46 @@ data class Appearance(
     val dynamicColor: Boolean = false,
 )
 
-/** Device-local UI preferences (not synced). */
+data class ReminderPrefs(
+    val enabled: Boolean = false,
+    /** Remind about unpaid invoices due within this many days (overdue ones are always included). */
+    val daysBefore: Int = 3,
+)
+
+/** Device-local preferences (not synced): appearance, invoice reminders and the app lock. */
 class AppPreferences(context: Context) {
     private val prefs = context.getSharedPreferences("appearance", Context.MODE_PRIVATE)
+    private val device = context.getSharedPreferences("device", Context.MODE_PRIVATE)
 
     private val _appearance = MutableStateFlow(read())
     val appearance: StateFlow<Appearance> = _appearance.asStateFlow()
 
+    private val _reminders = MutableStateFlow(
+        ReminderPrefs(device.getBoolean("remindersEnabled", false), device.getInt("reminderDaysBefore", 3)),
+    )
+    val reminders: StateFlow<ReminderPrefs> = _reminders.asStateFlow()
+
+    private val _appLock = MutableStateFlow(device.getBoolean("appLock", false))
+
+    /** Require the screen lock or a fingerprint to open the app. */
+    val appLock: StateFlow<Boolean> = _appLock.asStateFlow()
+
     fun setThemeMode(mode: ThemeMode) = update { it.copy(themeMode = mode) }
 
     fun setDynamicColor(enabled: Boolean) = update { it.copy(dynamicColor = enabled) }
+
+    fun setReminders(value: ReminderPrefs) {
+        device.edit {
+            putBoolean("remindersEnabled", value.enabled)
+            putInt("reminderDaysBefore", value.daysBefore)
+        }
+        _reminders.value = value
+    }
+
+    fun setAppLock(enabled: Boolean) {
+        device.edit { putBoolean("appLock", enabled) }
+        _appLock.value = enabled
+    }
 
     private fun update(transform: (Appearance) -> Appearance) {
         val next = transform(_appearance.value)

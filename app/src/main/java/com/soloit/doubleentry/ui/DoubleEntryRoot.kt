@@ -10,6 +10,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
@@ -26,9 +28,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -47,6 +55,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.soloit.doubleentry.AppContainer
+import com.soloit.doubleentry.system.LaunchRequest
+import com.soloit.doubleentry.system.LaunchTarget
+import com.soloit.doubleentry.ui.recurring.RecurringEditorScreen
+import com.soloit.doubleentry.ui.recurring.RecurringListScreen
 import com.soloit.doubleentry.ui.accounts.AccountEditorScreen
 import com.soloit.doubleentry.ui.accounts.AccountLedgerScreen
 import com.soloit.doubleentry.ui.accounts.AccountsScreen
@@ -67,6 +79,7 @@ import com.soloit.doubleentry.ui.settings.SettingsScreen
 import com.soloit.doubleentry.ui.transactions.TransactionDetailScreen
 import com.soloit.doubleentry.ui.transactions.TransactionEditorScreen
 import com.soloit.doubleentry.ui.transactions.TransactionsScreen
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlin.reflect.KClass
 
@@ -93,6 +106,8 @@ import kotlin.reflect.KClass
 @Serializable data object IncomeStatementSettingsRoute
 @Serializable data object CashflowSettingsRoute
 @Serializable data object InvoiceSettingsRoute
+@Serializable data object RecurringListRoute
+@Serializable data class RecurringEditorRoute(val ruleId: String? = null, val fromTransactionId: String? = null)
 
 private data class TopLevel(val route: Any, val type: KClass<*>, val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
 
@@ -118,15 +133,28 @@ inline fun <reified VM : ViewModel> appViewModel(key: String? = null, crossinlin
 // ---- Root -----------------------------------------------------------------------------------
 
 @Composable
-fun DoubleEntryRoot(container: AppContainer) {
+fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = null, onLaunchHandled: () -> Unit = {}) {
     CompositionLocalProvider(LocalAppContainer provides container) {
         val nav = rememberNavController()
         val entry by nav.currentBackStackEntryAsState()
         val destination = entry?.destination
         val showBar = destination == null || topLevel.any { destination.hasRoute(it.type) }
+        val snackbar = remember { SnackbarHostState() }
+
+        // Deletes elsewhere close their screen at once, so the undo snackbar lives here.
+        LaunchedEffect(Unit) {
+            container.undo.events.collect { event ->
+                snackbar.currentSnackbarData?.dismiss()
+                launch {
+                    val result = snackbar.showSnackbar(event.message, actionLabel = "Undo", duration = SnackbarDuration.Long)
+                    if (result == SnackbarResult.ActionPerformed) container.undo.run(event)
+                }
+            }
+        }
 
         Scaffold(
             contentWindowInsets = WindowInsets(0),
+            snackbarHost = { SnackbarHost(snackbar, if (showBar) Modifier else Modifier.navigationBarsPadding().imePadding()) },
             bottomBar = {
                 AnimatedVisibility(
                     visible = showBar,
@@ -193,6 +221,8 @@ fun DoubleEntryRoot(container: AppContainer) {
                         onBack = back,
                         onEdit = { nav.navigate(TransactionEditorRoute(editId = id)) },
                         onDuplicate = { nav.navigate(TransactionEditorRoute(duplicateId = id)) },
+                        onRepeat = { nav.navigate(RecurringEditorRoute(fromTransactionId = id)) },
+                        onOpenRecurring = { nav.navigate(RecurringEditorRoute(ruleId = it)) },
                     )
                 }
                 composable<TransactionEditorRoute> { e -> TransactionEditorScreen(e.toRoute<TransactionEditorRoute>(), onDone = back) }
@@ -249,6 +279,7 @@ fun DoubleEntryRoot(container: AppContainer) {
                         onIncomeStatement = { nav.navigate(IncomeStatementSettingsRoute) },
                         onCashflow = { nav.navigate(CashflowSettingsRoute) },
                         onInvoices = { nav.navigate(InvoiceSettingsRoute) },
+                        onRecurring = { nav.navigate(RecurringListRoute) },
                     )
                 }
                 composable<CloudSyncRoute> { CloudSyncScreen(onBack = back) }
@@ -257,7 +288,30 @@ fun DoubleEntryRoot(container: AppContainer) {
                 composable<IncomeStatementSettingsRoute> { IncomeStatementSettingsScreen(onBack = back) }
                 composable<CashflowSettingsRoute> { CashflowSettingsScreen(onBack = back) }
                 composable<InvoiceSettingsRoute> { InvoiceSettingsScreen(onBack = back) }
+                composable<RecurringListRoute> {
+                    RecurringListScreen(
+                        onBack = back,
+                        onOpen = { nav.navigate(RecurringEditorRoute(ruleId = it)) },
+                        onNew = { nav.navigate(RecurringEditorRoute()) },
+                    )
+                }
+                composable<RecurringEditorRoute> { e -> RecurringEditorScreen(e.toRoute<RecurringEditorRoute>(), onDone = back) }
             }
+        }
+
+        // Shortcut, notification and widget taps.
+        LaunchedEffect(launchRequest) {
+            val request = launchRequest ?: return@LaunchedEffect
+            when (request.target) {
+                LaunchTarget.NewTransaction -> nav.navigate(TransactionEditorRoute())
+                LaunchTarget.NewInvoice -> nav.navigate(InvoiceEditorRoute())
+                LaunchTarget.Invoices -> nav.navigateTopLevel(InvoicesRoute)
+                LaunchTarget.Invoice -> {
+                    nav.navigateTopLevel(InvoicesRoute)
+                    request.id?.let { nav.navigate(InvoiceDetailRoute(it)) }
+                }
+            }
+            onLaunchHandled()
         }
     }
 }

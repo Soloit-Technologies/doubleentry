@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.Payments
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -43,12 +44,16 @@ import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.data.InvoiceRepository
 import com.soloit.doubleentry.data.LedgerRepository
 import com.soloit.doubleentry.data.SettingsRepository
+import com.soloit.doubleentry.data.UndoManager
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.Invoice
+import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.formatMedium
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AccountPickerSheet
+import com.soloit.doubleentry.ui.components.AmountField
+import com.soloit.doubleentry.ui.components.AmountRow
 import com.soloit.doubleentry.ui.components.ConfirmDialog
 import com.soloit.doubleentry.ui.components.DateField
 import com.soloit.doubleentry.ui.components.EmptyState
@@ -73,12 +78,14 @@ data class InvoiceDetailUiState(
     val booking: Transaction? = null,
     val paidFrom: Account? = null,
     val paymentAccounts: List<Account> = emptyList(),
+    val accounts: List<Account> = emptyList(),
 )
 
 class InvoiceDetailViewModel(
     private val invoices: InvoiceRepository,
-    ledger: LedgerRepository,
+    private val ledger: LedgerRepository,
     settings: SettingsRepository,
+    private val undo: UndoManager,
     private val id: String,
 ) : ViewModel() {
     val message = MutableStateFlow<String?>(null)
@@ -95,12 +102,19 @@ class InvoiceDetailViewModel(
             booking = ledger.getTransaction(invoice.bookingTransactionId),
             paidFrom = invoice.paidFromAccountId?.let { pid -> accounts.firstOrNull { it.id == pid } },
             paymentAccounts = accounts.filter { it.id != invoice.outstandingAccountId && (allowed.isEmpty() || it.number in allowed) },
+            accounts = accounts,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), InvoiceDetailUiState())
 
-    fun markPaid(accountId: String, date: LocalDate) = run { invoices.markPaid(id, accountId, date) }
+    /** Pays [amount] (everything left when null or equal to it). */
+    fun pay(accountId: String, date: LocalDate, amount: Long?) = run { invoices.recordPayment(id, accountId, date, amount) }
     fun updatePaidDate(date: LocalDate) = run { invoices.updatePaidDate(id, date) }
-    fun delete() = run { invoices.deleteInvoice(id); closed.value = true }
+    fun delete() = run {
+        val title = state.value.booking?.title
+        val stamp = invoices.deleteInvoice(id)
+        undo.offerRestore(if (title.isNullOrBlank()) "Invoice deleted" else "Deleted invoice \u201C$title\u201D", ledger, stamp)
+        closed.value = true
+    }
 
     private fun run(block: suspend () -> Unit) = viewModelScope.launch {
         try { block() } catch (e: Exception) { message.value = e.message }
@@ -109,13 +123,15 @@ class InvoiceDetailViewModel(
 
 @Composable
 fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit, onEdit: () -> Unit, onOpenTransaction: (String) -> Unit) {
-    val vm = appViewModel { InvoiceDetailViewModel(it.invoices, it.ledger, it.settings, invoiceId) }
+    val vm = appViewModel { InvoiceDetailViewModel(it.invoices, it.ledger, it.settings, it.undo, invoiceId) }
     val state by vm.state.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val closed by vm.closed.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
     var choosingAccount by remember { mutableStateOf(false) }
     var paymentDate by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    // Blank means "everything that is left".
+    var paymentAmount by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(closed) { if (closed) onBack() }
 
     Scaffold(
@@ -145,6 +161,18 @@ fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit, onEdit: () -> Uni
                     Text(state.booking?.title ?: "Invoice", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(8.dp))
                     MoneyText(invoice.amountDue, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
+                    if (!invoice.isPaid && invoice.partiallyPaid > 0) {
+                        Text(
+                            "${Money.format(invoice.partiallyPaid)} paid · ${Money.format(invoice.remaining)} left",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { (invoice.partiallyPaid.toFloat() / invoice.amountDue).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     Spacer(Modifier.height(12.dp))
                     DueStatusChip(invoice.dueStatus())
                     state.booking?.description?.takeIf { it.isNotBlank() }?.let {
@@ -162,21 +190,52 @@ fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit, onEdit: () -> Uni
                     }
                 }
 
+                if (invoice.partialPayments.isNotEmpty()) {
+                    SectionHeader("Instalments")
+                    SectionCard {
+                        invoice.partialPayments.forEach { p ->
+                            AmountRow(
+                                label = p.date.formatMedium(),
+                                cents = p.amount,
+                                supporting = state.accounts.firstOrNull { it.id == p.accountId }?.let { "From ${it.name}" },
+                                onClick = { onOpenTransaction(p.transactionId) },
+                            )
+                        }
+                    }
+                }
+
                 if (!invoice.isPaid) {
+                    val amount = paymentAmount.takeIf { it.isNotBlank() }?.let { Money.parse(it) }
+                    val invalidAmount = paymentAmount.isNotBlank() && (amount == null || amount <= 0 || amount > invoice.remaining)
+                    val partial = amount != null && amount < invoice.remaining
                     SectionHeader("Pay")
                     SectionCard(contentPadding = PaddingValues(16.dp)) {
                         Text(
-                            "Posts a payment of the full amount from the account you choose and marks the invoice as paid.",
+                            "Posts a payment from the account you choose. Pay everything that is left to mark the invoice as paid, " +
+                                "or enter a smaller amount to record an instalment.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(12.dp))
+                        AmountField(
+                            paymentAmount,
+                            { paymentAmount = it },
+                            "Amount (${Money.format(invoice.remaining)} left)",
+                            Modifier.fillMaxWidth(),
+                            isError = invalidAmount,
+                            supportingText = when {
+                                invalidAmount -> "Enter at most ${Money.format(invoice.remaining)}"
+                                paymentAmount.isBlank() -> "Leave empty to pay everything that is left"
+                                else -> null
+                            },
+                        )
+                        Spacer(Modifier.height(4.dp))
                         DateField("Payment date", LocalDate.parse(paymentDate), { paymentDate = it.toString() }, Modifier.fillMaxWidth())
                         Spacer(Modifier.height(12.dp))
-                        Button(onClick = { choosingAccount = true }, modifier = Modifier.fillMaxWidth()) {
+                        Button(onClick = { choosingAccount = true }, enabled = !invalidAmount, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Rounded.Payments, null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Mark as paid…")
+                            Text(if (partial) "Record instalment…" else "Mark as paid…")
                         }
                     }
                 } else {
@@ -204,7 +263,11 @@ fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit, onEdit: () -> Uni
             AccountPickerSheet(
                 title = "Pay from",
                 accounts = state.paymentAccounts,
-                onSelect = { account -> choosingAccount = false; vm.markPaid(account.id, LocalDate.parse(paymentDate)) },
+                onSelect = { account ->
+                    choosingAccount = false
+                    vm.pay(account.id, LocalDate.parse(paymentDate), paymentAmount.takeIf { it.isNotBlank() }?.let { Money.parse(it) })
+                    paymentAmount = ""
+                },
                 onDismiss = { choosingAccount = false },
             )
         }
@@ -212,7 +275,7 @@ fun InvoiceDetailScreen(invoiceId: String, onBack: () -> Unit, onEdit: () -> Uni
     if (confirmDelete) {
         ConfirmDialog(
             title = "Delete invoice?",
-            message = "This deletes the invoice and reverses its booking (and payment, if any) transactions.",
+            message = "This deletes the invoice and reverses its booking and payment transactions.",
             confirmLabel = "Delete",
             destructive = true,
             onConfirm = { confirmDelete = false; vm.delete() },

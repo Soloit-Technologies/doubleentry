@@ -2,8 +2,10 @@ package com.soloit.doubleentry.sync
 
 import androidx.room.withTransaction
 import com.soloit.doubleentry.data.local.AppDatabase
+import com.soloit.doubleentry.data.local.EntryEntity
 import com.soloit.doubleentry.data.local.SyncDao
 import com.soloit.doubleentry.data.local.SyncEntity
+import com.soloit.doubleentry.data.local.nowMicros
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -35,11 +37,24 @@ class SyncEngine(
     suspend fun pullAll(auth: AccessTokenProvider): Boolean {
         val watermarks = mutableMapOf<SyncTable, String>()
         var changed = false
+        // Which version of each pulled transaction header won; its lines must win with it.
+        val headersFromServer = mutableSetOf<String>()
+        val headersKeptLocal = mutableSetOf<String>()
         for (table in SyncTable.entries) {
             val (applied, watermark) = when (table) {
                 SyncTable.Accounts -> pull(table, AccountRow.serializer(), db.accounts(), auth) { it.toEntity() }
-                SyncTable.Transactions -> pull(table, TransactionRow.serializer(), db.transactions(), auth) { it.toEntity() }
-                SyncTable.Entries -> pull(table, EntryRow.serializer(), db.entries(), auth) { it.toEntity() }
+                SyncTable.Transactions -> pull(
+                    table, TransactionRow.serializer(), db.transactions(), auth,
+                    onDecided = { fromServer, keptLocal ->
+                        headersFromServer += fromServer.map { it.id }
+                        headersKeptLocal += keptLocal.map { it.id }
+                    },
+                ) { it.toEntity() }
+                SyncTable.Entries -> pull(
+                    table, EntryRow.serializer(), db.entries(), auth,
+                    onDecided = { fromServer, _ -> dropLosingLocalLines(headersFromServer, fromServer) },
+                    adjust = { entries -> dropLosingServerLines(headersKeptLocal, entries) },
+                ) { it.toEntity() }
                 SyncTable.Assets -> pull(table, AssetRow.serializer(), db.assets(), auth) { it.toEntity() }
                 SyncTable.Invoices -> pull(table, InvoiceRow.serializer(), db.invoices(), auth) { it.toEntity() }
                 SyncTable.Settings -> pull(table, UserSettingRow.serializer(), db.settings(), auth, beforeWrite = { rows ->
@@ -65,12 +80,55 @@ class SyncEngine(
             push(SyncTable.Settings, db.settings(), auth) { json.encodeToJsonElement(UserSettingRow.serializer(), UserSettingRow.from(it, userId)) }
     }
 
+    /**
+     * Lines belong to their header. Editing a transaction replaces its lines with new rows, so when
+     * two devices edited the same transaction, row-level last-write-wins would keep both line sets
+     * (doubling the amounts). Instead the version whose header wins keeps its lines:
+     *
+     * - [dropLosingServerLines]: the local header won and its lines were replaced locally, so new
+     *   lines from the server for that transaction are stored as tombstones (and pushed as such).
+     * - [dropLosingLocalLines]: the server's header won and came with new lines, so locally replaced
+     *   lines that the server doesn't know are tombstoned. (A header-only change on the other device,
+     *   such as a new date, brings no lines and leaves the local lines alone.)
+     *
+     * Lines with deterministic ids (depreciation, recurring postings) exist on both sides with the
+     * same ids and are left to the normal row-level rule.
+     */
+    private suspend fun dropLosingServerLines(headersKeptLocal: Set<String>, incoming: List<EntryEntity>): List<EntryEntity> {
+        if (headersKeptLocal.isEmpty()) return incoming
+        val entries = db.entries()
+        val known = entries.byIds(incoming.map { it.id }).map { it.id }.toSet()
+        val replacedLocally = mutableMapOf<String, Boolean>()
+        val now = nowMicros()
+        return incoming.map { e ->
+            val losing = e.deletedAt == null && e.id !in known && e.transactionId in headersKeptLocal &&
+                replacedLocally.getOrPut(e.transactionId) { entries.liveDirtyOf(e.transactionId).isNotEmpty() }
+            if (losing) e.copy(deletedAt = now, updatedAt = now, isDirty = true) else e
+        }
+    }
+
+    private suspend fun dropLosingLocalLines(headersFromServer: Set<String>, incoming: List<EntryRow>) {
+        if (headersFromServer.isEmpty()) return
+        val entries = db.entries()
+        val incomingIds = incoming.map { it.id }.toSet()
+        val replacedRemotely = incoming.filter { it.deletedAt == null }.map { it.transactionId }.toSet()
+        val now = nowMicros()
+        for (transactionId in headersFromServer intersect replacedRemotely) {
+            val losing = entries.liveDirtyOf(transactionId).filter { it.id !in incomingIds }
+            if (losing.isNotEmpty()) entries.upsertAll(losing.map { it.copy(deletedAt = now, updatedAt = now, isDirty = true) })
+        }
+    }
+
     private suspend fun <R : SyncRow, E : SyncEntity> pull(
         table: SyncTable,
         serializer: KSerializer<R>,
         dao: SyncDao<E>,
         auth: AccessTokenProvider,
         beforeWrite: suspend (List<R>) -> Unit = {},
+        /** Called inside the write transaction with the rows applied from the server and the ones where the local row was kept. */
+        onDecided: suspend (fromServer: List<R>, keptLocal: List<R>) -> Unit = { _, _ -> },
+        /** Last chance to change the entities before they are written. */
+        adjust: suspend (List<E>) -> List<E> = { it },
         toEntity: (R) -> E,
     ): Pair<Int, String?> {
         val since = prefs.watermark(table)
@@ -86,15 +144,20 @@ class SyncEngine(
 
         var applied = 0
         db.withTransaction {
+            val fromServer = mutableListOf<R>()
+            val keptLocal = mutableListOf<R>()
             for (chunk in rows.chunked(CHUNK)) {
                 val existing = dao.byIds(chunk.map { it.id }.distinct()).associateBy { it.id }
                 // Last write wins: keep the local row when it is as new as (or newer than) the server's.
-                val newer = chunk.filter { row -> existing[row.id]?.let { it.updatedAt < row.updatedAtMicros } ?: true }
+                val (newer, older) = chunk.partition { row -> existing[row.id]?.let { it.updatedAt < row.updatedAtMicros } ?: true }
+                keptLocal += older
                 if (newer.isEmpty()) continue
                 beforeWrite(newer)
-                dao.upsertAll(newer.map(toEntity))
+                dao.upsertAll(adjust(newer.map(toEntity)))
+                fromServer += newer
                 applied += newer.size
             }
+            onDecided(fromServer, keptLocal)
         }
         val watermark = formatTimestamp(rows.maxOf { it.updatedAtMicros })
         return applied to watermark

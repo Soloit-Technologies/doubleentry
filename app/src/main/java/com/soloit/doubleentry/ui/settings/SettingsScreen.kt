@@ -1,6 +1,10 @@
 package com.soloit.doubleentry.ui.settings
 
+import android.Manifest
 import android.os.Build
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,12 +21,16 @@ import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.AccountBalance
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.EventRepeat
+import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Payments
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Wallpaper
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -34,17 +42,26 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.soloit.doubleentry.BuildConfig
+import com.soloit.doubleentry.data.ReminderPrefs
 import com.soloit.doubleentry.data.ThemeMode
+import com.soloit.doubleentry.system.AppLock
+import com.soloit.doubleentry.system.InvoiceReminders
 import com.soloit.doubleentry.ui.LocalAppContainer
 import com.soloit.doubleentry.ui.components.GroupedItem
 import com.soloit.doubleentry.ui.components.IconAvatar
+import com.soloit.doubleentry.ui.components.MessageDialog
 import com.soloit.doubleentry.ui.components.SectionHeader
 import com.soloit.doubleentry.ui.components.SegmentedChoice
 import java.text.DateFormat
@@ -59,10 +76,45 @@ fun SettingsScreen(
     onIncomeStatement: () -> Unit,
     onCashflow: () -> Unit,
     onInvoices: () -> Unit,
+    onRecurring: () -> Unit,
 ) {
     val container = LocalAppContainer.current
+    val context = LocalContext.current
+    val hostActivity = LocalActivity.current
     val appearance by container.preferences.appearance.collectAsStateWithLifecycle()
+    val reminders by container.preferences.reminders.collectAsStateWithLifecycle()
+    val appLock by container.preferences.appLock.collectAsStateWithLifecycle()
     val sync by container.sync.status.collectAsStateWithLifecycle()
+    var notice by remember { mutableStateOf<String?>(null) }
+
+    fun setReminders(value: ReminderPrefs) {
+        container.preferences.setReminders(value)
+        InvoiceReminders.schedule(context, value)
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            setReminders(reminders.copy(enabled = true))
+        } else {
+            notice = "Allow notifications for DoubleEntry in the system settings to get invoice reminders."
+        }
+    }
+    fun toggleReminders(on: Boolean) {
+        // canNotify() is only false on Android 13+, where the permission can be requested.
+        if (on && !InvoiceReminders.canNotify(context)) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            setReminders(reminders.copy(enabled = on))
+        }
+    }
+    fun toggleLock(on: Boolean) {
+        val activity = hostActivity as? FragmentActivity ?: return
+        when {
+            !on -> container.appLock.setEnabled(false)
+            !AppLock.isAvailable(context) -> notice = "Set up a screen lock (PIN, pattern, password or fingerprint) on this device first."
+            // Confirm once, so the lock can't be switched on with a screen lock the user can't pass.
+            else -> AppLock.authenticate(activity, "Turn on app lock") { error -> if (error == null) container.appLock.setEnabled(true) }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -113,6 +165,52 @@ fun SettingsScreen(
                 }
             }
 
+            item { SectionHeader("Automation") }
+            item {
+                Column {
+                    GroupedItem(0, 2, onClick = onRecurring) {
+                        SettingRow(Icons.Rounded.EventRepeat, "Recurring transactions", "Rent, salary and subscriptions that post themselves", chevron = true)
+                    }
+                    GroupedItem(1, 2, onClick = { toggleReminders(!reminders.enabled) }) {
+                        Column {
+                            SettingRow(
+                                icon = Icons.Rounded.NotificationsActive,
+                                title = "Invoice reminders",
+                                subtitle = if (reminders.enabled) {
+                                    "A notification each morning for unpaid invoices due within ${reminders.daysBefore} day${if (reminders.daysBefore == 1) "" else "s"}"
+                                } else {
+                                    "Get notified before invoices are due"
+                                },
+                                trailing = { Switch(checked = reminders.enabled, onCheckedChange = ::toggleReminders) },
+                            )
+                            if (reminders.enabled) {
+                                Row(Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf(1, 3, 7).forEach { days ->
+                                        FilterChip(
+                                            selected = reminders.daysBefore == days,
+                                            onClick = { setReminders(reminders.copy(daysBefore = days)) },
+                                            label = { Text(if (days == 1) "1 day" else "$days days") },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item { SectionHeader("Security") }
+            item {
+                GroupedItem(0, 1, onClick = { toggleLock(!appLock) }) {
+                    SettingRow(
+                        icon = Icons.Rounded.Fingerprint,
+                        title = "App lock",
+                        subtitle = "Ask for your fingerprint or screen lock when opening the app. Hides the widget amount.",
+                        trailing = { Switch(checked = appLock, onCheckedChange = ::toggleLock) },
+                    )
+                }
+            }
+
             item { SectionHeader("Reports") }
             item {
                 Column {
@@ -138,7 +236,7 @@ fun SettingsScreen(
             item { SectionHeader("Data") }
             item {
                 GroupedItem(0, 1, onClick = onDataManagement) {
-                    SettingRow(Icons.Rounded.Storage, "Data management", "Export, import, repair and delete", chevron = true)
+                    SettingRow(Icons.Rounded.Storage, "Data management", "Backups, CSV export, repair and delete", chevron = true)
                 }
             }
 
@@ -150,6 +248,7 @@ fun SettingsScreen(
             }
         }
     }
+    notice?.let { MessageDialog("Not available", it) { notice = null } }
 }
 
 @Composable

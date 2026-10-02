@@ -12,9 +12,12 @@ import com.soloit.doubleentry.domain.BalanceSheetSettings
 import com.soloit.doubleentry.domain.CashflowSettings
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
+import com.soloit.doubleentry.domain.Frequency
 import com.soloit.doubleentry.domain.IncomeStatementSettings
 import com.soloit.doubleentry.domain.InvoiceSettings
 import com.soloit.doubleentry.domain.LedgerException
+import com.soloit.doubleentry.domain.Reconciliation
+import com.soloit.doubleentry.domain.RecurringRule
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.domain.newId
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +25,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import java.io.InputStream
@@ -60,6 +65,7 @@ class BackupService(
             )
         }
 
+        val exportedInvoiceIds = mutableListOf<String>()
         val invoices = db.invoices().live().sortedWith(compareBy({ it.dueDate }, { it.id })).mapNotNull { i ->
             InvoiceDto(
                 amountDue = i.amountDueCents,
@@ -72,7 +78,7 @@ class BackupService(
                 paidDate = i.paidDate?.toString(),
                 paymentTransactionIndex = i.paymentTransactionId?.let { transactionIndex[it] },
                 paidFromAccountNumber = i.paidFromAccountId?.let { accountNumbers[it] },
-            )
+            ).also { exportedInvoiceIds += i.id }
         }
 
         val backup = LedgerBackup(
@@ -89,7 +95,10 @@ class BackupService(
             },
             assets = assets,
             invoices = invoices,
-            extensions = mapOf("settings" to json.encodeToJsonElement(SettingsDto.serializer(), currentSettings())),
+            extensions = mapOf(
+                "settings" to json.encodeToJsonElement(SettingsDto.serializer(), currentSettings()),
+                "android" to json.encodeToJsonElement(AndroidDataDto.serializer(), androidData(accountNumbers, transactionIndex, exportedInvoiceIds)),
+            ),
         )
         output.write(json.encodeToString(LedgerBackup.serializer(), backup).toByteArray(Charsets.UTF_8))
         output.flush()
@@ -131,6 +140,7 @@ class BackupService(
             db.entries().softDeleteAll(now)
             db.transactions().softDeleteAll(now)
             db.accounts().softDeleteAll(now)
+            SettingsRepository.Keys.DATA_PREFIXES.forEach { db.settings().softDeleteWithPrefix(it, now) }
 
             val numberToId = mutableMapOf<Int, String>()
             for (a in backup.accounts) {
@@ -174,10 +184,12 @@ class BackupService(
                 )
             }
 
-            for (inv in backup.invoices) {
+            val indexToInvoiceId = mutableMapOf<Int, String>()
+            backup.invoices.forEachIndexed { index, inv ->
+                val invoiceId = newId().also { indexToInvoiceId[index] = it }
                 db.invoices().upsert(
                     InvoiceEntity(
-                        id = newId(),
+                        id = invoiceId,
                         amountDueCents = inv.amountDue,
                         invoiceDate = parseDate(inv.invoiceDate, "invoice"),
                         dueDate = parseDate(inv.dueDate, "invoice"),
@@ -198,12 +210,82 @@ class BackupService(
                     ),
                 )
             }
+
+            backup.extensions?.get("android")?.let { element ->
+                runCatching { json.decodeFromJsonElement(AndroidDataDto.serializer(), element) }.getOrNull()
+                    ?.let { applyAndroidData(it, numberToId, indexToTransactionId, indexToInvoiceId) }
+            }
         }
 
         backup.extensions?.get("settings")?.let { element ->
             runCatching { json.decodeFromJsonElement(SettingsDto.serializer(), element) }.getOrNull()?.let { applySettings(it) }
         }
         sync.requestSync()
+    }
+
+    /** Android-only records (synced as settings), with ids replaced by account numbers and list indexes. */
+    private suspend fun androidData(
+        accountNumbers: Map<String, Int>,
+        transactionIndex: Map<String, Int>,
+        invoiceIds: List<String>,
+    ): AndroidDataDto {
+        val recurring = settings.livePrefix(SettingsRepository.Keys.RECURRING_PREFIX).mapNotNull { (id, raw) ->
+            val rule = RecurringRepository.decode(id, raw) ?: return@mapNotNull null
+            RecurringDto(
+                title = rule.title,
+                description = rule.description,
+                entries = rule.lines.map { EntryDto(accountNumbers[it.accountId] ?: return@mapNotNull null, it.amount, it.type) },
+                frequency = rule.frequency.name,
+                startDate = rule.startDate.toString(),
+                endDate = rule.endDate?.toString(),
+                lastPostedDate = rule.lastPostedDate?.toString(),
+                paused = rule.paused,
+            )
+        }.sortedBy { it.title }
+        val reconciliations = settings.livePrefix(SettingsRepository.Keys.RECONCILIATION_PREFIX).mapNotNull { (accountId, raw) ->
+            val mark = ReconciliationRepository.decode(accountId, raw) ?: return@mapNotNull null
+            ReconciliationDto(accountNumbers[accountId] ?: return@mapNotNull null, mark.date.toString(), mark.statementBalance)
+        }.sortedBy { it.accountNumber }
+        val payments = settings.livePrefix(SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX).mapNotNull { (invoiceId, raw) ->
+            val index = invoiceIds.indexOf(invoiceId).takeIf { it >= 0 } ?: return@mapNotNull null
+            val ids = runCatching { json.decodeFromString(ListSerializer(String.serializer()), raw) }.getOrNull().orEmpty()
+            InvoicePaymentsDto(index, ids.mapNotNull { transactionIndex[it] }).takeIf { it.transactionIndexes.isNotEmpty() }
+        }.sortedBy { it.invoiceIndex }
+        return AndroidDataDto(recurring, reconciliations, payments)
+    }
+
+    private suspend fun applyAndroidData(
+        data: AndroidDataDto,
+        numberToId: Map<Int, String>,
+        indexToTransactionId: Map<Int, String>,
+        indexToInvoiceId: Map<Int, String>,
+    ) {
+        for (r in data.recurring) {
+            val lines = r.entries.map { DraftLine(numberToId[it.accountNumber] ?: return@map null, it.amount, it.entryType) }
+            if (lines.any { it == null }) continue
+            val rule = RecurringRule(
+                id = RecurringRepository.newRuleId(),
+                title = r.title,
+                description = r.description,
+                lines = lines.filterNotNull(),
+                frequency = Frequency.entries.firstOrNull { it.name == r.frequency } ?: Frequency.Monthly,
+                startDate = parseDate(r.startDate, "recurring transaction '${r.title}'"),
+                endDate = r.endDate?.let { parseDate(it, "recurring transaction '${r.title}'") },
+                lastPostedDate = r.lastPostedDate?.let { parseDate(it, "recurring transaction '${r.title}'") },
+                paused = r.paused,
+            )
+            settings.put(RecurringRepository.PREFIX + rule.id, RecurringRepository.encode(rule))
+        }
+        for (r in data.reconciliations) {
+            val accountId = numberToId[r.accountNumber] ?: continue
+            val mark = Reconciliation(accountId, parseDate(r.date, "reconciliation of #${r.accountNumber}"), r.statementBalance)
+            settings.put(ReconciliationRepository.PREFIX + accountId, ReconciliationRepository.encode(mark))
+        }
+        for (p in data.invoicePayments) {
+            val invoiceId = indexToInvoiceId[p.invoiceIndex] ?: continue
+            val ids = p.transactionIndexes.mapNotNull { indexToTransactionId[it] }
+            settings.put(SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX + invoiceId, json.encodeToString(ListSerializer(String.serializer()), ids))
+        }
     }
 
     private suspend fun currentSettings(): SettingsDto {
@@ -335,6 +417,37 @@ class BackupService(
         val invoiceCreditAccountNumber: Int? = null,
         val invoicePaymentAccountNumbers: List<Int>? = null,
     )
+
+    /** Data only the Android app knows about; the .NET app ignores unknown extensions. */
+    @Serializable
+    data class AndroidDataDto(
+        val recurring: List<RecurringDto> = emptyList(),
+        val reconciliations: List<ReconciliationDto> = emptyList(),
+        val invoicePayments: List<InvoicePaymentsDto> = emptyList(),
+    )
+
+    @Serializable
+    data class RecurringDto(
+        val title: String,
+        val description: String = "",
+        val entries: List<EntryDto> = emptyList(),
+        val frequency: String,
+        val startDate: String,
+        val endDate: String? = null,
+        val lastPostedDate: String? = null,
+        val paused: Boolean = false,
+    )
+
+    @Serializable
+    data class ReconciliationDto(
+        val accountNumber: Int,
+        val date: String,
+        @Serializable(with = DecimalCentsSerializer::class) val statementBalance: Long,
+    )
+
+    /** Instalments of the invoice at [invoiceIndex], as indexes into the transaction list. */
+    @Serializable
+    data class InvoicePaymentsDto(val invoiceIndex: Int, val transactionIndexes: List<Int>)
 
     companion object {
         const val CURRENT_SCHEMA_VERSION = 7

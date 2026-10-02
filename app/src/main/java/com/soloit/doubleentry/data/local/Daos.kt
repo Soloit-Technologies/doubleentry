@@ -15,6 +15,9 @@ interface SyncDao<T : SyncEntity> {
     suspend fun byIds(ids: List<String>): List<T>
     suspend fun upsertAll(entities: List<T>)
     suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+
+    /** Revives every row soft-deleted at exactly [stamp] (one delete operation shares one stamp). */
+    suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
 }
 
 private const val ENTRY_WITH_ACCOUNT = """
@@ -65,6 +68,9 @@ interface AccountDao : SyncDao<AccountEntity> {
     @Query("UPDATE accounts SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
     override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
 
+    @Query("UPDATE accounts SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
+    override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
+
     @Query("UPDATE accounts SET deleted_at = :now, updated_at = :now, is_dirty = 1 WHERE deleted_at IS NULL")
     suspend fun softDeleteAll(now: Long)
 }
@@ -79,6 +85,13 @@ interface TransactionDao : SyncDao<TransactionEntity> {
 
     @Query("SELECT * FROM transactions WHERE deleted_at IS NULL AND date BETWEEN :from AND :to ORDER BY date, id")
     suspend fun liveInRange(from: LocalDate, to: LocalDate): List<TransactionEntity>
+
+    /** Most recent live transactions whose title contains [text] (`%`, `_` and `\` escaped by the caller). */
+    @Query(
+        """SELECT * FROM transactions WHERE deleted_at IS NULL AND title LIKE '%' || :text || '%' ESCAPE '\'
+           ORDER BY date DESC, updated_at DESC LIMIT :limit""",
+    )
+    suspend fun liveWithTitleLike(text: String, limit: Int): List<TransactionEntity>
 
     @Query("SELECT * FROM transactions WHERE deleted_at IS NULL AND description = :description AND id != :excludeId")
     suspend fun liveByDescription(description: String, excludeId: String): List<TransactionEntity>
@@ -105,6 +118,9 @@ interface TransactionDao : SyncDao<TransactionEntity> {
     @Query("UPDATE transactions SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
     override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
 
+    @Query("UPDATE transactions SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
+    override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
+
     @Query("UPDATE transactions SET deleted_at = :now, updated_at = :now, is_dirty = 1 WHERE id = :id AND deleted_at IS NULL")
     suspend fun softDelete(id: String, now: Long)
 
@@ -122,6 +138,10 @@ interface EntryDao : SyncDao<EntryEntity> {
 
     @Query("SELECT * FROM transaction_entries WHERE transaction_id = :transactionId")
     suspend fun allOf(transactionId: String): List<EntryEntity>
+
+    /** Live lines of a transaction that were written locally and not pushed yet. */
+    @Query("SELECT * FROM transaction_entries WHERE transaction_id = :transactionId AND deleted_at IS NULL AND is_dirty = 1")
+    suspend fun liveDirtyOf(transactionId: String): List<EntryEntity>
 
     @Query("SELECT * FROM transaction_entries WHERE id IN (:ids)")
     override suspend fun byIds(ids: List<String>): List<EntryEntity>
@@ -159,6 +179,9 @@ interface EntryDao : SyncDao<EntryEntity> {
     @Query("UPDATE transaction_entries SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
     override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
 
+    @Query("UPDATE transaction_entries SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
+    override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
+
     @Query("UPDATE transaction_entries SET deleted_at = :now, updated_at = :now, is_dirty = 1 WHERE transaction_id = :transactionId AND deleted_at IS NULL")
     suspend fun softDeleteOf(transactionId: String, now: Long)
 
@@ -195,6 +218,9 @@ interface AssetDao : SyncDao<AssetEntity> {
     @Query("UPDATE assets SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
     override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
 
+    @Query("UPDATE assets SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
+    override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
+
     @Query("UPDATE assets SET deleted_at = :now, updated_at = :now, is_dirty = 1 WHERE deleted_at IS NULL")
     suspend fun softDeleteAll(now: Long)
 }
@@ -225,6 +251,9 @@ interface InvoiceDao : SyncDao<InvoiceEntity> {
     @Query("UPDATE invoices SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
     override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
 
+    @Query("UPDATE invoices SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
+    override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
+
     @Query("UPDATE invoices SET deleted_at = :now, updated_at = :now, is_dirty = 1 WHERE deleted_at IS NULL")
     suspend fun softDeleteAll(now: Long)
 }
@@ -233,6 +262,15 @@ interface InvoiceDao : SyncDao<InvoiceEntity> {
 interface UserSettingDao : SyncDao<UserSettingEntity> {
     @Query("SELECT * FROM user_settings WHERE deleted_at IS NULL")
     fun observeLive(): Flow<List<UserSettingEntity>>
+
+    @Query("SELECT * FROM user_settings WHERE deleted_at IS NULL AND substr(`key`, 1, length(:prefix)) = :prefix")
+    suspend fun liveWithPrefix(prefix: String): List<UserSettingEntity>
+
+    @Query(
+        """UPDATE user_settings SET deleted_at = :now, updated_at = :now, is_dirty = 1
+           WHERE deleted_at IS NULL AND substr(`key`, 1, length(:prefix)) = :prefix""",
+    )
+    suspend fun softDeleteWithPrefix(prefix: String, now: Long): Int
 
     @Query("SELECT * FROM user_settings WHERE `key` = :key")
     suspend fun byKey(key: String): UserSettingEntity?
@@ -254,4 +292,7 @@ interface UserSettingDao : SyncDao<UserSettingEntity> {
 
     @Query("UPDATE user_settings SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
     override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+
+    @Query("UPDATE user_settings SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
+    override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
 }

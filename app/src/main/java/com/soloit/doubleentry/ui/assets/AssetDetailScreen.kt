@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.data.AssetRepository
 import com.soloit.doubleentry.data.LedgerRepository
+import com.soloit.doubleentry.data.UndoManager
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.Asset
 import com.soloit.doubleentry.domain.Depreciation
@@ -72,7 +73,12 @@ data class AssetDetailUiState(
     val writeoffs: List<Transaction> = emptyList(),
 )
 
-class AssetDetailViewModel(private val assets: AssetRepository, ledger: LedgerRepository, private val id: String) : ViewModel() {
+class AssetDetailViewModel(
+    private val assets: AssetRepository,
+    private val ledger: LedgerRepository,
+    private val undo: UndoManager,
+    private val id: String,
+) : ViewModel() {
     val message = MutableStateFlow<String?>(null)
     val deleted = MutableStateFlow(false)
 
@@ -93,7 +99,9 @@ class AssetDetailViewModel(private val assets: AssetRepository, ledger: LedgerRe
 
     fun delete() = viewModelScope.launch {
         try {
-            assets.deleteAsset(id)
+            val name = state.value.asset?.name ?: "asset"
+            val stamp = assets.deleteAsset(id)
+            undo.offerRestore("Deleted $name", ledger, stamp)
             deleted.value = true
         } catch (e: Exception) {
             message.value = e.message
@@ -103,7 +111,7 @@ class AssetDetailViewModel(private val assets: AssetRepository, ledger: LedgerRe
 
 @Composable
 fun AssetDetailScreen(assetId: String, onBack: () -> Unit, onOpenTransaction: (String) -> Unit) {
-    val vm = appViewModel { AssetDetailViewModel(it.assets, it.ledger, assetId) }
+    val vm = appViewModel { AssetDetailViewModel(it.assets, it.ledger, it.undo, assetId) }
     val state by vm.state.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val deleted by vm.deleted.collectAsStateWithLifecycle()

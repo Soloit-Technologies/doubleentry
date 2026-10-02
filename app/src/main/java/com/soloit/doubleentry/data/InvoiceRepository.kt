@@ -9,28 +9,45 @@ import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.Invoice
+import com.soloit.doubleentry.domain.InvoicePayment
+import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.LedgerException
 import com.soloit.doubleentry.domain.OutstandingDetector
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.domain.newId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import java.time.LocalDate
 
 /**
  * Invoices layer the amount owed, dates and paid state on top of a normal balanced "booking"
- * transaction. Paying an invoice posts a settlement transaction for the full amount due.
+ * transaction. Paying an invoice posts a settlement transaction, either for everything that is
+ * left or for part of it (an instalment).
+ *
+ * Instalments are listed in a synced setting per invoice (`Invoice.Payments.<id>`, a JSON array
+ * of transaction ids) rather than on the invoice row, which keeps the row identical to what the
+ * .NET app reads. Their amounts are always read back from the live ledger, so deleting an
+ * instalment's transaction simply makes that amount outstanding again.
  */
 class InvoiceRepository(
     private val db: AppDatabase,
     private val ledger: LedgerRepository,
+    private val settings: SettingsRepository,
     private val sync: SyncTrigger,
 ) {
     private val invoiceDao = db.invoices()
 
-    val invoices: Flow<List<Invoice>> = invoiceDao.observeLive().map { list -> list.map { it.toDomain() } }
+    val invoices: Flow<List<Invoice>> = db.ledgerChanges().map { liveInvoices() }
 
-    suspend fun getInvoice(id: String): Invoice? = invoiceDao.liveById(id)?.toDomain()
+    suspend fun liveInvoices(): List<Invoice> {
+        val payments = settings.livePrefix(SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX)
+        return invoiceDao.live().map { resolve(it, payments[it.id]) }
+    }
+
+    suspend fun getInvoice(id: String): Invoice? = invoiceDao.liveById(id)?.let { resolve(it) }
 
     suspend fun createInvoice(amountDue: Long, invoiceDate: LocalDate, dueDate: LocalDate, booking: TransactionDraft): Invoice {
         validate(amountDue, invoiceDate, dueDate, booking)
@@ -61,6 +78,10 @@ class InvoiceRepository(
         db.withTransaction {
             val invoice = invoiceDao.liveById(id) ?: throw LedgerException("Invoice not found.")
             if (invoice.isPaid) throw LedgerException("A paid invoice cannot be edited.")
+            val paid = resolve(invoice).partiallyPaid
+            if (amountDue < paid) {
+                throw LedgerException("The amount due cannot be less than what has already been paid (${Money.format(paid)}).")
+            }
             val outstanding = detect(booking, amountDue)
             ledger.replaceTransaction(invoice.bookingTransactionId, booking)
             invoiceDao.upsert(
@@ -78,19 +99,33 @@ class InvoiceRepository(
         sync.requestSync()
     }
 
-    /** Deletes the invoice and reverses its booking (and payment) transactions. */
-    suspend fun deleteInvoice(id: String) {
+    /**
+     * Deletes the invoice and reverses its booking and payment transactions (instalments included).
+     * Returns the deletion stamp for [LedgerRepository.restoreDeleted].
+     */
+    suspend fun deleteInvoice(id: String): Long {
+        val now = nowMicros()
         db.withTransaction {
             val invoice = invoiceDao.liveById(id) ?: throw LedgerException("Invoice not found.")
-            invoice.paymentTransactionId?.let { ledger.softDeleteTransaction(it) }
-            ledger.softDeleteTransaction(invoice.bookingTransactionId)
-            val now = nowMicros()
+            val key = SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX + id
+            decodeIds(settings.get(key)).forEach { ledger.softDeleteTransaction(it, now) }
+            settings.softDelete(key, now)
+            invoice.paymentTransactionId?.let { ledger.softDeleteTransaction(it, now) }
+            ledger.softDeleteTransaction(invoice.bookingTransactionId, now)
             invoiceDao.upsert(invoice.copy(deletedAt = now, updatedAt = now, isDirty = true))
         }
         sync.requestSync()
+        return now
     }
 
-    suspend fun markPaid(id: String, paymentAccountId: String, paidDate: LocalDate) {
+    /** Pays everything that is still owed and marks the invoice as paid. */
+    suspend fun markPaid(id: String, paymentAccountId: String, paidDate: LocalDate) = recordPayment(id, paymentAccountId, paidDate, amount = null)
+
+    /**
+     * Posts a payment of [amount] (everything still owed when null). A payment that settles the rest
+     * marks the invoice as paid; a smaller one is recorded as an instalment.
+     */
+    suspend fun recordPayment(id: String, paymentAccountId: String, paidDate: LocalDate, amount: Long?) {
         db.withTransaction {
             val invoice = invoiceDao.liveById(id) ?: throw LedgerException("Invoice not found.")
             if (invoice.isPaid) throw LedgerException("This invoice is already paid.")
@@ -98,9 +133,14 @@ class InvoiceRepository(
                 throw LedgerException("The payment account must differ from the outstanding account.")
             }
             val paymentAccount = ledger.getAccount(paymentAccountId) ?: throw LedgerException("The payment account no longer exists.")
+            val resolved = resolve(invoice)
+            val remaining = resolved.remaining
+            val amount = amount ?: remaining
+            if (amount <= 0) throw LedgerException("The payment must be a positive amount.")
+            if (amount > remaining) throw LedgerException("The payment is more than the ${Money.format(remaining)} still owed.")
+            val settles = amount == remaining
 
             // Payable: debit outstanding / credit cash. Receivable: debit cash / credit outstanding.
-            val amount = invoice.amountDueCents
             val lines = if (invoice.outstandingIsCredit) {
                 listOf(
                     DraftLine(invoice.outstandingAccountId, amount, EntryType.Debit),
@@ -113,14 +153,24 @@ class InvoiceRepository(
                 )
             }
             val bookingTitle = ledger.getTransaction(invoice.bookingTransactionId)?.title
+            val kind = when {
+                !settles -> "Part payment"
+                resolved.partialPayments.isNotEmpty() -> "Final payment"
+                else -> "Payment"
+            }
             val paymentId = ledger.insertTransaction(
                 TransactionDraft(
                     date = paidDate,
-                    title = if (bookingTitle.isNullOrBlank()) "Invoice payment" else "Payment: $bookingTitle",
+                    title = if (bookingTitle.isNullOrBlank()) "Invoice ${kind.lowercase()}" else "$kind: $bookingTitle",
                     description = "Paid from ${paymentAccount.name} for invoice dated ${invoice.invoiceDate}.",
                     lines = lines,
                 ),
             )
+            if (!settles) {
+                val key = SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX + id
+                settings.put(key, encodeIds(decodeIds(settings.get(key)) + paymentId))
+                return@withTransaction
+            }
             invoiceDao.upsert(
                 invoice.copy(
                     isPaid = true,
@@ -150,11 +200,40 @@ class InvoiceRepository(
         sync.requestSync()
     }
 
+    private suspend fun resolve(entity: InvoiceEntity): Invoice =
+        resolve(entity, settings.get(SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX + entity.id))
+
+    /** Adds the live instalments listed in [rawPayments] (the invoice's payments setting). */
+    private suspend fun resolve(entity: InvoiceEntity, rawPayments: String?): Invoice {
+        val invoice = entity.toDomain()
+        val ids = decodeIds(rawPayments)
+        if (ids.isEmpty()) return invoice
+        // The settling side of the outstanding account: debit for a payable, credit for a receivable.
+        val settlingSide = if (entity.outstandingIsCredit) EntryType.Debit else EntryType.Credit
+        val payments = ids.mapNotNull { txId ->
+            val tx = ledger.getTransaction(txId) ?: return@mapNotNull null
+            val amount = tx.entries.filter { it.account.id == entity.outstandingAccountId && it.type == settlingSide }.sumOf { it.amount }
+            val from = tx.entries.firstOrNull { it.account.id != entity.outstandingAccountId }?.account?.id
+            InvoicePayment(tx.id, tx.date, amount, from)
+        }.sortedBy { it.date }
+        return invoice.copy(partialPayments = payments)
+    }
+
     private suspend fun detect(booking: TransactionDraft, amountDue: Long): OutstandingDetector.Outstanding {
         val types = booking.lines.map { it.accountId }.distinct()
             .mapNotNull { ledger.getAccount(it) }
             .associate { it.id to it.type }
         return OutstandingDetector.detect(booking.lines, types.withDefault { AccountType.Asset }, amountDue)
+    }
+
+    private fun decodeIds(raw: String?): List<String> =
+        raw?.takeIf { it.isNotBlank() }?.let { runCatching { json.decodeFromString(idList, it) }.getOrNull() }.orEmpty()
+
+    private fun encodeIds(ids: List<String>): String = json.encodeToString(idList, ids.distinct())
+
+    private companion object {
+        val json = Json { ignoreUnknownKeys = true }
+        val idList = ListSerializer(String.serializer())
     }
 
     private fun validate(amountDue: Long, invoiceDate: LocalDate, dueDate: LocalDate, booking: TransactionDraft) {

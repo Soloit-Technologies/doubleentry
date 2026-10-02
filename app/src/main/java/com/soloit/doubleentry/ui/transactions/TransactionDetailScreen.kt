@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -18,19 +19,18 @@ import androidx.compose.material.icons.rounded.AutoMode
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.automirrored.rounded.EventNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -40,13 +40,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.data.LedgerRepository
+import com.soloit.doubleentry.data.RecurringRepository
+import com.soloit.doubleentry.data.UndoManager
+import com.soloit.doubleentry.domain.Recurrence
+import com.soloit.doubleentry.domain.RecurringRule
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.relativeDayLabel
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AccountTypeAvatar
 import com.soloit.doubleentry.ui.components.CardDivider
-import com.soloit.doubleentry.ui.components.ConfirmDialog
 import com.soloit.doubleentry.ui.components.EmptyState
 import com.soloit.doubleentry.ui.components.LoadingState
 import com.soloit.doubleentry.ui.components.MessageDialog
@@ -66,19 +69,29 @@ data class TransactionDetailUiState(
     val loading: Boolean = true,
     val transaction: Transaction? = null,
     val isDepreciation: Boolean = false,
+    /** The recurring rule that posted this transaction, if any. */
+    val recurringRule: RecurringRule? = null,
 )
 
-class TransactionDetailViewModel(private val ledger: LedgerRepository, private val id: String) : ViewModel() {
+class TransactionDetailViewModel(
+    private val ledger: LedgerRepository,
+    private val recurring: RecurringRepository,
+    private val undo: UndoManager,
+    private val id: String,
+) : ViewModel() {
     val message = MutableStateFlow<String?>(null)
     val deleted = MutableStateFlow(false)
 
     val state: StateFlow<TransactionDetailUiState> = ledger.changes.mapLatest {
-        TransactionDetailUiState(false, ledger.getTransaction(id), ledger.isDepreciationTransaction(id))
+        TransactionDetailUiState(false, ledger.getTransaction(id), ledger.isDepreciationTransaction(id), recurring.ruleForTransaction(id))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionDetailUiState())
 
+    /** Deletes at once; the root snackbar offers to undo it. */
     fun delete() = viewModelScope.launch {
         try {
-            ledger.deleteTransaction(id)
+            val title = state.value.transaction?.title
+            val stamp = ledger.deleteTransaction(id)
+            undo.offerRestore(if (title.isNullOrBlank()) "Transaction deleted" else "Deleted \u201C$title\u201D", ledger, stamp)
             deleted.value = true
         } catch (e: Exception) {
             message.value = e.message
@@ -87,12 +100,18 @@ class TransactionDetailViewModel(private val ledger: LedgerRepository, private v
 }
 
 @Composable
-fun TransactionDetailScreen(transactionId: String, onBack: () -> Unit, onEdit: () -> Unit, onDuplicate: () -> Unit) {
-    val vm = appViewModel { TransactionDetailViewModel(it.ledger, transactionId) }
+fun TransactionDetailScreen(
+    transactionId: String,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
+    onRepeat: () -> Unit,
+    onOpenRecurring: (String) -> Unit,
+) {
+    val vm = appViewModel { TransactionDetailViewModel(it.ledger, it.recurring, it.undo, transactionId) }
     val state by vm.state.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val deleted by vm.deleted.collectAsStateWithLifecycle()
-    var confirmDelete by remember { mutableStateOf(false) }
     LaunchedEffect(deleted) { if (deleted) onBack() }
 
     Scaffold(
@@ -102,9 +121,12 @@ fun TransactionDetailScreen(transactionId: String, onBack: () -> Unit, onEdit: (
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
                 actions = {
                     if (state.transaction != null) {
+                        if (!state.isDepreciation && state.recurringRule == null) {
+                            IconButton(onClick = onRepeat) { Icon(Icons.Rounded.Repeat, "Make recurring") }
+                        }
                         IconButton(onClick = onDuplicate) { Icon(Icons.Rounded.ContentCopy, "Duplicate") }
                         IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, "Edit") }
-                        if (!state.isDepreciation) IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Rounded.DeleteOutline, "Delete") }
+                        if (!state.isDepreciation) IconButton(onClick = vm::delete) { Icon(Icons.Rounded.DeleteOutline, "Delete") }
                     }
                 },
             )
@@ -139,6 +161,17 @@ fun TransactionDetailScreen(transactionId: String, onBack: () -> Unit, onEdit: (
                             icon = Icons.Rounded.AutoMode,
                         )
                     }
+                    state.recurringRule?.let { rule ->
+                        Spacer(Modifier.height(12.dp))
+                        Surface(onClick = { onOpenRecurring(rule.id) }, shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+                            StatusChip(
+                                "Recurring · ${Recurrence.summary(rule)}",
+                                MaterialTheme.colorScheme.secondaryContainer,
+                                MaterialTheme.colorScheme.onSecondaryContainer,
+                                icon = Icons.Rounded.Repeat,
+                            )
+                        }
+                    }
                 }
                 if (tx.description.isNotBlank()) {
                     SectionCard(contentPadding = PaddingValues(16.dp)) {
@@ -151,16 +184,6 @@ fun TransactionDetailScreen(transactionId: String, onBack: () -> Unit, onEdit: (
         }
     }
 
-    if (confirmDelete) {
-        ConfirmDialog(
-            title = "Delete transaction?",
-            message = "This removes the transaction and all its lines. This cannot be undone.",
-            confirmLabel = "Delete",
-            destructive = true,
-            onConfirm = { confirmDelete = false; vm.delete() },
-            onDismiss = { confirmDelete = false },
-        )
-    }
     message?.let { MessageDialog("Couldn't delete", it) { vm.message.value = null } }
 }
 

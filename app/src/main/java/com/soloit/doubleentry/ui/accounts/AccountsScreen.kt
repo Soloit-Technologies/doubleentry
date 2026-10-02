@@ -19,6 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material.icons.automirrored.rounded.TrendingDown
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Add
@@ -61,6 +63,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.data.LedgerRepository
+import com.soloit.doubleentry.data.ReconciliationRepository
+import com.soloit.doubleentry.domain.ReconciliationStatus
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.Money
@@ -78,6 +82,7 @@ import com.soloit.doubleentry.ui.components.MonthSelector
 import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SearchField
 import com.soloit.doubleentry.ui.components.color
+import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -108,9 +113,15 @@ data class AccountsUiState(
     val income: Long = 0,
     val spending: Long = 0,
     val seeding: Boolean = false,
+    /** Reconciled accounts by id, with whether they still match their statement. */
+    val reconciliations: Map<String, ReconciliationStatus> = emptyMap(),
 )
 
-class AccountsViewModel(private val ledger: LedgerRepository, startupComplete: StateFlow<Boolean>) : ViewModel() {
+class AccountsViewModel(
+    private val ledger: LedgerRepository,
+    reconciliations: ReconciliationRepository,
+    startupComplete: StateFlow<Boolean>,
+) : ViewModel() {
     private val month = MutableStateFlow(YearMonth.now())
     private val query = MutableStateFlow("")
     private val seeding = MutableStateFlow(false)
@@ -123,7 +134,7 @@ class AccountsViewModel(private val ledger: LedgerRepository, startupComplete: S
         Loaded(m, ledger.getAccounts().map { AccountBalanceUi(it, opening[it.id] ?: 0, closing[it.id] ?: 0) })
     }
 
-    val state: StateFlow<AccountsUiState> = combine(loaded, query, startupComplete, seeding) { data, q, startup, seed ->
+    val state: StateFlow<AccountsUiState> = combine(loaded, query, startupComplete, seeding, reconciliations.statuses) { data, q, startup, seed, recs ->
         fun sum(type: AccountType, pick: (AccountBalanceUi) -> Long) = data.rows.filter { it.account.type == type }.sumOf(pick)
         val netClosing = sum(AccountType.Asset) { it.closing } - sum(AccountType.Liability) { it.closing }
         val netOpening = sum(AccountType.Asset) { it.opening } - sum(AccountType.Liability) { it.opening }
@@ -143,6 +154,7 @@ class AccountsViewModel(private val ledger: LedgerRepository, startupComplete: S
             income = sum(AccountType.Revenue) { it.change },
             spending = sum(AccountType.Expense) { it.change },
             seeding = seed,
+            reconciliations = recs,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountsUiState())
 
@@ -166,7 +178,7 @@ fun AccountsScreen(
     onOpenSettings: () -> Unit,
     onRestoreFromCloud: () -> Unit,
 ) {
-    val vm = appViewModel { AccountsViewModel(it.ledger, it.startupComplete) }
+    val vm = appViewModel { AccountsViewModel(it.ledger, it.reconciliations, it.startupComplete) }
     val state by vm.state.collectAsStateWithLifecycle()
     val sync by LocalAppContainer.current.sync.status.collectAsStateWithLifecycle()
     // Collapsed section names, comma separated (a plain string survives process death).
@@ -230,7 +242,7 @@ fun AccountsScreen(
                         if (!isCollapsed) {
                             itemsIndexed(section.rows, key = { _, row -> row.account.id }) { index, row ->
                                 GroupedItem(index, section.rows.size, onClick = { onOpenAccount(row.account.id, state.month) }) {
-                                    AccountRow(row)
+                                    AccountRow(row, state.reconciliations[row.account.id])
                                 }
                             }
                         }
@@ -306,13 +318,23 @@ private fun SectionTitle(section: AccountSectionUi, collapsed: Boolean, onToggle
 }
 
 @Composable
-private fun AccountRow(row: AccountBalanceUi) {
+private fun AccountRow(row: AccountBalanceUi, reconciliation: ReconciliationStatus?) {
     Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         AccountTypeAvatar(row.account.type)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(row.account.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("#${row.account.number}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("#${row.account.number}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (reconciliation != null) {
+                    Spacer(Modifier.width(6.dp))
+                    if (reconciliation.inSync) {
+                        Icon(Icons.Rounded.Verified, "Reconciled", Modifier.size(14.dp), tint = AppTheme.finance.positive)
+                    } else {
+                        Icon(Icons.Rounded.Warning, "Changed since reconciliation", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
             MoneyText(row.closing, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)

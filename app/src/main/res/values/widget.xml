@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_background">#F5FBF8</color>
+    <color name="widget_text">#171D1B</color>
+    <color name="widget_text_secondary">#3F4945</color>
+    <color name="widget_accent">#1BAE8F</color>
+    <color name="widget_on_accent">#FFFFFF</color>
+    <!-- Launcher shortcut icons (same in light and dark). -->
+    <color name="shortcut_background">#1BAE8F</color>
+    <string name="widget_label">Net worth</string>
+    <string name="widget_placeholder">—</string>
+    <string name="widget_add">New transaction</string>
+    <string name="widget_description">Your net worth at a glance, with a button to record a transaction.</string>
+</resources>

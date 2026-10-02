@@ -58,6 +58,8 @@ import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 enum class AmountTone { Neutral, Signed, Positive, Negative }
 
@@ -224,6 +226,8 @@ fun AmountRow(
     tone: AmountTone = AmountTone.Neutral,
     leading: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    /** The same figure in a comparison period; shows the change under the amount. */
+    previous: Long? = null,
 ) {
     Row(
         modifier = modifier
@@ -248,13 +252,32 @@ fun AmountRow(
             }
         }
         Spacer(Modifier.width(12.dp))
-        MoneyText(
-            cents,
-            style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
-            tone = tone,
-            fontWeight = if (emphasized) FontWeight.SemiBold else null,
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            MoneyText(
+                cents,
+                style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+                tone = tone,
+                fontWeight = if (emphasized) FontWeight.SemiBold else null,
+            )
+            if (previous != null) ChangeText(cents, previous)
+        }
     }
+}
+
+/**
+ * "+1 234,00 (+12%)" relative to [previous]. Deliberately neutral in color: whether a change is
+ * good depends on the line (more revenue is, more expenses aren't).
+ */
+@Composable
+fun ChangeText(current: Long, previous: Long, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Text(changeLabel(current, previous), modifier = modifier, style = MaterialTheme.typography.labelSmall.tabular(), color = color)
+}
+
+fun changeLabel(current: Long, previous: Long): String {
+    val delta = current - previous
+    if (delta == 0L) return "No change"
+    val percent = if (previous != 0L) " (${if (delta > 0) "+" else "−"}${(abs(delta.toDouble()) * 100 / abs(previous.toDouble())).roundToInt()}%)" else ""
+    return Money.formatSigned(delta) + percent
 }
 
 /** Collapsible group with a title, a total and child content. */
@@ -266,6 +289,7 @@ fun ExpandableGroup(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     supporting: String? = null,
+    previous: Long? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
@@ -280,7 +304,10 @@ fun ExpandableGroup(
                     Text(supporting, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            MoneyText(total, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Column(horizontalAlignment = Alignment.End) {
+                MoneyText(total, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                if (previous != null) ChangeText(total, previous)
+            }
             Icon(
                 Icons.Rounded.ExpandMore,
                 contentDescription = if (expanded) "Collapse" else "Expand",
