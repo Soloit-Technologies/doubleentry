@@ -102,6 +102,13 @@ internal fun Transaction.categoryType(): AccountType = when {
     else -> entries.firstOrNull { it.type == EntryType.Debit }?.account?.type ?: AccountType.Asset
 }
 
+/** What a search matches against: title, description, account names and numbers, and the amount. */
+internal fun Transaction.searchText(): String = buildString {
+    append(title).append(' ').append(description).append(' ')
+    entries.forEach { append(it.account.name).append(' ').append(it.account.number).append(' ') }
+    append(Money.format(totalDebits)).append(' ').append(Money.toInput(totalDebits))
+}
+
 internal fun Transaction.toRow() = TransactionRowUi(
     id = id,
     date = date,
@@ -109,11 +116,7 @@ internal fun Transaction.toRow() = TransactionRowUi(
     flow = flowSummary(),
     amount = totalDebits,
     categoryType = categoryType(),
-    searchText = buildString {
-        append(title).append(' ').append(description).append(' ')
-        entries.forEach { append(it.account.name).append(' ').append(it.account.number).append(' ') }
-        append(Money.format(totalDebits)).append(' ').append(Money.toInput(totalDebits))
-    },
+    searchText = searchText(),
 )
 
 private val newestFirst = compareByDescending<Transaction> { it.date }.thenBy { it.title }
