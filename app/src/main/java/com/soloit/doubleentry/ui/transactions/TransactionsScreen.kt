@@ -24,6 +24,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -38,8 +41,7 @@ import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.Transaction
-import com.soloit.doubleentry.domain.firstDay
-import com.soloit.doubleentry.domain.lastDay
+import com.soloit.doubleentry.domain.label
 import com.soloit.doubleentry.domain.relativeDayLabel
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AccountTypeAvatar
@@ -50,12 +52,12 @@ import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.MonthSelector
 import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SearchField
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
@@ -74,12 +76,10 @@ data class TransactionRowUi(
 data class TransactionsUiState(
     val loading: Boolean = true,
     val month: YearMonth = YearMonth.now(),
-    val query: String = "",
     val days: List<Pair<LocalDate, List<TransactionRowUi>>> = emptyList(),
     val count: Int = 0,
     /** A search covers every month, not just the selected one. */
     val searching: Boolean = false,
-    val truncated: Boolean = false,
 )
 
 /** "Checking Account → Groceries", with "+n" when a side has several accounts. */
@@ -120,37 +120,30 @@ private val newestFirst = compareByDescending<Transaction> { it.date }.thenBy { 
 
 class TransactionsViewModel(ledger: LedgerRepository) : ViewModel() {
     private val month = MutableStateFlow(YearMonth.now())
-    private val query = MutableStateFlow("")
 
-    private val loaded = combine(month, ledger.changes) { m, _ -> m }.mapLatest { m ->
-        m to ledger.getTransactions(m.firstDay(), m.lastDay()).sortedWith(newestFirst).map { it.toRow() }
-    }
+    /** Compose state, not part of [state], so the search field never lags behind typing. */
+    var query by mutableStateOf("")
 
-    /** Every transaction, loaded only while a search is active (null otherwise). */
-    private val everything = combine(query.map { it.isNotBlank() }.distinctUntilChanged(), ledger.changes) { active, _ -> active }
-        .mapLatest { active -> if (active) ledger.getTransactions().sortedWith(newestFirst).map { it.toRow() } else null }
+    /** Every transaction, newest first: a month is a slice of it and a search scans all of it. */
+    private val everything = ledger.changes.mapLatest { ledger.getTransactions().sortedWith(newestFirst).map { it.toRow() } }
 
-    val state: StateFlow<TransactionsUiState> = combine(loaded, query, everything) { (m, rows), q, all ->
+    val state: StateFlow<TransactionsUiState> = combine(everything, month, snapshotFlow { query }) { all, m, q ->
         val search = q.trim()
-        val matches = if (search.isEmpty()) rows else (all ?: rows).filter { it.searchText.contains(search, ignoreCase = true) }
-        val visible = matches.take(MAX_RESULTS)
+        val matches = if (search.isEmpty()) {
+            all.filter { YearMonth.from(it.date) == m }
+        } else {
+            all.filter { it.searchText.contains(search, ignoreCase = true) }
+        }
         TransactionsUiState(
-            loading = search.isNotEmpty() && all == null,
+            loading = false,
             month = m,
-            query = q,
-            days = visible.groupBy { it.date }.toList(),
+            days = matches.groupBy { it.date }.toList(),
             count = matches.size,
             searching = search.isNotEmpty(),
-            truncated = matches.size > visible.size,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState())
 
     fun setMonth(value: YearMonth) { month.value = value }
-    fun setQuery(value: String) { query.value = value }
-
-    private companion object {
-        const val MAX_RESULTS = 300
-    }
 }
 
 @Composable
@@ -174,26 +167,27 @@ fun TransactionsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettin
         },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = ScreenPadding) {
-            item { MonthSelector(state.month, vm::setMonth) }
-            item { SearchField(state.query, vm::setQuery, "Search all months: title, account or amount", Modifier.padding(vertical = 12.dp)) }
+            item { SearchField(vm.query, { vm.query = it }, "Search all transactions", Modifier.padding(bottom = 12.dp)) }
+            // A search always covers every month, so the month selector steps aside while one is active.
+            if (!state.searching) item { MonthSelector(state.month, vm::setMonth, Modifier.padding(bottom = 12.dp)) }
             when {
                 state.loading -> item { LoadingState() }
                 state.days.isEmpty() -> item {
-                    EmptyState(
-                        Icons.AutoMirrored.Rounded.ReceiptLong,
-                        if (state.query.isBlank()) "No transactions this month" else "No matches",
-                        if (state.query.isBlank()) "Tap Transaction to record money moving between two accounts." else "Nothing in any month matches. Try a different search.",
-                    )
+                    if (state.searching) {
+                        EmptyState(Icons.AutoMirrored.Rounded.ReceiptLong, "No matches", "Nothing in any month matches. Try a different search.")
+                    } else {
+                        EmptyState(
+                            Icons.AutoMirrored.Rounded.ReceiptLong,
+                            "No transactions in ${state.month.label()}",
+                            "Tap Transaction to record money moving between two accounts.",
+                        )
+                    }
                 }
                 else -> {
                     item {
                         val noun = "${state.count} ${if (state.searching) "match" else "transaction"}${if (state.count == 1) "" else if (state.searching) "es" else "s"}"
                         Text(
-                            when {
-                                state.truncated -> "$noun in all months · showing the newest ${state.days.sumOf { it.second.size }}"
-                                state.searching -> "$noun in all months"
-                                else -> noun
-                            },
+                            if (state.searching) "$noun in all months" else "$noun in ${state.month.label()}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
