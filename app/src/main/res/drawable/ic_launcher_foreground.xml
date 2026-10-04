@@ -1,30 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The DoubleEntry balance scale (debits equal credits), converted from the MAUI appiconfg.svg. -->
+<!-- The DoubleEntry mark: two equal blocks (debit and credit) balanced on a fulcrum.
+     Kept inside the 66dp adaptive-icon safe zone; splash_icon.xml draws the same shapes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="456"
-    android:viewportHeight="456">
-    <group
-        android:scaleX="0.8"
-        android:scaleY="0.8"
-        android:translateX="45.6"
-        android:translateY="45.6">
-        <path
-            android:fillColor="#00000000"
-            android:pathData="M228,120 L228,316 M120,150 L336,150 M184,332 L272,332 M228,316 L228,332 M120,150 L120,172 M336,150 L336,172 M120,172 L84,222 M120,172 L156,222 M336,172 L300,222 M336,172 L372,222"
-            android:strokeWidth="11"
-            android:strokeColor="#FFFFFF"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:fillColor="#C8A24A"
-            android:pathData="M228,107 A13,13 0 1,1 228,133 A13,13 0 1,1 228,107 Z" />
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M76,222 H164 A44,44 0 0,1 76,222 Z" />
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M292,222 H380 A44,44 0 0,1 292,222 Z" />
-    </group>
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#F6C453"
+        android:pathData="M51.4,60.5 Q54,57 56.6,60.5 L64.5,73 Q66,76 62.5,76 L45.5,76 Q42,76 43.5,73 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M26,53 H82 A3,3 0 0,1 82,59 H26 A3,3 0 0,1 26,53 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M33,31 H43 A5,5 0 0,1 48,36 V46 A5,5 0 0,1 43,51 H33 A5,5 0 0,1 28,46 V36 A5,5 0 0,1 33,31 Z" />
+    <path
+        android:fillColor="#A8F0DC"
+        android:pathData="M65,31 H75 A5,5 0 0,1 80,36 V46 A5,5 0 0,1 75,51 H65 A5,5 0 0,1 60,46 V36 A5,5 0 0,1 65,31 Z" />
 </vector>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- On Android 12+ the beam tips and settles level ("the books balance"). Older versions show
+     the first frame, which is already level. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:drawable="@drawable/splash_icon">
+    <target android:name="balance">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:duration="1000">
+                <propertyValuesHolder
+                    android:propertyName="rotation"
+                    android:valueType="floatType">
+                    <keyframe android:fraction="0" android:value="0" />
+                    <keyframe
+                        android:fraction="0.18"
+                        android:interpolator="@android:interpolator/fast_out_slow_in"
+                        android:value="-10" />
+                    <keyframe
+                        android:fraction="0.42"
+                        android:interpolator="@android:interpolator/fast_out_slow_in"
+                        android:value="6" />
+                    <keyframe
+                        android:fraction="0.62"
+                        android:interpolator="@android:interpolator/fast_out_slow_in"
+                        android:value="-3" />
+                    <keyframe
+                        android:fraction="0.8"
+                        android:interpolator="@android:interpolator/fast_out_slow_in"
+                        android:value="1" />
+                    <keyframe
+                        android:fraction="1"
+                        android:interpolator="@android:interpolator/fast_out_slow_in"
+                        android:value="0" />
+                </propertyValuesHolder>
+            </objectAnimator>
+        </aapt:attr>
+    </target>
+</animated-vector>

@@ -5,8 +5,6 @@
     <color name="widget_text_secondary">#3F4945</color>
     <color name="widget_accent">#1BAE8F</color>
     <color name="widget_on_accent">#FFFFFF</color>
-    <!-- Launcher shortcut icons (same in light and dark). -->
-    <color name="shortcut_background">#1BAE8F</color>
     <string name="widget_label">Net worth</string>
     <string name="widget_placeholder">—</string>
     <string name="widget_add">New transaction</string>

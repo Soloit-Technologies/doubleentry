@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash badge: the launcher mark on its gradient, filling the circle the system masks the
+     splash icon to (2/3 of the drawable). The "balance" group is animated by splash_icon_animated.xml. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M54,18 A36,36 0 1,1 54,90 A36,36 0 1,1 54,18 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="18"
+                android:startY="18"
+                android:endX="90"
+                android:endY="90"
+                android:startColor="@color/brand_gradient_start"
+                android:endColor="@color/brand_gradient_end" />
+        </aapt:attr>
+    </path>
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.8"
+        android:scaleY="0.8">
+        <path
+            android:fillColor="#F6C453"
+            android:pathData="M51.4,60.5 Q54,57 56.6,60.5 L64.5,73 Q66,76 62.5,76 L45.5,76 Q42,76 43.5,73 Z" />
+        <group
+            android:name="balance"
+            android:pivotX="54"
+            android:pivotY="58">
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M26,53 H82 A3,3 0 0,1 82,59 H26 A3,3 0 0,1 26,53 Z" />
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M33,31 H43 A5,5 0 0,1 48,36 V46 A5,5 0 0,1 43,51 H33 A5,5 0 0,1 28,46 V36 A5,5 0 0,1 33,31 Z" />
+            <path
+                android:fillColor="#A8F0DC"
+                android:pathData="M65,31 H75 A5,5 0 0,1 80,36 V46 A5,5 0 0,1 75,51 H65 A5,5 0 0,1 60,46 V36 A5,5 0 0,1 65,31 Z" />
+        </group>
+    </group>
+</vector>
