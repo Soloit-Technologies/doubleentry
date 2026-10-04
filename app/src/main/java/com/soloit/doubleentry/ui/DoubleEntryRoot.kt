@@ -94,7 +94,14 @@ import kotlin.reflect.KClass
 @Serializable data class AccountLedgerRoute(val accountId: String, val year: Int, val month: Int)
 @Serializable data class AccountEditorRoute(val accountId: String? = null)
 @Serializable data class TransactionDetailRoute(val id: String)
-@Serializable data class TransactionEditorRoute(val editId: String? = null, val duplicateId: String? = null)
+/** [accountId] and [date] (ISO) prefill a new transaction, e.g. one started from an account's ledger. */
+@Serializable
+data class TransactionEditorRoute(
+    val editId: String? = null,
+    val duplicateId: String? = null,
+    val accountId: String? = null,
+    val date: String? = null,
+)
 @Serializable data class InvoiceDetailRoute(val id: String)
 @Serializable data class InvoiceEditorRoute(val editId: String? = null)
 @Serializable data class AssetDetailRoute(val id: String)
@@ -203,6 +210,7 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                         onBack = back,
                         onEdit = { nav.navigate(AccountEditorRoute(route.accountId)) },
                         onOpenTransaction = { nav.navigate(TransactionDetailRoute(it)) },
+                        onNewTransaction = { date -> nav.navigate(TransactionEditorRoute(accountId = route.accountId, date = date.toString())) },
                     )
                 }
                 composable<AccountEditorRoute> { e -> AccountEditorScreen(e.toRoute<AccountEditorRoute>().accountId, onDone = back) }

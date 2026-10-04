@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.automirrored.rounded.FactCheck
 import androidx.compose.material.icons.rounded.RemoveDone
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -211,6 +213,8 @@ fun AccountLedgerScreen(
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onOpenTransaction: (String) -> Unit,
+    /** Starts a new transaction on this account, dated within the month being viewed. */
+    onNewTransaction: (LocalDate) -> Unit,
 ) {
     val vm = appViewModel { AccountLedgerViewModel(it.ledger, it.reconciliations, it.undo, route.accountId, YearMonth.of(route.year, route.month)) }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -264,6 +268,17 @@ fun AccountLedgerScreen(
                         )
                     }
                 },
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    // Today in the current month; otherwise the month's last day, so the new row shows up here.
+                    val today = LocalDate.now()
+                    onNewTransaction(if (YearMonth.from(today) == state.month) today else state.month.lastDay())
+                },
+                icon = { Icon(Icons.Rounded.Add, null) },
+                text = { Text("Transaction") },
             )
         },
     ) { padding ->
