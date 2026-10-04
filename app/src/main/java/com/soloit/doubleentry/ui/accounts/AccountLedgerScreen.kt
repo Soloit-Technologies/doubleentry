@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.automirrored.rounded.FactCheck
 import androidx.compose.material.icons.rounded.RemoveDone
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -75,11 +79,14 @@ import com.soloit.doubleentry.ui.components.SearchField
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
+import com.soloit.doubleentry.ui.transactions.searchText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -87,13 +94,19 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
 
-data class LedgerRowUi(val transactionId: String, val date: LocalDate, val title: String, val amount: Long, val balance: Long)
+data class LedgerRowUi(
+    val transactionId: String,
+    val date: LocalDate,
+    val title: String,
+    val amount: Long,
+    val balance: Long,
+    val searchText: String = "",
+)
 
 data class AccountLedgerUiState(
     val loading: Boolean = true,
     val account: Account? = null,
     val month: YearMonth = YearMonth.now(),
-    val query: String = "",
     val opening: Long = 0,
     val closing: Long = 0,
     val rows: List<LedgerRowUi> = emptyList(),
@@ -111,12 +124,14 @@ class AccountLedgerViewModel(
     initial: YearMonth,
 ) : ViewModel() {
     private val month = MutableStateFlow(initial)
-    private val query = MutableStateFlow("")
+
+    /** Compose state, not part of [state], so the search field never lags behind typing. */
+    var query by mutableStateOf("")
     val message = MutableStateFlow<String?>(null)
     val deleted = MutableStateFlow(false)
 
     /** Every row of this account with its running balance, loaded only while a search is active. */
-    private val everything = combine(query.map { it.isNotBlank() }.distinctUntilChanged(), ledger.changes) { active, _ -> active }
+    private val everything = combine(snapshotFlow { query.isNotBlank() }.distinctUntilChanged(), ledger.changes) { active, _ -> active }
         .mapLatest { active ->
             if (!active) return@mapLatest null
             val account = ledger.getAccount(accountId) ?: return@mapLatest emptyList()
@@ -124,7 +139,7 @@ class AccountLedgerViewModel(
             ledger.getTransactions(accountId = accountId).map { tx ->
                 val amount = tx.signedAmountFor(account)
                 running += amount
-                LedgerRowUi(tx.id, tx.date, tx.title, amount, running)
+                LedgerRowUi(tx.id, tx.date, tx.title, amount, running, tx.searchText())
             }.reversed()
         }
 
@@ -142,14 +157,21 @@ class AccountLedgerViewModel(
 
     private val status = reconciliations.statuses.map { it[accountId] }
 
-    val state: StateFlow<AccountLedgerUiState> = combine(loaded, query, everything, status, ledger.accounts) { s, q, all, rec, accounts ->
+    val state: StateFlow<AccountLedgerUiState> = combine(loaded, snapshotFlow { query }, everything, status, ledger.accounts) { s, q, all, rec, accounts ->
         val search = q.trim()
-        val rows = if (search.isEmpty()) s.rows else (all ?: s.rows).filter { it.title.contains(search, ignoreCase = true) }
-        s.copy(query = q, rows = rows, searching = search.isNotEmpty(), reconciliation = rec, accounts = accounts)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountLedgerUiState(month = initial))
+        val base = s.copy(reconciliation = rec, accounts = accounts)
+        if (search.isEmpty()) {
+            base
+        } else {
+            base.copy(
+                loading = s.loading || all == null,
+                rows = all.orEmpty().filter { it.searchText.contains(search, ignoreCase = true) },
+                searching = true,
+            )
+        }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountLedgerUiState(month = initial))
 
     fun setMonth(value: YearMonth) { month.value = value }
-    fun setQuery(value: String) { query.value = value }
 
     /** Returns false (and shows why) when the account can't be deleted. */
     suspend fun canDelete(): Boolean {
@@ -191,6 +213,8 @@ fun AccountLedgerScreen(
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onOpenTransaction: (String) -> Unit,
+    /** Starts a new transaction on this account, dated within the month being viewed. */
+    onNewTransaction: (LocalDate) -> Unit,
 ) {
     val vm = appViewModel { AccountLedgerViewModel(it.ledger, it.reconciliations, it.undo, route.accountId, YearMonth.of(route.year, route.month)) }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -246,15 +270,29 @@ fun AccountLedgerScreen(
                 },
             )
         },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    // Today in the current month; otherwise the month's last day, so the new row shows up here.
+                    val today = LocalDate.now()
+                    onNewTransaction(if (YearMonth.from(today) == state.month) today else state.month.lastDay())
+                },
+                icon = { Icon(Icons.Rounded.Add, null) },
+                text = { Text("Transaction") },
+            )
+        },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = ScreenPadding) {
-            item { MonthSelector(state.month, vm::setMonth, Modifier.padding(bottom = 12.dp)) }
+            item { SearchField(vm.query, { vm.query = it }, "Search all months", Modifier.padding(bottom = 12.dp)) }
+            // A search covers every month, so the month selector and that month's balances step aside.
+            if (!state.searching) item { MonthSelector(state.month, vm::setMonth) }
             if (state.loading) {
                 item { LoadingState() }
                 return@LazyColumn
             }
-            item {
-                SectionCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp)) {
+            if (!state.searching) item {
+                SectionCard(
+                    modifier = Modifier.padding(top = 12.dp),contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         state.account?.let { AccountTypeAvatar(it.type, size = 48) }
                         Spacer(Modifier.width(16.dp))
@@ -277,7 +315,7 @@ fun AccountLedgerScreen(
                 }
             }
             state.reconciliation?.let { status -> item { ReconciliationBanner(status, onClick = { reconciling = true }) } }
-            item { SearchField(state.query, vm::setQuery, "Search all months", Modifier.padding(vertical = 12.dp)) }
+            item { Spacer(Modifier.height(12.dp)) }
             if (state.rows.isEmpty()) {
                 item {
                     if (state.searching) {

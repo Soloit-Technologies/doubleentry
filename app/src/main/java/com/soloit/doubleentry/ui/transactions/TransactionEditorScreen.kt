@@ -157,6 +157,9 @@ class TransactionEditorViewModel(
                     form.value = TransactionForm(tx.title, tx.date, tx.description)
                     lines.load(tx.entries)
                 }
+            } else {
+                route.date?.let { date -> form.update { it.copy(date = LocalDate.parse(date)) } }
+                route.accountId?.let { lines.set(listOf(lines.newLine(accountId = it), lines.newLine())) }
             }
             status.update { it.copy(loading = false) }
         }
@@ -172,12 +175,15 @@ class TransactionEditorViewModel(
 
     /**
      * Fills the form from an earlier transaction: its title, and its lines and description when the
-     * user hasn't entered any yet. The date stays as chosen.
+     * user hasn't entered any yet (an account prefilled by the route doesn't count, as long as the
+     * earlier transaction uses it too). The date stays as chosen.
      */
     fun applySuggestion(tx: Transaction) {
         suggestionQuery.value = null
         form.update { it.copy(title = tx.title, description = it.description.ifBlank { tx.description }) }
-        if (lines.current.none { it.accountId != null || it.hasAmount }) lines.load(tx.entries)
+        val untouched = lines.current.none { it.hasAmount || (it.accountId != null && it.accountId != route.accountId) }
+        val keepsAccount = route.accountId == null || tx.entries.any { it.account.id == route.accountId }
+        if (untouched && keepsAccount) lines.load(tx.entries)
         markModified()
     }
 

@@ -44,8 +44,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.domain.formatMedium
 import com.soloit.doubleentry.domain.label
@@ -191,7 +194,10 @@ fun DateField(
     if (open) DatePickerModal(date, onDismiss = { open = false }, onConfirm = { onDateChange(it); open = false })
 }
 
-/** Text field for money amounts with a decimal keyboard. */
+/**
+ * Text field for money amounts with a decimal keyboard. Focusing it selects the whole amount,
+ * so typing replaces a prefilled value instead of appending to it.
+ */
 @Composable
 fun AmountField(
     value: String,
@@ -203,9 +209,27 @@ fun AmountField(
     imeAction: ImeAction = ImeAction.Next,
     supportingText: String? = null,
 ) {
+    var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    // The tap that focuses the field moves the cursor to the tap point right after focus is
+    // gained; this swallows that one move so the select-all survives.
+    var keepSelection by remember { mutableStateOf(false) }
+    if (field.text != value) {
+        val allSelected = field.selection.min == 0 && field.selection.max == field.text.length
+        field = TextFieldValue(value, if (allSelected) TextRange(0, value.length) else TextRange(value.length))
+    }
+    LaunchedEffect(keepSelection) { keepSelection = false }
     OutlinedTextField(
-        value = value,
-        onValueChange = { text -> onValueChange(text.filter { it.isDigit() || it in ".,- " }) },
+        value = field,
+        onValueChange = { new ->
+            val text = new.text.filter { it.isDigit() || it in ".,- " }
+            if (keepSelection && text == field.text && new.selection.collapsed) {
+                keepSelection = false
+                return@OutlinedTextField
+            }
+            keepSelection = false
+            field = if (text == new.text) new else TextFieldValue(text, TextRange(text.length))
+            if (text != value) onValueChange(text)
+        },
         label = { Text(label, maxLines = 1) },
         enabled = enabled,
         isError = isError,
@@ -213,7 +237,12 @@ fun AmountField(
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = imeAction),
         textStyle = MaterialTheme.typography.bodyLarge.copy(fontFeatureSettings = "tnum"),
         supportingText = supportingText?.let { { Text(it) } },
-        modifier = modifier,
+        modifier = modifier.onFocusChanged {
+            if (it.isFocused) {
+                field = field.copy(selection = TextRange(0, field.text.length))
+                keepSelection = true
+            }
+        },
     )
 }
 
