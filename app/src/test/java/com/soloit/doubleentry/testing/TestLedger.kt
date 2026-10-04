@@ -12,6 +12,7 @@ import com.soloit.doubleentry.data.LedgerRepository
 import com.soloit.doubleentry.data.ReconciliationRepository
 import com.soloit.doubleentry.data.RecurringRepository
 import com.soloit.doubleentry.data.SettingsRepository
+import com.soloit.doubleentry.data.StatementImporter
 import com.soloit.doubleentry.data.SyncTrigger
 import com.soloit.doubleentry.data.local.AppDatabase
 import com.soloit.doubleentry.domain.Account
@@ -42,6 +43,7 @@ class TestLedger(name: String = "device") : AutoCloseable {
     val recurring = RecurringRepository(db, ledger, settings, sync)
     val reconciliations = ReconciliationRepository(db, ledger, settings)
     val backup = BackupService(db, ledger, settings, sync)
+    val statementImports = StatementImporter(db, ledger, invoices, sync)
 
     suspend fun account(number: Int, name: String, type: AccountType): Account = ledger.createAccount(number, name, type)
 

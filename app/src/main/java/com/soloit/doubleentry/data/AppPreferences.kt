@@ -2,6 +2,7 @@ package com.soloit.doubleentry.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.soloit.doubleentry.domain.StatementColumns
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,10 +21,11 @@ data class ReminderPrefs(
     val daysBefore: Int = 3,
 )
 
-/** Device-local preferences (not synced): appearance, invoice reminders and the app lock. */
+/** Device-local preferences (not synced): appearance, invoice reminders, the app lock and statement import columns. */
 class AppPreferences(context: Context) {
     private val prefs = context.getSharedPreferences("appearance", Context.MODE_PRIVATE)
     private val device = context.getSharedPreferences("device", Context.MODE_PRIVATE)
+    private val statements = context.getSharedPreferences("statementImport", Context.MODE_PRIVATE)
 
     private val _appearance = MutableStateFlow(read())
     val appearance: StateFlow<Appearance> = _appearance.asStateFlow()
@@ -53,6 +55,23 @@ class AppPreferences(context: Context) {
     fun setAppLock(enabled: Boolean) {
         device.edit { putBoolean("appLock", enabled) }
         _appLock.value = enabled
+    }
+
+    /** The columns last used to import a statement into [accountId], if that file had the same header [signature]. */
+    fun statementColumns(accountId: String, signature: String): StatementColumns? {
+        if (statements.getString("$accountId.signature", null) != signature) return null
+        val v = statements.getString("$accountId.columns", null)?.split(',') ?: return null
+        if (v.size != 7) return null
+        fun index(i: Int) = v[i].toIntOrNull()
+        return StatementColumns(index(0), index(1), index(2), index(3), index(4), index(5), v[6] == "1")
+    }
+
+    fun setStatementColumns(accountId: String, signature: String, columns: StatementColumns) {
+        val v = with(columns) { listOf(date, text, amount, moneyOut, moneyIn, balance).joinToString(",") { it?.toString().orEmpty() } }
+        statements.edit {
+            putString("$accountId.signature", signature)
+            putString("$accountId.columns", "$v,${if (columns.reversed) 1 else 0}")
+        }
     }
 
     private fun update(transform: (Appearance) -> Appearance) {

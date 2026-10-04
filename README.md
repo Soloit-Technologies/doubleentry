@@ -7,6 +7,10 @@ Supabase backend.
 - **Accounts.** Net worth at a glance, accounts grouped by type, monthly ledger per account with running balance.
   Reconcile an account against a bank statement (optionally posting the difference as an adjustment);
   later changes to the reconciled period show up as drift.
+- **Bank statement import.** Import an account's CSV/TSV export from the bank: delimiter, encoding, columns, dates and
+  number formats are detected (and can be corrected), rows already in the ledger are skipped, and transactions in the
+  period that the file doesn't contain are flagged. New rows are booked like the latest transaction with the same text,
+  can be split across several accounts, and a row that pays an open invoice is booked as its payment.
 - **Transactions.** Balanced multi-line entries with an account picker, auto-balancing, edit, duplicate and delete
   (with undo). Typing a title suggests earlier transactions and copies their lines. Search covers all months.
 - **Recurring transactions.** Weekly, monthly, quarterly or yearly postings (rent, salary, subscriptions) that post

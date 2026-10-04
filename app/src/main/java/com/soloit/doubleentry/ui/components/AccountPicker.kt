@@ -39,11 +39,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.AccountType
 import kotlinx.coroutines.launch
+
+/** An extra choice listed above the accounts in [AccountPickerSheet], such as splitting or paying an invoice. */
+data class PickerAction(val label: String, val icon: ImageVector, val onClick: () -> Unit)
 
 /**
  * Modal sheet for choosing an account: search by name or number, filter by type, quick access to
@@ -58,6 +62,7 @@ fun AccountPickerSheet(
     mostUsed: List<Account> = emptyList(),
     selectedId: String? = null,
     onCreateAccount: (suspend (number: Int, name: String, type: AccountType) -> Account)? = null,
+    actions: List<PickerAction> = emptyList(),
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by rememberSaveable { mutableStateOf("") }
@@ -109,6 +114,14 @@ fun AccountPickerSheet(
                 }
             }
             LazyColumn(contentPadding = PaddingValues(bottom = 32.dp, top = 8.dp)) {
+                items(actions, key = { "action-" + it.label }) { action ->
+                    ListItem(
+                        headlineContent = { Text(action.label) },
+                        leadingContent = { IconAvatar(action.icon, MaterialTheme.colorScheme.primary) },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier.clickable(onClick = action.onClick).padding(horizontal = 4.dp),
+                    )
+                }
                 if (quick.isNotEmpty()) {
                     item { PickerHeader("Most used") }
                     items(quick, key = { "q" + it.id }) { AccountPickerRow(it, it.id == selectedId) { onSelect(it) } }

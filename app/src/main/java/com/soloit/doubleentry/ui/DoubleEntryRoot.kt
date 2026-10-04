@@ -62,6 +62,7 @@ import com.soloit.doubleentry.ui.recurring.RecurringListScreen
 import com.soloit.doubleentry.ui.accounts.AccountEditorScreen
 import com.soloit.doubleentry.ui.accounts.AccountLedgerScreen
 import com.soloit.doubleentry.ui.accounts.AccountsScreen
+import com.soloit.doubleentry.ui.accounts.StatementImportScreen
 import com.soloit.doubleentry.ui.assets.AssetDetailScreen
 import com.soloit.doubleentry.ui.assets.AssetEditorScreen
 import com.soloit.doubleentry.ui.assets.AssetsScreen
@@ -93,6 +94,8 @@ import kotlin.reflect.KClass
 
 @Serializable data class AccountLedgerRoute(val accountId: String, val year: Int, val month: Int)
 @Serializable data class AccountEditorRoute(val accountId: String? = null)
+/** Imports the bank statement file at [uri] (a document picked by the user) into [accountId]. */
+@Serializable data class StatementImportRoute(val accountId: String, val uri: String)
 @Serializable data class TransactionDetailRoute(val id: String)
 /** [accountId] and [date] (ISO) prefill a new transaction, e.g. one started from an account's ledger. */
 @Serializable
@@ -211,9 +214,17 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                         onEdit = { nav.navigate(AccountEditorRoute(route.accountId)) },
                         onOpenTransaction = { nav.navigate(TransactionDetailRoute(it)) },
                         onNewTransaction = { date -> nav.navigate(TransactionEditorRoute(accountId = route.accountId, date = date.toString())) },
+                        onImportStatement = { uri -> nav.navigate(StatementImportRoute(route.accountId, uri.toString())) },
                     )
                 }
                 composable<AccountEditorRoute> { e -> AccountEditorScreen(e.toRoute<AccountEditorRoute>().accountId, onDone = back) }
+                composable<StatementImportRoute> { e ->
+                    StatementImportScreen(
+                        route = e.toRoute<StatementImportRoute>(),
+                        onBack = back,
+                        onOpenTransaction = { nav.navigate(TransactionDetailRoute(it)) },
+                    )
+                }
 
                 composable<TransactionsRoute> {
                     TransactionsScreen(
