@@ -47,8 +47,8 @@ class DeterministicIdsTest {
 
     @Test
     fun defaultPlanUsesItsDeterministicIds() {
-        val cash = DefaultAccountPlan.accounts.first { it.number == 1010 }
-        assertEquals("dbf18732-1f07-5d23-9947-fb6419573321", cash.id)
+        val cash = DefaultAccountPlan.accounts.first { it.number == 1910 }
+        assertEquals("00911c82-eedc-5799-a313-7a4cb4595b9d", cash.id)
         assertEquals(DefaultAccountPlan.accounts.size, DefaultAccountPlan.accounts.map { it.number }.toSet().size)
     }
 }

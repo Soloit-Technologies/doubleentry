@@ -21,10 +21,8 @@ data class CashflowSettings(
 ) {
     companion object {
         val DEFAULT_CASH_GROUPS = listOf(
-            AccountGroup("Cash on Hand", listOf("1010")),
-            AccountGroup("Checking", listOf("1910")),
-            AccountGroup("Savings", listOf("1920")),
-            AccountGroup("Investments", listOf("1930", "1940", "1950")),
+            AccountGroup("Cash & Bank", listOf("191", "193", "194")),
+            AccountGroup("Investments", listOf("195", "197")),
         )
     }
 }

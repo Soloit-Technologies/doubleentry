@@ -190,7 +190,7 @@ fun AccountsScreen(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
-                title = { Text("DoubleEntry", fontWeight = FontWeight.SemiBold) },
+                title = { Text("Accounts") },
                 actions = { IconButton(onClick = onOpenSettings) { Icon(Icons.Rounded.Settings, "Settings") } },
                 scrollBehavior = scroll,
             )
