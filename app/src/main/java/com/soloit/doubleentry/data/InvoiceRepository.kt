@@ -123,10 +123,11 @@ class InvoiceRepository(
 
     /**
      * Posts a payment of [amount] (everything still owed when null). A payment that settles the rest
-     * marks the invoice as paid; a smaller one is recorded as an instalment.
+     * marks the invoice as paid; a smaller one is recorded as an instalment. Returns the id of the
+     * payment transaction.
      */
-    suspend fun recordPayment(id: String, paymentAccountId: String, paidDate: LocalDate, amount: Long?) {
-        db.withTransaction {
+    suspend fun recordPayment(id: String, paymentAccountId: String, paidDate: LocalDate, amount: Long?): String {
+        val paymentId = db.withTransaction {
             val invoice = invoiceDao.liveById(id) ?: throw LedgerException("Invoice not found.")
             if (invoice.isPaid) throw LedgerException("This invoice is already paid.")
             if (paymentAccountId == invoice.outstandingAccountId) {
@@ -169,7 +170,7 @@ class InvoiceRepository(
             if (!settles) {
                 val key = SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX + id
                 settings.put(key, encodeIds(decodeIds(settings.get(key)) + paymentId))
-                return@withTransaction
+                return@withTransaction paymentId
             }
             invoiceDao.upsert(
                 invoice.copy(
@@ -181,8 +182,29 @@ class InvoiceRepository(
                     isDirty = true,
                 ),
             )
+            paymentId
         }
         sync.requestSync()
+        return paymentId
+    }
+
+    /**
+     * Takes back a payment made with [recordPayment] (to undo it): deletes its transaction with
+     * [stamp] and, if it settled the invoice, marks the invoice unpaid again. For use inside an outer
+     * [AppDatabase.withTransaction].
+     */
+    internal suspend fun reversePayment(id: String, paymentTransactionId: String, stamp: Long) {
+        ledger.softDeleteTransaction(paymentTransactionId, stamp)
+        val invoice = invoiceDao.liveById(id) ?: return
+        if (invoice.paymentTransactionId == paymentTransactionId) {
+            invoiceDao.upsert(
+                invoice.copy(isPaid = false, paidDate = null, paymentTransactionId = null, paidFromAccountId = null, updatedAt = stamp, isDirty = true),
+            )
+        } else {
+            val key = SettingsRepository.Keys.INVOICE_PAYMENTS_PREFIX + id
+            val ids = decodeIds(settings.get(key))
+            if (paymentTransactionId in ids) settings.put(key, (ids - paymentTransactionId).takeIf { it.isNotEmpty() }?.let(::encodeIds))
+        }
     }
 
     /** Changes the payment date of a paid invoice, keeping the settlement transaction in sync. */

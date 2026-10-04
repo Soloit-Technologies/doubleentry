@@ -113,6 +113,8 @@ fun LinesEditor(
     onRemove: (Long) -> Unit,
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Why locked lines can't be changed (read by screen readers). */
+    lockedReason: String = "Fixed by invoice settings",
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         lines.forEachIndexed { index, line ->
@@ -127,6 +129,7 @@ fun LinesEditor(
                 onFocusDebit = { onFocusDebit(line.key) },
                 onFocusCredit = { onFocusCredit(line.key) },
                 onRemove = { onRemove(line.key) },
+                lockedReason = lockedReason,
             )
         }
         OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
@@ -150,6 +153,7 @@ private fun LineCard(
     onFocusDebit: () -> Unit,
     onFocusCredit: () -> Unit,
     onRemove: () -> Unit,
+    lockedReason: String,
 ) {
     SectionCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -174,7 +178,7 @@ private fun LineCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (line.locked) Icon(Icons.Rounded.Lock, "Fixed by invoice settings", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    if (line.locked) Icon(Icons.Rounded.Lock, lockedReason, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                 }
             }
             if (canRemove) {

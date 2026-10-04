@@ -1,5 +1,8 @@
 package com.soloit.doubleentry.ui.accounts
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -215,6 +219,8 @@ fun AccountLedgerScreen(
     onOpenTransaction: (String) -> Unit,
     /** Starts a new transaction on this account, dated within the month being viewed. */
     onNewTransaction: (LocalDate) -> Unit,
+    /** Opens the bank statement file the user picked for import into this account. */
+    onImportStatement: (Uri) -> Unit,
 ) {
     val vm = appViewModel { AccountLedgerViewModel(it.ledger, it.reconciliations, it.undo, route.accountId, YearMonth.of(route.year, route.month)) }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -224,6 +230,7 @@ fun AccountLedgerScreen(
     var reconciling by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var requestDelete by remember { mutableStateOf(false) }
+    val statementPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onImportStatement) }
 
     LaunchedEffect(deleted) { if (deleted) onBack() }
     LaunchedEffect(requestDelete) {
@@ -249,6 +256,11 @@ fun AccountLedgerScreen(
                     IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, "Edit account") }
                     IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "More") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Import bank statement…") },
+                            leadingIcon = { Icon(Icons.Rounded.UploadFile, null) },
+                            onClick = { menu = false; statementPicker.launch(STATEMENT_TYPES) },
+                        )
                         DropdownMenuItem(
                             text = { Text("Reconcile with statement…") },
                             leadingIcon = { Icon(Icons.AutoMirrored.Rounded.FactCheck, null) },
@@ -381,6 +393,9 @@ fun AccountLedgerScreen(
     }
     message?.let { MessageDialog("Something went wrong", it) { vm.message.value = null } }
 }
+
+/** CSV/TSV exports; banks and browsers label them inconsistently, so any text or spreadsheet-like type. */
+private val STATEMENT_TYPES = arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "application/octet-stream")
 
 /** Shows whether the account still matches the statement it was reconciled against. */
 @Composable

@@ -8,6 +8,7 @@ import com.soloit.doubleentry.data.InvoiceRepository
 import com.soloit.doubleentry.data.LedgerRepository
 import com.soloit.doubleentry.data.ReconciliationRepository
 import com.soloit.doubleentry.data.RecurringRepository
+import com.soloit.doubleentry.data.StatementImporter
 import com.soloit.doubleentry.data.UndoManager
 import com.soloit.doubleentry.data.SettingsRepository
 import com.soloit.doubleentry.data.local.AppDatabase
@@ -50,6 +51,7 @@ class AppContainer(private val context: Context, val appScope: CoroutineScope) {
     val invoices = InvoiceRepository(database, ledger, settings, sync)
     val recurring = RecurringRepository(database, ledger, settings, sync)
     val reconciliations = ReconciliationRepository(database, ledger, settings)
+    val statementImports = StatementImporter(database, ledger, invoices, sync)
     val backup = BackupService(database, ledger, settings, sync)
     val undo = UndoManager(appScope)
     val appLock = AppLock(preferences)
