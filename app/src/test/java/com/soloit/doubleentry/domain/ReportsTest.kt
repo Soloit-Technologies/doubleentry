@@ -120,6 +120,20 @@ class ReportsTest {
         assertEquals(3_000L, result.series[1].latest)
     }
 
+    @Test
+    fun defaultPlanReportGroupsCoverEveryAccount() {
+        val groupsByType = mapOf(
+            AccountType.Asset to DefaultAccountPlan.balanceSheetSettings.assetGroups,
+            AccountType.Liability to DefaultAccountPlan.balanceSheetSettings.liabilityGroups,
+            AccountType.Revenue to DefaultAccountPlan.incomeStatementSettings.revenueGroups,
+            AccountType.Expense to DefaultAccountPlan.incomeStatementSettings.expenseGroups,
+        )
+        for (entry in DefaultAccountPlan.accounts) {
+            val groups = groupsByType[entry.type] ?: continue
+            assertTrue("${entry.number} ${entry.name} is in no group", groups.indexOfGroupFor(entry.number) >= 0)
+        }
+    }
+
     private val trendMovements = mapOf(
         "rent" to mapOf(YearMonth.of(2026, 1) to 10_000L, YearMonth.of(2026, 2) to 10_000L),
         "food" to mapOf(YearMonth.of(2026, 3) to 3_000L),

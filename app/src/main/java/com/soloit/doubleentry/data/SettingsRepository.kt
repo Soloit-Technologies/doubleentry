@@ -38,18 +38,9 @@ class SettingsRepository(
     val cashflow: Flow<CashflowSettings> = values.map(::cashflowFrom).distinctUntilChanged()
     val invoice: Flow<InvoiceSettings> = values.map(::invoiceFrom).distinctUntilChanged()
 
-    suspend fun saveBalanceSheet(settings: BalanceSheetSettings) = set(
-        Keys.ASSET_GROUPS to encodeGroups(settings.assetGroups),
-        Keys.LIABILITY_GROUPS to encodeGroups(settings.liabilityGroups),
-    )
+    suspend fun saveBalanceSheet(settings: BalanceSheetSettings) = set(*balanceSheetEntries(settings))
 
-    suspend fun saveIncomeStatement(settings: IncomeStatementSettings) = set(
-        Keys.REVENUE_GROUPS to encodeGroups(settings.revenueGroups),
-        Keys.EXPENSE_GROUPS to encodeGroups(settings.expenseGroups),
-        Keys.DEPRECIATION_PREFIXES to json.encodeToString(stringList, settings.depreciationPrefixes),
-        Keys.TAX_PREFIXES to json.encodeToString(stringList, settings.taxPrefixes),
-        Keys.DEFERRED_PREFIXES to json.encodeToString(stringList, settings.deferredAssetPrefixes),
-    )
+    suspend fun saveIncomeStatement(settings: IncomeStatementSettings) = set(*incomeStatementEntries(settings))
 
     suspend fun saveCashflow(settings: CashflowSettings) = set(
         Keys.CASH_GROUPS to encodeGroups(settings.cashGroups),
@@ -154,6 +145,19 @@ class SettingsRepository(
 
         private fun decodeInts(raw: String?): List<Int> =
             raw?.takeIf { it.isNotBlank() }?.let { runCatching { json.decodeFromString(intList, it) }.getOrNull() }.orEmpty()
+
+        internal fun balanceSheetEntries(settings: BalanceSheetSettings): Array<Pair<String, String>> = arrayOf(
+            Keys.ASSET_GROUPS to encodeGroups(settings.assetGroups),
+            Keys.LIABILITY_GROUPS to encodeGroups(settings.liabilityGroups),
+        )
+
+        internal fun incomeStatementEntries(settings: IncomeStatementSettings): Array<Pair<String, String>> = arrayOf(
+            Keys.REVENUE_GROUPS to encodeGroups(settings.revenueGroups),
+            Keys.EXPENSE_GROUPS to encodeGroups(settings.expenseGroups),
+            Keys.DEPRECIATION_PREFIXES to json.encodeToString(stringList, settings.depreciationPrefixes),
+            Keys.TAX_PREFIXES to json.encodeToString(stringList, settings.taxPrefixes),
+            Keys.DEFERRED_PREFIXES to json.encodeToString(stringList, settings.deferredAssetPrefixes),
+        )
 
         internal fun balanceSheetFrom(values: Map<String, String>) = BalanceSheetSettings(
             assetGroups = decodeGroups(values[Keys.ASSET_GROUPS]).orEmpty(),

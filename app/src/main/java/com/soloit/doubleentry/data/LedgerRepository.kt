@@ -5,12 +5,14 @@ import com.soloit.doubleentry.data.local.AccountEntity
 import com.soloit.doubleentry.data.local.AppDatabase
 import com.soloit.doubleentry.data.local.EntryEntity
 import com.soloit.doubleentry.data.local.TransactionEntity
+import com.soloit.doubleentry.data.local.UserSettingEntity
 import com.soloit.doubleentry.data.local.nowMicros
 import com.soloit.doubleentry.data.local.toDomain
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.DefaultAccountPlan
 import com.soloit.doubleentry.domain.Depreciation
+import com.soloit.doubleentry.domain.DeterministicIds
 import com.soloit.doubleentry.domain.LedgerException
 import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.TransactionDraft
@@ -60,11 +62,13 @@ class LedgerRepository(
     }
 
     /**
-     * Seeds the default chart of accounts. Ids are deterministic, so accounts that already exist
-     * (for example pulled from another device) are left untouched and numbers in use are skipped.
+     * Seeds the default chart of accounts and its report groups. Ids are deterministic, so accounts
+     * that already exist (for example pulled from another device) are left untouched and numbers in
+     * use are skipped. Report settings are only written where the user has none, live or deleted.
      */
     suspend fun seedDefaultPlan(): Int {
         var created = 0
+        var seededSettings = false
         db.withTransaction {
             for (entry in DefaultAccountPlan.accounts) {
                 if (accountDao.byId(entry.id) != null) continue
@@ -74,8 +78,16 @@ class LedgerRepository(
                 accountDao.upsert(AccountEntity(entry.id, entry.number, entry.name, entry.type.ordinal, updatedAt = SEED_TIMESTAMP))
                 created++
             }
+            val defaults = SettingsRepository.balanceSheetEntries(DefaultAccountPlan.balanceSheetSettings) +
+                SettingsRepository.incomeStatementEntries(DefaultAccountPlan.incomeStatementSettings)
+            for ((key, value) in defaults) {
+                if (db.settings().byKey(key) != null) continue
+                // Same oldest timestamp as the accounts: settings already in the cloud win.
+                db.settings().upsert(UserSettingEntity(DeterministicIds.settingId(key), key, value, updatedAt = SEED_TIMESTAMP))
+                seededSettings = true
+            }
         }
-        if (created > 0) sync.requestSync()
+        if (created > 0 || seededSettings) sync.requestSync()
         return created
     }
 

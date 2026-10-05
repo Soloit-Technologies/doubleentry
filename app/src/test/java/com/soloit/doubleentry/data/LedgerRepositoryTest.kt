@@ -1,11 +1,15 @@
 package com.soloit.doubleentry.data
 
+import com.soloit.doubleentry.domain.AccountGroup
 import com.soloit.doubleentry.domain.AccountType
+import com.soloit.doubleentry.domain.BalanceSheetSettings
+import com.soloit.doubleentry.domain.DefaultAccountPlan
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.LedgerException
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.testing.TestLedger
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -123,5 +127,16 @@ class LedgerRepositoryTest {
         assertTrue(t.settings.livePrefix(SettingsRepository.Keys.RECURRING_PREFIX).isEmpty())
         assertTrue(t.settings.livePrefix(SettingsRepository.Keys.RECONCILIATION_PREFIX).isEmpty())
         assertEquals("2440", t.settings.get(SettingsRepository.Keys.INVOICE_CREDIT_ACCOUNT))
+    }
+
+    @Test
+    fun seedingDefaultPlanAddsReportGroupsWithoutOverwritingExistingOnes() = runBlocking<Unit> {
+        val custom = BalanceSheetSettings(assetGroups = listOf(AccountGroup("Mine", listOf("19"))))
+        t.settings.saveBalanceSheet(custom)
+
+        t.ledger.seedDefaultPlan()
+
+        assertEquals(custom, t.settings.balanceSheet.first())
+        assertEquals(DefaultAccountPlan.incomeStatementSettings, t.settings.incomeStatement.first())
     }
 }
