@@ -1,3 +1,4 @@
+import com.android.build.api.dsl.VariantDimension
 import java.util.Properties
 
 plugins {
@@ -19,52 +20,60 @@ fun config(key: String, env: String): String =
 
 val supabaseUrl = config("supabase.url", "SUPABASE_URL")
 val supabaseAnonKey = config("supabase.anonKey", "SUPABASE_ANON_KEY")
-val cloudSyncFeature = config("cloudSync.enabled", "CLOUD_SYNC_ENABLED").ifEmpty { "true" }.toBoolean()
+// Cloud sync is on in debug builds and off in release (Google Play) builds unless set explicitly.
+val cloudSyncSetting = config("cloudSync.enabled", "CLOUD_SYNC_ENABLED").ifEmpty { null }?.toBoolean()
 
-// Optional release signing: create keystore.properties (git-ignored) with
-// storeFile, storePassword, keyAlias and keyPassword to sign release builds.
+// Builds without cloud sync don't embed the Supabase project at all.
+fun VariantDimension.cloudSync(default: Boolean) {
+    val enabled = cloudSyncSetting ?: default
+    buildConfigField("String", "SUPABASE_URL", "\"${if (enabled) supabaseUrl else ""}\"")
+    buildConfigField("String", "SUPABASE_ANON_KEY", "\"${if (enabled) supabaseAnonKey else ""}\"")
+    buildConfigField("boolean", "CLOUD_SYNC_FEATURE", enabled.toString())
+}
+
+// Optional release signing: keystore.properties (git-ignored) with storeFile, storePassword,
+// keyAlias and keyPassword, or for CI the SIGNING_* environment variables.
 val keystoreProperties = Properties().apply {
     val file = rootProject.file("keystore.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
+
+fun signing(key: String, env: String): String? = keystoreProperties.getProperty(key) ?: System.getenv(env)?.ifBlank { null }
 
 android {
     namespace = "com.soloit.doubleentry"
     compileSdk = 37
 
     defaultConfig {
-        // Same application id as the MAUI app so this build can ship as an update to it.
         applicationId = "com.soloit.doubleentry"
         minSdk = 26
         targetSdk = 37
         versionCode = 13
         versionName = "2.0.0"
 
-        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
-        buildConfigField("boolean", "CLOUD_SYNC_FEATURE", cloudSyncFeature.toString())
-
         manifestPlaceholders["appLabel"] = "DoubleEntry"
     }
 
     signingConfigs {
-        if (keystoreProperties.containsKey("storeFile")) {
+        signing("storeFile", "SIGNING_STORE_FILE")?.let { path ->
             create("release") {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = rootProject.file(path)
+                storePassword = signing("storePassword", "SIGNING_STORE_PASSWORD")
+                keyAlias = signing("keyAlias", "SIGNING_KEY_ALIAS")
+                keyPassword = signing("keyPassword", "SIGNING_KEY_PASSWORD")
             }
         }
     }
 
     buildTypes {
         debug {
-            // Installs side by side with the release/MAUI build.
+            // Installs side by side with the release build.
             applicationIdSuffix = ".dev"
+            cloudSync(default = true)
             manifestPlaceholders["appLabel"] = "DoubleEntry Dev"
         }
         release {
+            cloudSync(default = false)
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

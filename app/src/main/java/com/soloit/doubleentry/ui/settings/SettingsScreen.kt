@@ -16,9 +16,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.HelpOutline
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.AccountBalance
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.EventRepeat
@@ -26,6 +29,7 @@ import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PrivacyTip
 import androidx.compose.material.icons.rounded.Payments
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
@@ -50,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,6 +63,7 @@ import com.soloit.doubleentry.data.ReminderPrefs
 import com.soloit.doubleentry.data.ThemeMode
 import com.soloit.doubleentry.system.AppLock
 import com.soloit.doubleentry.system.InvoiceReminders
+import java.net.URLEncoder
 import com.soloit.doubleentry.ui.LocalAppContainer
 import com.soloit.doubleentry.ui.components.GroupedItem
 import com.soloit.doubleentry.ui.components.IconAvatar
@@ -86,6 +92,10 @@ fun SettingsScreen(
     val appLock by container.preferences.appLock.collectAsStateWithLifecycle()
     val sync by container.sync.status.collectAsStateWithLifecycle()
     var notice by remember { mutableStateOf<String?>(null) }
+    val uriHandler = LocalUriHandler.current
+    fun openLink(url: String) {
+        runCatching { uriHandler.openUri(url) }.onFailure { notice = "There's no browser on this device to open $url" }
+    }
 
     fun setReminders(value: ReminderPrefs) {
         container.preferences.setReminders(value)
@@ -241,6 +251,21 @@ fun SettingsScreen(
                 }
             }
 
+            item { SectionHeader("Support") }
+            item {
+                Column {
+                    GroupedItem(0, 3, onClick = { openLink(bugReportUrl()) }) {
+                        SettingRow(Icons.Rounded.BugReport, "Report a problem", "Opens a bug report on GitHub with your app and Android version filled in", trailing = { ExternalLinkIcon() })
+                    }
+                    GroupedItem(1, 3, onClick = { openLink("$SUPPORT_URL/issues/new/choose") }) {
+                        SettingRow(Icons.AutoMirrored.Rounded.HelpOutline, "Ask a question or suggest a feature", "On GitHub, where you can also follow known issues", trailing = { ExternalLinkIcon() })
+                    }
+                    GroupedItem(2, 3, onClick = { openLink(PRIVACY_POLICY_URL) }) {
+                        SettingRow(Icons.Rounded.PrivacyTip, "Privacy policy", "Your ledger stays on this device", trailing = { ExternalLinkIcon() })
+                    }
+                }
+            }
+
             item { SectionHeader("About") }
             item {
                 GroupedItem(0, 1) {
@@ -251,6 +276,25 @@ fun SettingsScreen(
     }
     notice?.let { MessageDialog("Not available", it) { notice = null } }
 }
+
+/** Public repository for support: issues are the help channel, and it hosts the privacy policy. */
+private const val SUPPORT_URL = "https://github.com/Soloit-Technologies/doubleentry-app"
+private const val PRIVACY_POLICY_URL = "$SUPPORT_URL/blob/main/PRIVACY.md"
+
+/** The bug report form, with the fields of `.github/ISSUE_TEMPLATE/bug_report.yml` in that repository prefilled. */
+private fun bugReportUrl(): String {
+    fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8.name())
+    val fields = mapOf(
+        "app-version" to "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+        "android-version" to "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+        "device" to "${Build.MANUFACTURER} ${Build.MODEL}",
+    )
+    return "$SUPPORT_URL/issues/new?template=bug_report.yml&" +
+        fields.entries.joinToString("&") { (key, value) -> "$key=${encode(value)}" }
+}
+
+@Composable
+private fun ExternalLinkIcon() = Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = "Opens in browser")
 
 @Composable
 private fun SettingTitle(icon: ImageVector, title: String) {

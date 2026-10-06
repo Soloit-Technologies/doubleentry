@@ -36,8 +36,8 @@ Build types:
 
 | Build | Application id | Name on device | Notes |
 |---|---|---|---|
-| debug | `com.soloit.doubleentry.dev` | DoubleEntry Dev | Installs next to the MAUI/release app. Allows plain HTTP to a local Supabase stack. |
-| release | `com.soloit.doubleentry` | DoubleEntry | Same id as the MAUI app (`versionCode` 13 > 12), so it can ship as an update in Google Play. |
+| debug | `com.soloit.doubleentry.dev` | DoubleEntry Dev | Installs next to the release app. Cloud sync on. Allows plain HTTP to a local Supabase stack. |
+| release | `com.soloit.doubleentry` | DoubleEntry | The Google Play build: minified with R8, cloud sync and the Supabase settings left out. |
 
 To sign release builds, create `keystore.properties` in the project root (git-ignored):
 
@@ -48,7 +48,9 @@ keyAlias=…
 keyPassword=…
 ```
 
-Publishing as an update of the existing Play listing requires the same upload key as the MAUI app.
+CI signs with the `SIGNING_STORE_FILE`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
+`SIGNING_KEY_PASSWORD` environment variables instead. Publishing on Google Play (upload key, store
+listing, privacy policy, Data safety answers) is described in [`docs/google-play.md`](docs/google-play.md).
 
 ## Configure Supabase
 
@@ -60,8 +62,10 @@ supabase.anonKey=<anon / publishable key from Project Settings → API>
 ```
 
 Without them the app builds and works offline; the cloud sync settings are simply hidden.
-`cloudSync.enabled=false` hides cloud sync even when a project is configured. CI reads the
-same values from the `SUPABASE_URL` / `SUPABASE_ANON_KEY` environment variables.
+Cloud sync is on in debug builds and off in release builds; `cloudSync.enabled=true|false` (or
+`CLOUD_SYNC_ENABLED`) overrides that for both. A build without cloud sync doesn't embed the
+Supabase settings. CI reads the same values from the `SUPABASE_URL` / `SUPABASE_ANON_KEY`
+environment variables.
 
 Everything on the server (tables, row-level security, triggers, realtime) lives in
 [`supabase/`](supabase/README.md) and can be deployed from the repository.
@@ -134,6 +138,8 @@ Amounts are stored as `Long` cents everywhere; dates as ISO `yyyy-MM-dd`. All de
 ## Continuous integration
 
 - `.github/workflows/android.yml` runs the unit tests and builds a debug APK on every push and pull request.
+- `.github/workflows/release.yml` builds the signed Play bundle when a `v*` tag is pushed and can upload it
+  to the internal testing track. Setup is in [`docs/google-play.md`](docs/google-play.md).
 - `.github/workflows/supabase.yml` validates the migrations on a throwaway Supabase stack, previews
   them on pull requests and applies them to your project on push. Setup is in
   [`supabase/README.md`](supabase/README.md#deploy-from-github).
