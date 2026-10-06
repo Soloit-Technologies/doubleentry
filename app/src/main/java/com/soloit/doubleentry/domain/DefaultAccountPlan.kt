@@ -1,7 +1,7 @@
 package com.soloit.doubleentry.domain
 
 /**
- * A default chart of accounts inspired by the Swedish BAS plan, adapted for personal finance:
+ * A default chart of accounts for personal finance, numbered by account class:
  * 12xx–13xx fixed assets, 16xx–17xx receivables, 19xx cash and investments, 20xx equity,
  * 21xx–28xx liabilities, 3xxx income, 4xxx home, 50xx–52xx transport and travel, 6xxx food and
  * household, 7xxx personal and leisure, and 8xxx family, finance, health, insurance,

@@ -391,7 +391,7 @@ private fun WelcomeCard(
                 }
                 OutlinedButton(onClick = onStartFromScratch, modifier = Modifier.fillMaxWidth()) { Text("Start from scratch") }
                 Text(
-                    "The default plan has about 60 BAS-inspired accounts (cash, bank, loans, salary, housing, food …). You can rename or delete them later.",
+                    "The default plan has about 60 accounts (cash, bank, loans, salary, housing, food …). You can rename or delete them later.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
