@@ -12,6 +12,7 @@ import com.soloit.doubleentry.data.StatementImporter
 import com.soloit.doubleentry.data.UndoManager
 import com.soloit.doubleentry.data.SettingsRepository
 import com.soloit.doubleentry.data.local.AppDatabase
+import com.soloit.doubleentry.data.local.ServerClock
 import com.soloit.doubleentry.sync.SupabaseApi
 import com.soloit.doubleentry.sync.SupabaseConfig
 import com.soloit.doubleentry.sync.SyncEngine
@@ -41,10 +42,13 @@ class AppContainer(private val context: Context, val appScope: CoroutineScope) {
 
     val database: AppDatabase = AppDatabase.build(context)
     val preferences = AppPreferences(context)
-    private val syncPreferences = SyncPreferences(context)
-    private val api = SupabaseApi(supabaseConfig)
+    private val syncPreferences = SyncPreferences(context).also { ServerClock.offsetMicros = it.clockOffsetMicros }
+    private val api = SupabaseApi(supabaseConfig, onClockOffset = { syncPreferences.clockOffsetMicros = it })
 
-    val sync = SyncManager(supabaseConfig, syncPreferences, api, SyncEngine(database, api, syncPreferences), appScope)
+    val sync = SyncManager(
+        supabaseConfig, syncPreferences, api, SyncEngine(database, api, syncPreferences), appScope,
+        pendingChanges = database.syncStatus().pendingChanges(),
+    )
     val ledger = LedgerRepository(database, sync)
     val assets = AssetRepository(database, ledger, sync)
     val settings = SettingsRepository(database, sync)

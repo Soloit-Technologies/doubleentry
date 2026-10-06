@@ -8,31 +8,29 @@ select 'accounts' as "table", count(*) filter (where deleted_at is null) as live
 union all
 select 'transactions', count(*) filter (where deleted_at is null), count(*) filter (where deleted_at is not null) from public.transactions
 union all
-select 'transaction_entries', count(*) filter (where deleted_at is null), count(*) filter (where deleted_at is not null) from public.transaction_entries
-union all
 select 'assets', count(*) filter (where deleted_at is null), count(*) filter (where deleted_at is not null) from public.assets
 union all
 select 'invoices', count(*) filter (where deleted_at is null), count(*) filter (where deleted_at is not null) from public.invoices
 union all
 select 'user_settings', count(*) filter (where deleted_at is null), count(*) filter (where deleted_at is not null) from public.user_settings;
 
--- Live transactions whose live lines do not balance (should return no rows).
-select t.id, t.date, t.title,
-       sum(case when e.entry_type = 0 then e.amount else 0 end) as debits,
-       sum(case when e.entry_type = 1 then e.amount else 0 end) as credits
+-- Live transactions whose lines do not balance, or that have no lines (should return no rows).
+select t.user_id, t.id, t.date, t.title,
+       coalesce(sum(case when e.entry_type = 0 then e.amount else 0 end), 0) as debits,
+       coalesce(sum(case when e.entry_type = 1 then e.amount else 0 end), 0) as credits
 from public.transactions t
-join public.transaction_entries e on e.transaction_id = t.id and e.deleted_at is null
+left join lateral jsonb_to_recordset(t.lines) as e(amount numeric, entry_type smallint) on true
 where t.deleted_at is null
-group by t.id, t.date, t.title
-having sum(case when e.entry_type = 0 then e.amount else -e.amount end) <> 0
+group by t.user_id, t.id, t.date, t.title
+having count(e.amount) = 0 or sum(case when e.entry_type = 0 then e.amount else -e.amount end) <> 0
 order by t.date desc;
 
--- Live lines that belong to a deleted transaction or point at a deleted account.
-select e.id, e.transaction_id, e.account_id, t.deleted_at as transaction_deleted_at, a.deleted_at as account_deleted_at
-from public.transaction_entries e
-join public.transactions t on t.id = e.transaction_id
-join public.accounts a on a.id = e.account_id
-where e.deleted_at is null and (t.deleted_at is not null or a.deleted_at is not null);
+-- Lines of live transactions that point at a deleted or missing account.
+select t.user_id, t.id as transaction_id, t.date, t.title, e.account_id, a.deleted_at as account_deleted_at
+from public.transactions t
+cross join lateral jsonb_to_recordset(t.lines) as e(account_id uuid)
+left join public.accounts a on a.user_id = t.user_id and a.id = e.account_id
+where t.deleted_at is null and (a.id is null or a.deleted_at is not null);
 
 -- Live accounts sharing a number (the app expects numbers to be unique per user).
 select user_id, number, count(*) as copies, array_agg(name) as names

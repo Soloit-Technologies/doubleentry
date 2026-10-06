@@ -1,11 +1,15 @@
 package com.soloit.doubleentry.data
 
+import com.soloit.doubleentry.domain.AccountGroup
 import com.soloit.doubleentry.domain.AccountType
+import com.soloit.doubleentry.domain.BalanceSheetSettings
+import com.soloit.doubleentry.domain.DefaultAccountPlan
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.LedgerException
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.testing.TestLedger
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -69,7 +73,7 @@ class LedgerRepositoryTest {
         val bank = t.account(1910, "Bank", AccountType.Asset)
         val food = t.account(5010, "Food", AccountType.Expense)
         val id = t.post(day, "Groceries", food, bank, 100_00)
-        // An edit tombstones the original lines; undoing a later delete must not revive them.
+        // An edit replaces the original lines; undoing a later delete must not revive them.
         t.ledger.updateTransaction(id, TransactionDraft(day, "Groceries", "", listOf(DraftLine(food.id, 80_00, EntryType.Debit), DraftLine(bank.id, 80_00, EntryType.Credit))))
 
         val stamp = t.ledger.deleteTransaction(id)
@@ -77,7 +81,7 @@ class LedgerRepositoryTest {
         assertEquals(0L, t.ledger.getBalances(day)[bank.id])
 
         val restored = t.ledger.restoreDeleted(stamp)
-        assertEquals(3, restored) // the transaction and its two current lines
+        assertEquals(1, restored) // the transaction, which kept its current lines while deleted
         val tx = t.ledger.getTransaction(id)!!
         assertEquals(listOf(80_00L, 80_00L), tx.entries.map { it.amount })
         assertEquals(-80_00L, t.ledger.getBalances(day)[bank.id])
@@ -123,5 +127,16 @@ class LedgerRepositoryTest {
         assertTrue(t.settings.livePrefix(SettingsRepository.Keys.RECURRING_PREFIX).isEmpty())
         assertTrue(t.settings.livePrefix(SettingsRepository.Keys.RECONCILIATION_PREFIX).isEmpty())
         assertEquals("2440", t.settings.get(SettingsRepository.Keys.INVOICE_CREDIT_ACCOUNT))
+    }
+
+    @Test
+    fun seedingDefaultPlanAddsReportGroupsWithoutOverwritingExistingOnes() = runBlocking<Unit> {
+        val custom = BalanceSheetSettings(assetGroups = listOf(AccountGroup("Mine", listOf("19"))))
+        t.settings.saveBalanceSheet(custom)
+
+        t.ledger.seedDefaultPlan()
+
+        assertEquals(custom, t.settings.balanceSheet.first())
+        assertEquals(DefaultAccountPlan.incomeStatementSettings, t.settings.incomeStatement.first())
     }
 }

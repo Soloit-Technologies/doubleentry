@@ -19,7 +19,7 @@ Supabase backend.
   Month, year-to-date or year, with comparison against the previous period or the same period last year.
 - **Assets.** Automatic monthly depreciation write-offs, with a repair tool for missing ones.
 - **Invoices.** Booking, due-date tracking, payment in full or in instalments, and an optional daily reminder notification.
-- **Cloud sync.** Offline-first local database, last-write-wins sync with Supabase, realtime updates between devices.
+- **Cloud sync.** Offline-first local database, last-edit-wins sync with Supabase, realtime updates between devices.
 - **Backups.** JSON export/import, compatible with backups made by the MAUI app. CSV export of transactions and balances.
 - Light/dark theme, optional Material You (wallpaper) colors, optional app lock (screen lock or biometrics),
   a net-worth home-screen widget and launcher shortcuts.
@@ -89,8 +89,9 @@ Everything else follows the original logic.
   Backups carry this data in the `android` extension.
 - **Instalments.** An invoice row is only marked paid by the payment that settles the rest, so the MAUI app sees
   a partly paid invoice as unpaid.
-- **Concurrent edits.** When two devices edited the lines of the same transaction before syncing, the lines of
-  the version whose header wins are kept (instead of both line sets).
+- **Concurrent edits.** A transaction syncs as one row with its lines, so when two devices edited the same
+  transaction before syncing, the later edit is kept whole (never a mix, and never both line sets). The later
+  edit wins by when it was made, not by which device came online first, and the server enforces it.
 
 - **Default plan seeding.** Seeded accounts get the oldest possible timestamp, so accounts already
   in the cloud (renamed or deleted elsewhere) win over freshly seeded defaults when you sign in.
@@ -103,7 +104,14 @@ Everything else follows the original logic.
 - **Balance sheet** hides zero-balance accounts unless *Show empty accounts* is selected.
 - **Backups.** Exports include the deferred-asset prefixes, which the MAUI export omitted.
 - **Sync** runs when the app comes to the foreground, refreshes an expired session once
-  before failing, and the realtime connection reconnects with backoff.
+  before failing, and the realtime connection reconnects with backoff. A banner above the tab bar
+  shows when changes aren't reaching the cloud (offline, paused, failing, session expired) and
+  when unsynced edits were replaced by newer ones from another device. Sync stamps are corrected
+  for device clock skew, measured from the server's `Date` header. Signing in never silently
+  merges two ledgers: it asks when this device and the account each hold one, when changes were
+  made while signed out, or when the device holds another account's ledger. *Delete all* and
+  *Import* also delete cloud rows this device never pulled, and *Reset this device* uploads first
+  and warns about anything it couldn't upload.
 
 ## Project structure
 

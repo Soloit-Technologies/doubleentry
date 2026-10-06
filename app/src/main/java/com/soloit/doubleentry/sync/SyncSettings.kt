@@ -24,20 +24,21 @@ data class SupabaseConfig(
     val isAvailable: Boolean get() = featureEnabled && isConfigured
 }
 
-/** Tables in parent → child order; pushes and pulls follow this order to satisfy foreign keys. */
+/**
+ * Tables in parent → child order; pushes and pulls follow this order to satisfy foreign keys.
+ * Transaction lines travel inside their transaction (`transactions.lines`).
+ */
 enum class SyncTable(val remoteName: String) {
     Accounts("accounts"),
     Transactions("transactions"),
-    Entries("transaction_entries"),
     Assets("assets"),
     Invoices("invoices"),
     Settings("user_settings"),
 }
 
 /** Device-local sync state: account, token expiry and per-table pull watermarks. */
-class SyncPreferences(context: Context) {
+class SyncPreferences(context: Context, private val tokens: TokenStore = SecureTokenStore(context)) {
     private val prefs = context.getSharedPreferences("supabase_sync", Context.MODE_PRIVATE)
-    private val tokens = SecureTokenStore(context)
 
     var enabled: Boolean
         get() = prefs.getBoolean("enabled", false)
@@ -58,6 +59,47 @@ class SyncPreferences(context: Context) {
     var lastSyncAtMillis: Long?
         get() = prefs.getLong("lastSyncAt", 0L).takeIf { it > 0 }
         set(value) = prefs.edit { putLong("lastSyncAt", value ?: 0L) }
+
+    /**
+     * The account this device's ledger last synced with. Kept after sign-out (the data stays), so a
+     * later sign-in can tell "back to the same account" from "a different ledger".
+     */
+    var dataOwnerId: String?
+        get() = prefs.getString("dataOwnerId", null)
+        set(value) = prefs.edit { putString("dataOwnerId", value) }
+
+    var dataOwnerEmail: String?
+        get() = prefs.getString("dataOwnerEmail", null)
+        set(value) = prefs.edit { putString("dataOwnerEmail", value) }
+
+    /**
+     * Set when this device replaced its whole ledger (delete all, import): before the next pull,
+     * every cloud row last changed before this moment (epoch micros) is deleted too. Kept across
+     * sign-out like the data it belongs to; the next sign-in decides whether it still applies.
+     */
+    var cloudWipeBeforeMicros: Long?
+        get() = prefs.getLong("cloudWipeBefore", 0L).takeIf { it > 0 }
+        set(value) = prefs.edit { putLong("cloudWipeBefore", value ?: 0L) }
+
+    /** Last measured [com.soloit.doubleentry.data.local.ServerClock] offset; a property of this device, kept across sign-outs. */
+    var clockOffsetMicros: Long
+        get() = prefs.getLong("clockOffsetMicros", 0L)
+        set(value) = prefs.edit { putLong("clockOffsetMicros", value) }
+
+    /** Unsynced local edits that lost to another device's newer edits since the user last dismissed the notice. */
+    val replacedChanges: Int get() = prefs.getInt("replacedChanges", 0)
+
+    val replacedAtMillis: Long? get() = prefs.getLong("replacedAt", 0L).takeIf { it > 0 }
+
+    fun addReplacedChanges(count: Int, atMillis: Long) = prefs.edit {
+        putInt("replacedChanges", replacedChanges + count)
+        putLong("replacedAt", atMillis)
+    }
+
+    fun clearReplacedChanges() = prefs.edit {
+        remove("replacedChanges")
+        remove("replacedAt")
+    }
 
     var accessToken: String?
         get() = tokens.get("access")
@@ -81,6 +123,8 @@ class SyncPreferences(context: Context) {
             remove("userEmail")
             remove("expiresAt")
             remove("lastSyncAt")
+            remove("replacedChanges")
+            remove("replacedAt")
             SyncTable.entries.forEach { remove("watermark.${it.remoteName}") }
         }
         tokens.clear()
@@ -91,10 +135,17 @@ class SyncPreferences(context: Context) {
  * Stores tokens encrypted with an AES-GCM key held in the Android Keystore. Any failure (for
  * example a key lost after a device restore) simply yields `null`, which means "sign in again".
  */
-private class SecureTokenStore(context: Context) {
+/** Where session tokens live; [SecureTokenStore] on devices. */
+interface TokenStore {
+    fun get(name: String): String?
+    fun put(name: String, value: String?)
+    fun clear()
+}
+
+private class SecureTokenStore(context: Context) : TokenStore {
     private val prefs = context.getSharedPreferences("supabase_tokens", Context.MODE_PRIVATE)
 
-    fun get(name: String): String? {
+    override fun get(name: String): String? {
         val stored = prefs.getString(name, null) ?: return null
         return runCatching {
             val bytes = Base64.decode(stored, Base64.NO_WRAP)
@@ -107,7 +158,7 @@ private class SecureTokenStore(context: Context) {
         }
     }
 
-    fun put(name: String, value: String?) {
+    override fun put(name: String, value: String?) {
         if (value.isNullOrBlank()) {
             prefs.edit { remove(name) }
             return
@@ -120,7 +171,7 @@ private class SecureTokenStore(context: Context) {
         }.onFailure { prefs.edit { remove(name) } }
     }
 
-    fun clear() = prefs.edit { clear() }
+    override fun clear() = prefs.edit { clear() }
 
     private fun key(): SecretKey {
         val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }

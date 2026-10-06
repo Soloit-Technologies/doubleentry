@@ -12,10 +12,10 @@ totals as (
   select e.account_id,
          sum(case when e.entry_type = 0 then e.amount else 0 end) as debits,
          sum(case when e.entry_type = 1 then e.amount else 0 end) as credits
-  from public.transaction_entries e
-  join public.transactions t on t.id = e.transaction_id
+  from public.transactions t
+  cross join lateral jsonb_to_recordset(t.lines) as e(account_id uuid, amount numeric, entry_type smallint)
   cross join params p
-  where e.deleted_at is null and t.deleted_at is null
+  where t.deleted_at is null
     and t.user_id = p.user_id and t.date <= p.as_of
   group by e.account_id
 )

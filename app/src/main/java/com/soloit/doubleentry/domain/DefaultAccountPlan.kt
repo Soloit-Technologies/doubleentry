@@ -5,9 +5,9 @@ package com.soloit.doubleentry.domain
  * 12xx–13xx fixed assets, 16xx–17xx receivables, 19xx cash and investments, 20xx equity,
  * 21xx–28xx liabilities, 3xxx income, 4xxx home, 50xx–52xx transport and travel, 6xxx food and
  * household, 7xxx personal and leisure, and 8xxx family, finance, health, insurance,
- * depreciation and tax. The groups line up with [CashflowSettings.DEFAULT_CASH_GROUPS]. Ids are
- * deterministic so that seeding the plan on several devices converges on the same rows under
- * cloud sync.
+ * depreciation and tax. The groups line up with [CashflowSettings.DEFAULT_CASH_GROUPS] and with
+ * the report groups seeded alongside the accounts. Ids are deterministic so that seeding the plan
+ * on several devices converges on the same rows under cloud sync.
  */
 object DefaultAccountPlan {
 
@@ -336,5 +336,60 @@ object DefaultAccountPlan {
         Entry(8960, "Tax Penalties & Interest", AccountType.Expense),
         Entry(8997, "Uncategorized Expenses", AccountType.Expense),
         Entry(8998, "Other Expenses", AccountType.Expense),
+    )
+
+    /** Balance sheet groups matching the number ranges above. */
+    val balanceSheetSettings = BalanceSheetSettings(
+        assetGroups = listOf(
+            AccountGroup("Belongings", listOf("121", "122")),
+            AccountGroup("Real Estate", listOf("125")),
+            AccountGroup("Long-term Holdings", listOf("135", "138")),
+            AccountGroup("Accumulated Depreciation", listOf("1399")),
+            AccountGroup("Receivables & Prepaid", listOf("16", "17")),
+            AccountGroup("Cash & Bank", listOf("191", "193", "194")),
+            AccountGroup("Investments", listOf("195", "197")),
+            AccountGroup("Retirement Savings", listOf("196")),
+        ),
+        liabilityGroups = listOf(
+            AccountGroup("Tax Liabilities", listOf("21")),
+            AccountGroup("Short-term Liabilities", listOf("24")),
+            AccountGroup("Loans", listOf("25")),
+            AccountGroup("Credit Cards", listOf("28")),
+        ),
+    )
+
+    /** Income statement groups and subtotal prefixes matching the number ranges above. */
+    val incomeStatementSettings = IncomeStatementSettings(
+        revenueGroups = listOf(
+            AccountGroup("Work Income", listOf("31", "32", "33")),
+            AccountGroup("Property & Sales", listOf("34", "35")),
+            AccountGroup("Benefits & Pensions", listOf("36")),
+            AccountGroup("Financial Income", listOf("37")),
+            AccountGroup("Other Income", listOf("38", "39")),
+        ),
+        expenseGroups = listOf(
+            AccountGroup("Housing & Utilities", listOf("40", "41")),
+            AccountGroup("Furnishing & Home Services", listOf("42", "43")),
+            AccountGroup("Transport", listOf("50")),
+            AccountGroup("Travel & Post", listOf("51", "52")),
+            AccountGroup("Food & Household", listOf("61")),
+            AccountGroup("Media & Communication", listOf("71")),
+            AccountGroup("Gifts & Giving", listOf("72")),
+            AccountGroup("Clothing, Kids & Pets", listOf("73")),
+            AccountGroup("Sports & Fitness", listOf("74")),
+            AccountGroup("Entertainment & Hobbies", listOf("75", "76")),
+            AccountGroup("Family & Education", listOf("81")),
+            AccountGroup("Interest & Financial Fees", listOf("82")),
+            AccountGroup("Work & Professional Services", listOf("83")),
+            AccountGroup("Health & Personal Care", listOf("85")),
+            AccountGroup("Insurance", listOf("86")),
+            AccountGroup("Depreciation", listOf("87")),
+            AccountGroup("Taxes", listOf("891", "892", "893", "894", "896")),
+            AccountGroup("Other Expenses", listOf("899")),
+        ),
+        depreciationPrefixes = listOf("87"),
+        taxPrefixes = listOf("891", "892", "893", "894", "896"),
+        // Pension savings can't be spent, so income routed there is shown as deferred.
+        deferredAssetPrefixes = listOf("196"),
     )
 }

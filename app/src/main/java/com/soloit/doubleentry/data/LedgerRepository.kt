@@ -5,21 +5,21 @@ import com.soloit.doubleentry.data.local.AccountEntity
 import com.soloit.doubleentry.data.local.AppDatabase
 import com.soloit.doubleentry.data.local.EntryEntity
 import com.soloit.doubleentry.data.local.TransactionEntity
+import com.soloit.doubleentry.data.local.UserSettingEntity
 import com.soloit.doubleentry.data.local.nowMicros
 import com.soloit.doubleentry.data.local.toDomain
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.DefaultAccountPlan
 import com.soloit.doubleentry.domain.Depreciation
+import com.soloit.doubleentry.domain.DeterministicIds
 import com.soloit.doubleentry.domain.LedgerException
 import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.domain.TransactionValidator
 import com.soloit.doubleentry.domain.newId
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -60,11 +60,13 @@ class LedgerRepository(
     }
 
     /**
-     * Seeds the default chart of accounts. Ids are deterministic, so accounts that already exist
-     * (for example pulled from another device) are left untouched and numbers in use are skipped.
+     * Seeds the default chart of accounts and its report groups. Ids are deterministic, so accounts
+     * that already exist (for example pulled from another device) are left untouched and numbers in
+     * use are skipped. Report settings are only written where the user has none, live or deleted.
      */
     suspend fun seedDefaultPlan(): Int {
         var created = 0
+        var seededSettings = false
         db.withTransaction {
             for (entry in DefaultAccountPlan.accounts) {
                 if (accountDao.byId(entry.id) != null) continue
@@ -74,8 +76,16 @@ class LedgerRepository(
                 accountDao.upsert(AccountEntity(entry.id, entry.number, entry.name, entry.type.ordinal, updatedAt = SEED_TIMESTAMP))
                 created++
             }
+            val defaults = SettingsRepository.balanceSheetEntries(DefaultAccountPlan.balanceSheetSettings) +
+                SettingsRepository.incomeStatementEntries(DefaultAccountPlan.incomeStatementSettings)
+            for ((key, value) in defaults) {
+                if (db.settings().byKey(key) != null) continue
+                // Same oldest timestamp as the accounts: settings already in the cloud win.
+                db.settings().upsert(UserSettingEntity(DeterministicIds.settingId(key), key, value, updatedAt = SEED_TIMESTAMP))
+                seededSettings = true
+            }
         }
-        if (created > 0) sync.requestSync()
+        if (created > 0 || seededSettings) sync.requestSync()
         return created
     }
 
@@ -189,11 +199,11 @@ class LedgerRepository(
         val id = draft.id ?: newId()
         if (transactionDao.byId(id) != null) throw LedgerException("A transaction with this id already exists.")
         transactionDao.upsert(TransactionEntity(id, draft.date, draft.title.trim(), draft.description.trim(), now))
-        entryDao.upsertAll(draft.lines.map { EntryEntity(it.id ?: newId(), id, it.accountId, it.amount, it.type.ordinal, now) })
+        entryDao.upsertAll(draft.lines.map { EntryEntity(it.id ?: newId(), id, it.accountId, it.amount, it.type.ordinal) })
         return id
     }
 
-    /** Replaces the header and lines of an existing transaction (old lines become tombstones). */
+    /** Replaces the header and lines of an existing transaction; they sync as one. */
     suspend fun updateTransaction(id: String, draft: TransactionDraft) {
         db.withTransaction { replaceTransaction(id, draft) }
         sync.requestSync()
@@ -207,8 +217,7 @@ class LedgerRepository(
         transactionDao.upsert(
             existing.copy(date = draft.date, title = draft.title.trim(), description = draft.description.trim(), updatedAt = now, isDirty = true),
         )
-        entryDao.softDeleteOf(id, now)
-        entryDao.upsertAll(draft.lines.map { EntryEntity(newId(), id, it.accountId, it.amount, it.type.ordinal, now) })
+        entryDao.replaceOf(id, draft.lines.map { EntryEntity(newId(), id, it.accountId, it.amount, it.type.ordinal) })
     }
 
     /** True when [transactionId] is an automatic depreciation posting of a live asset. */
@@ -231,9 +240,8 @@ class LedgerRepository(
         return now
     }
 
-    /** Soft-deletes a transaction and its lines with [now] as the shared deletion stamp. */
+    /** Soft-deletes a transaction with [now] as the deletion stamp. It keeps its lines, so undo brings them back. */
     internal suspend fun softDeleteTransaction(id: String, now: Long = nowMicros()) {
-        entryDao.softDeleteOf(id, now)
         transactionDao.softDelete(id, now)
     }
 
@@ -246,7 +254,6 @@ class LedgerRepository(
             val now = nowMicros()
             accountDao.restoreDeletedAt(stamp, now) +
                 transactionDao.restoreDeletedAt(stamp, now) +
-                entryDao.restoreDeletedAt(stamp, now) +
                 db.assets().restoreDeletedAt(stamp, now) +
                 db.invoices().restoreDeletedAt(stamp, now) +
                 db.settings().restoreDeletedAt(stamp, now)
@@ -261,16 +268,12 @@ class LedgerRepository(
             val now = nowMicros()
             db.invoices().softDeleteAll(now)
             db.assets().softDeleteAll(now)
-            entryDao.softDeleteAll(now)
             transactionDao.softDeleteAll(now)
             accountDao.softDeleteAll(now)
             SettingsRepository.Keys.DATA_PREFIXES.forEach { db.settings().softDeleteWithPrefix(it, now) }
         }
         sync.requestSync()
     }
-
-    /** Hard-wipes the local database without producing tombstones (cloud data is untouched). */
-    suspend fun wipeLocalDatabase() = withContext(Dispatchers.IO) { db.clearAllTables() }
 
     private suspend fun requireLiveAccounts(draft: TransactionDraft) {
         val ids = draft.lines.map { it.accountId }.distinct()
@@ -283,7 +286,7 @@ class LedgerRepository(
         if (name.isBlank()) throw LedgerException("Account name is required.")
     }
 
-    private companion object {
+    companion object {
         /** `updated_at` of seeded default-plan rows (1 µs after the epoch): any server row is newer. */
         const val SEED_TIMESTAMP = 1L
     }
