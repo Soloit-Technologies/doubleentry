@@ -137,7 +137,6 @@ class BackupService(
             val now = nowMicros()
             db.invoices().softDeleteAll(now)
             db.assets().softDeleteAll(now)
-            db.entries().softDeleteAll(now)
             db.transactions().softDeleteAll(now)
             db.accounts().softDeleteAll(now)
             SettingsRepository.Keys.DATA_PREFIXES.forEach { db.settings().softDeleteWithPrefix(it, now) }

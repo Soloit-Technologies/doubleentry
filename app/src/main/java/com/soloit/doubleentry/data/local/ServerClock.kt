@@ -3,9 +3,9 @@ package com.soloit.doubleentry.data.local
 import kotlin.math.abs
 
 /**
- * How far this device's clock is behind the sync server's. Local edits are stamped with device
- * time but compared with the server's `updated_at` (last write wins), so a phone whose clock is
- * minutes off would win or lose conflicts it shouldn't. The offset is measured from the HTTP
+ * How far this device's clock is behind the sync server's. Edits are stamped on the device and
+ * compared with edits from other devices (`modified_at`, last edit wins), so a phone whose clock
+ * is minutes off would win or lose conflicts it shouldn't. The offset is measured from the HTTP
  * `Date` header of every Supabase response and added by [nowMicros].
  */
 object ServerClock {

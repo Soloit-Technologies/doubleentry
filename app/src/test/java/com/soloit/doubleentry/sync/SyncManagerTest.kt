@@ -1,5 +1,6 @@
 package com.soloit.doubleentry.sync
 
+import com.soloit.doubleentry.data.SettingsRepository
 import com.soloit.doubleentry.data.local.nowMicros
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.testing.FakePostgrest
@@ -9,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
@@ -253,6 +255,27 @@ class SyncManagerTest {
     }
 
     @Test
+    fun deleteAllKeepsReportSettingsEverywhere() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Gone")
+        a.t.settings.put(SettingsRepository.Keys.TAX_PREFIXES, "89")
+        a.sync.signIn("me@example.com", "pw")
+        val b = Device("b")
+        b.sync.signIn("me@example.com", "pw")
+
+        // Delete all removes the ledger but not report settings, here or in the cloud.
+        val before = nowMicros()
+        a.t.ledger.deleteAllData()
+        a.sync.replaceCloudLedger(before)
+        a.sync.syncNow()
+        b.sync.syncNow()
+
+        assertEquals(emptySet<String>(), b.titles())
+        assertEquals("89", a.t.settings.get(SettingsRepository.Keys.TAX_PREFIXES))
+        assertEquals("89", b.t.settings.get(SettingsRepository.Keys.TAX_PREFIXES))
+    }
+
+    @Test
     fun resetAsksWhenChangesCouldNotBeUploaded() = runBlocking<Unit> {
         val a = Device("a")
         a.ledgerWithOneTransaction("Synced")
@@ -292,6 +315,8 @@ class SyncManagerTest {
                     "date" to JsonPrimitive(day.toString()),
                     "title" to JsonPrimitive("Late"),
                     "description" to JsonPrimitive(""),
+                    "lines" to JsonArray(emptyList()),
+                    "modified_at" to JsonPrimitive(stamp),
                     "updated_at" to JsonPrimitive(stamp),
                 ),
             ),

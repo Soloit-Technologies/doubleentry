@@ -88,9 +88,11 @@ class SupabaseApi(
     }
 
     /**
-     * Upserts rows by primary key and returns the stored rows (with server-stamped `updated_at`):
+     * Upserts rows by primary key and returns the rows the server stored:
      * `POST /rest/v1/{table}?on_conflict=user_id,id` with `Prefer: resolution=merge-duplicates,return=representation`.
-     * Ids are unique per user only (content-derived ids repeat across users).
+     * Ids are unique per user only (content-derived ids repeat across users). A row is left out of
+     * the response when the server already holds a newer edit of it (its `modified_at` is later);
+     * the server keeps that edit.
      */
     suspend fun upsert(table: SyncTable, rows: JsonArray, accessToken: String): JsonArray {
         val request = Request.Builder()
@@ -103,21 +105,42 @@ class SupabaseApi(
         return json.parseToJsonElement(execute(request, Operation.Sync)) as JsonArray
     }
 
+    /** Where a pull continues: after the row that reached the server at [updatedAt] (ISO-8601) with [id]. */
+    data class PageCursor(val updatedAt: String, val id: String)
+
     /**
-     * Reads one page of rows changed at or after [since], oldest first:
-     * `GET /rest/v1/{table}?select=*&order=updated_at.asc,id.asc&limit=…&offset=…&updated_at=gte.{since}`.
+     * Reads one page of rows that reached the server at or after [since], in that order:
+     * `GET /rest/v1/{table}?select=*&order=updated_at.asc,id.asc&limit=…&updated_at=gte.{since}`, and
+     * for the next pages `&or=(updated_at.gt.{t},and(updated_at.eq.{t},id.gt.{id}))` after the last row read.
      *
-     * `gte` (not `gt`) plus offset paging is deliberate: the server trigger stamps many rows of a
-     * bulk upsert with the same `updated_at`, and a strict cursor would skip siblings.
+     * Continuing after a row (rather than skipping an offset) matters because a row changed while a
+     * pull is paging moves to the end: with an offset, the rows behind it would shift into pages
+     * already read and be skipped. The id breaks ties between rows a bulk upsert stamped alike.
      */
-    suspend fun select(table: SyncTable, since: String?, offset: Int, limit: Int, accessToken: String): JsonArray {
+    suspend fun select(table: SyncTable, since: String?, after: PageCursor?, limit: Int, accessToken: String): JsonArray {
         val url = "${config.baseUrl}/rest/v1/${table.remoteName}".toHttpUrl().newBuilder()
             .addQueryParameter("select", "*")
             .addQueryParameter("order", "updated_at.asc,id.asc")
             .addQueryParameter("limit", limit.toString())
-            .addQueryParameter("offset", offset.toString())
             .apply { if (since != null) addQueryParameter("updated_at", "gte.$since") }
+            .apply {
+                // Values with `.` or `:` must be quoted inside or=(…).
+                if (after != null) addQueryParameter("or", "(updated_at.gt.\"${after.updatedAt}\",and(updated_at.eq.\"${after.updatedAt}\",id.gt.${after.id}))")
+            }
             .build()
+        return get(url.toString(), accessToken)
+    }
+
+    /** Reads the rows with [ids]: `GET /rest/v1/{table}?select=*&id=in.(…)`. */
+    suspend fun selectByIds(table: SyncTable, ids: List<String>, accessToken: String): JsonArray {
+        val url = "${config.baseUrl}/rest/v1/${table.remoteName}".toHttpUrl().newBuilder()
+            .addQueryParameter("select", "*")
+            .addQueryParameter("id", "in.(${ids.joinToString(",")})")
+            .build()
+        return get(url.toString(), accessToken)
+    }
+
+    private suspend fun get(url: String, accessToken: String): JsonArray {
         val request = Request.Builder()
             .url(url)
             .header("apikey", config.anonKey)
@@ -134,31 +157,25 @@ class SupabaseApi(
             .addQueryParameter("deleted_at", "is.null")
             .addQueryParameter("limit", "1")
             .build()
-        val request = Request.Builder()
-            .url(url)
-            .header("apikey", config.anonKey)
-            .header("Authorization", "Bearer $accessToken")
-            .get()
-            .build()
-        return (json.parseToJsonElement(execute(request, Operation.Sync)) as JsonArray).isNotEmpty()
+        return get(url.toString(), accessToken).isNotEmpty()
     }
 
     /**
-     * Soft-deletes every live row last changed before [before] (ISO-8601), including rows this
+     * Deletes, as of [at] (ISO-8601), every live row last edited before then, including rows this
      * device has never pulled. Row-level security limits it to the user's own rows:
-     * `PATCH /rest/v1/{table}?deleted_at=is.null&updated_at=lt.{before}` with `{"deleted_at": …}`.
+     * `PATCH /rest/v1/{table}?deleted_at=is.null&modified_at=lt.{at}` with `{"deleted_at": at, "modified_at": at}`.
      */
-    suspend fun tombstoneBefore(table: SyncTable, before: String, deletedAt: String, accessToken: String) {
+    suspend fun tombstoneBefore(table: SyncTable, at: String, accessToken: String) {
         val url = "${config.baseUrl}/rest/v1/${table.remoteName}".toHttpUrl().newBuilder()
             .addQueryParameter("deleted_at", "is.null")
-            .addQueryParameter("updated_at", "lt.$before")
+            .addQueryParameter("modified_at", "lt.$at")
             .build()
         val request = Request.Builder()
             .url(url)
             .header("apikey", config.anonKey)
             .header("Authorization", "Bearer $accessToken")
             .header("Prefer", "return=minimal")
-            .patch(buildJsonObject { put("deleted_at", deletedAt) }.toString().toRequestBody(jsonMedia))
+            .patch(buildJsonObject { put("deleted_at", at); put("modified_at", at) }.toString().toRequestBody(jsonMedia))
             .build()
         execute(request, Operation.Sync)
     }

@@ -8,7 +8,9 @@ import java.time.LocalDate
 
 /**
  * Every synced row carries the same bookkeeping columns as its Supabase counterpart:
- * - [updatedAt]: epoch microseconds of the last change (server-stamped after a push).
+ * - [updatedAt]: epoch microseconds of the last edit, by the server's clock as far as this device
+ *   knows it ([nowMicros]). Synced as `modified_at`, it decides conflicts: the later edit wins.
+ *   (The server's own `updated_at`, when a row reached it, is only the pull cursor and isn't kept.)
  * - [deletedAt]: tombstone for soft deletes so deletions replicate to other devices.
  * - [isDirty]: local-only flag marking rows that still need to be pushed.
  */
@@ -42,23 +44,26 @@ data class TransactionEntity(
     @ColumnInfo(name = "is_dirty") override val isDirty: Boolean = true,
 ) : SyncEntity
 
-// No foreign keys on purpose: sync may deliver rows in any state and integrity is enforced by
-// the server schema (supabase/migrations) and the repositories.
+/**
+ * A line of a transaction. Lines have no sync bookkeeping of their own: they are part of their
+ * transaction (`transactions.lines` on the server), always written and replaced together with it.
+ * A deleted transaction keeps its lines, so undoing the delete brings them back.
+ *
+ * No foreign keys on purpose: sync may deliver rows in any state and integrity is enforced by
+ * the repositories.
+ */
 @Entity(
     tableName = "transaction_entries",
     indices = [Index("transaction_id"), Index("account_id")],
 )
 data class EntryEntity(
-    @PrimaryKey override val id: String,
+    @PrimaryKey val id: String,
     @ColumnInfo(name = "transaction_id") val transactionId: String,
     @ColumnInfo(name = "account_id") val accountId: String,
     @ColumnInfo(name = "amount_cents") val amountCents: Long,
     /** [com.soloit.doubleentry.domain.EntryType] ordinal. */
     @ColumnInfo(name = "entry_type") val entryType: Int,
-    @ColumnInfo(name = "updated_at") override val updatedAt: Long,
-    @ColumnInfo(name = "deleted_at") override val deletedAt: Long? = null,
-    @ColumnInfo(name = "is_dirty") override val isDirty: Boolean = true,
-) : SyncEntity
+)
 
 @Entity(tableName = "assets")
 data class AssetEntity(

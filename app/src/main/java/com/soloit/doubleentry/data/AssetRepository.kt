@@ -219,11 +219,11 @@ class AssetRepository(
                 // A tombstone must be revived in place: re-inserting would collide on the primary key.
                 val now = nowMicros()
                 transactionDao.upsert(existing.copy(deletedAt = null, updatedAt = now, isDirty = true))
-                entryDao.softDeleteOf(txId, now)
-                entryDao.upsertAll(
+                entryDao.replaceOf(
+                    txId,
                     listOf(
-                        EntryEntity(debitId, txId, asset.debitAccountId, slot.amount, EntryType.Debit.ordinal, now),
-                        EntryEntity(creditId, txId, asset.creditAccountId, slot.amount, EntryType.Credit.ordinal, now),
+                        EntryEntity(debitId, txId, asset.debitAccountId, slot.amount, EntryType.Debit.ordinal),
+                        EntryEntity(creditId, txId, asset.creditAccountId, slot.amount, EntryType.Credit.ordinal),
                     ),
                 )
                 return true

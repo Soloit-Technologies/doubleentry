@@ -199,11 +199,11 @@ class LedgerRepository(
         val id = draft.id ?: newId()
         if (transactionDao.byId(id) != null) throw LedgerException("A transaction with this id already exists.")
         transactionDao.upsert(TransactionEntity(id, draft.date, draft.title.trim(), draft.description.trim(), now))
-        entryDao.upsertAll(draft.lines.map { EntryEntity(it.id ?: newId(), id, it.accountId, it.amount, it.type.ordinal, now) })
+        entryDao.upsertAll(draft.lines.map { EntryEntity(it.id ?: newId(), id, it.accountId, it.amount, it.type.ordinal) })
         return id
     }
 
-    /** Replaces the header and lines of an existing transaction (old lines become tombstones). */
+    /** Replaces the header and lines of an existing transaction; they sync as one. */
     suspend fun updateTransaction(id: String, draft: TransactionDraft) {
         db.withTransaction { replaceTransaction(id, draft) }
         sync.requestSync()
@@ -217,8 +217,7 @@ class LedgerRepository(
         transactionDao.upsert(
             existing.copy(date = draft.date, title = draft.title.trim(), description = draft.description.trim(), updatedAt = now, isDirty = true),
         )
-        entryDao.softDeleteOf(id, now)
-        entryDao.upsertAll(draft.lines.map { EntryEntity(newId(), id, it.accountId, it.amount, it.type.ordinal, now) })
+        entryDao.replaceOf(id, draft.lines.map { EntryEntity(newId(), id, it.accountId, it.amount, it.type.ordinal) })
     }
 
     /** True when [transactionId] is an automatic depreciation posting of a live asset. */
@@ -241,9 +240,8 @@ class LedgerRepository(
         return now
     }
 
-    /** Soft-deletes a transaction and its lines with [now] as the shared deletion stamp. */
+    /** Soft-deletes a transaction with [now] as the deletion stamp. It keeps its lines, so undo brings them back. */
     internal suspend fun softDeleteTransaction(id: String, now: Long = nowMicros()) {
-        entryDao.softDeleteOf(id, now)
         transactionDao.softDelete(id, now)
     }
 
@@ -256,7 +254,6 @@ class LedgerRepository(
             val now = nowMicros()
             accountDao.restoreDeletedAt(stamp, now) +
                 transactionDao.restoreDeletedAt(stamp, now) +
-                entryDao.restoreDeletedAt(stamp, now) +
                 db.assets().restoreDeletedAt(stamp, now) +
                 db.invoices().restoreDeletedAt(stamp, now) +
                 db.settings().restoreDeletedAt(stamp, now)
@@ -271,7 +268,6 @@ class LedgerRepository(
             val now = nowMicros()
             db.invoices().softDeleteAll(now)
             db.assets().softDeleteAll(now)
-            entryDao.softDeleteAll(now)
             transactionDao.softDeleteAll(now)
             accountDao.softDeleteAll(now)
             SettingsRepository.Keys.DATA_PREFIXES.forEach { db.settings().softDeleteWithPrefix(it, now) }

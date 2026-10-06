@@ -19,7 +19,7 @@ Supabase backend.
   Month, year-to-date or year, with comparison against the previous period or the same period last year.
 - **Assets.** Automatic monthly depreciation write-offs, with a repair tool for missing ones.
 - **Invoices.** Booking, due-date tracking, payment in full or in instalments, and an optional daily reminder notification.
-- **Cloud sync.** Offline-first local database, last-write-wins sync with Supabase, realtime updates between devices.
+- **Cloud sync.** Offline-first local database, last-edit-wins sync with Supabase, realtime updates between devices.
 - **Backups.** JSON export/import, compatible with backups made by the MAUI app. CSV export of transactions and balances.
 - Light/dark theme, optional Material You (wallpaper) colors, optional app lock (screen lock or biometrics),
   a net-worth home-screen widget and launcher shortcuts.
@@ -89,8 +89,9 @@ Everything else follows the original logic.
   Backups carry this data in the `android` extension.
 - **Instalments.** An invoice row is only marked paid by the payment that settles the rest, so the MAUI app sees
   a partly paid invoice as unpaid.
-- **Concurrent edits.** When two devices edited the lines of the same transaction before syncing, the lines of
-  the version whose header wins are kept (instead of both line sets).
+- **Concurrent edits.** A transaction syncs as one row with its lines, so when two devices edited the same
+  transaction before syncing, the later edit is kept whole (never a mix, and never both line sets). The later
+  edit wins by when it was made, not by which device came online first, and the server enforces it.
 
 - **Default plan seeding.** Seeded accounts get the oldest possible timestamp, so accounts already
   in the cloud (renamed or deleted elsewhere) win over freshly seeded defaults when you sign in.

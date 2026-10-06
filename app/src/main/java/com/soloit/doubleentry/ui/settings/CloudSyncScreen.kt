@@ -363,7 +363,8 @@ private fun HowSyncWorksCard() {
         listOf(
             "Every change is saved on this device first and uploaded when there's a connection. Changes made offline upload later.",
             "Your other devices pick up changes when they're opened, and right away while they're open.",
-            "If the same item is changed on two devices before they've synced, only one change is kept — usually the most recent one. " +
+            "If the same item is changed on two devices before they've synced, only the most recent change is kept, " +
+                "and a transaction is kept whole, with its own lines. " +
                 "You'll see a notice when a change made on this device is replaced.",
             "Signing out stops syncing. The data on this device stays, and you're asked about any changes made meanwhile when you sign in again.",
         ).forEach { line ->

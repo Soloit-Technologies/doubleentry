@@ -10,6 +10,11 @@ import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.testing.FakePostgrest
 import com.soloit.doubleentry.testing.TestLedger
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -37,6 +42,9 @@ class SyncEngineTest {
         /** One cycle as SyncManager runs it: pull, then push. Returns what the pull reported. */
         suspend fun sync(): PullResult = engine.pullAll(auth).also { engine.pushAll(auth) }
 
+        /** Only the upload half of a cycle. */
+        suspend fun push(): PushResult = engine.pushAll(auth)
+
         suspend fun pending(): Int = t.db.syncStatus().pendingChanges().first()
 
         suspend fun account(number: Int): Account = t.ledger.getAccounts().single { it.number == number }
@@ -47,6 +55,9 @@ class SyncEngineTest {
         a.t.close()
         b.t.close()
     }
+
+    private fun draft(title: String, amount: Long, food: Account, bank: Account) =
+        TransactionDraft(day, title, "", listOf(DraftLine(food.id, amount, EntryType.Debit), DraftLine(bank.id, amount, EntryType.Credit)))
 
     /** Device A creates a small ledger and both devices sync it. */
     private suspend fun sharedLedger(): String {
@@ -114,9 +125,6 @@ class SyncEngineTest {
     @Test
     fun anEarlierOfflineEditLosesTogetherWithItsLines() = runBlocking<Unit> {
         val id = sharedLedger()
-        fun draft(title: String, amount: Long, food: Account, bank: Account) =
-            TransactionDraft(day, title, "", listOf(DraftLine(food.id, amount, EntryType.Debit), DraftLine(bank.id, amount, EntryType.Credit)))
-
         // B edits offline first; A edits later and syncs before B comes back online.
         b.t.ledger.updateTransaction(id, draft("From B", 200_00, b.account(5010), b.account(1910)))
         a.t.ledger.updateTransaction(id, draft("From A", 300_00, a.account(5010), a.account(1910)))
@@ -133,24 +141,89 @@ class SyncEngineTest {
     }
 
     @Test
-    fun aHeaderOnlyChangeElsewhereKeepsLocallyReplacedLines() = runBlocking<Unit> {
+    fun aLaterEditReachingTheServerFirstStillWins() = runBlocking<Unit> {
         val id = sharedLedger()
-        b.t.ledger.updateTransaction(
-            id,
-            TransactionDraft(day, "Groceries", "", listOf(DraftLine(b.account(5010).id, 250_00, EntryType.Debit), DraftLine(b.account(1910).id, 250_00, EntryType.Credit))),
-        )
-        // Meanwhile A only moves the date (as changing an invoice's payment date does).
+        // Both edit offline: A first, B later. A comes online first, B afterwards.
+        a.t.ledger.updateTransaction(id, draft("From A", 200_00, a.account(5010), a.account(1910)))
+        b.t.ledger.updateTransaction(id, draft("From B", 300_00, b.account(5010), b.account(1910)))
+        a.sync()
+        // B's edit is the later one, although A's reached the server first. (A's had been
+        // uploaded, so A lost no unsynced edit.)
+        assertEquals(0, b.sync().replacedLocalChanges)
+        assertEquals(0, a.sync().replacedLocalChanges)
+
+        for (device in listOf(a, b)) {
+            val tx = device.t.ledger.getTransaction(id)!!
+            assertEquals("From B", tx.title)
+            assertEquals(listOf(300_00L, 300_00L), tx.entries.map { it.amount })
+        }
+    }
+
+    @Test
+    fun aLaterEditElsewhereReplacesTheWholeTransaction() = runBlocking<Unit> {
+        val id = sharedLedger()
+        b.t.ledger.updateTransaction(id, draft("Groceries", 250_00, b.account(5010), b.account(1910)))
+        // Later, A only moves the date (as changing an invoice's payment date does).
         val header = a.t.db.transactions().byId(id)!!
         a.t.db.transactions().upsert(header.copy(date = day.plusDays(1), updatedAt = com.soloit.doubleentry.data.local.nowMicros(), isDirty = true))
         a.sync()
-        b.sync()
+        // A transaction wins or loses whole: never A's date with B's lines.
+        assertEquals(1, b.sync().replacedLocalChanges)
         a.sync()
 
         for (device in listOf(a, b)) {
             val tx = device.t.ledger.getTransaction(id)!!
             assertEquals(day.plusDays(1), tx.date)
-            assertEquals(listOf(250_00L, 250_00L), tx.entries.map { it.amount })
+            assertEquals(listOf(100_00L, 100_00L), tx.entries.map { it.amount })
         }
+    }
+
+    @Test
+    fun anEditArrivingAfterALaterOneIsRefusedAndReplaced() = runBlocking<Unit> {
+        val id = sharedLedger()
+        // A pulled before B's later edit reached the server, and uploads only afterwards.
+        a.t.ledger.updateTransaction(id, draft("From A", 200_00, a.account(5010), a.account(1910)))
+        b.t.ledger.updateTransaction(id, draft("From B", 300_00, b.account(5010), b.account(1910)))
+        b.sync()
+        val push = a.push()
+
+        // The server kept B's edit, and A took it instead of overwriting it.
+        assertEquals(1, push.replacedLocalChanges)
+        val stored = server.liveRows("transactions").single { it.getValue("id").jsonPrimitive.content == id }
+        assertEquals("From B", stored.getValue("title").jsonPrimitive.content)
+        val tx = a.t.ledger.getTransaction(id)!!
+        assertEquals("From B", tx.title)
+        assertEquals(listOf(300_00L, 300_00L), tx.entries.map { it.amount })
+        assertEquals(0, a.pending())
+    }
+
+    @Test
+    fun rowsChangedWhileAPullIsPagingAreNotSkipped() = runBlocking<Unit> {
+        // More than one page of settings rows, stamped one microsecond apart.
+        val base = parseTimestamp("2026-09-01T00:00:00Z")
+        fun setting(i: Int, updatedAt: Long) = JsonObject(
+            mapOf(
+                "id" to JsonPrimitive("00000000-0000-4000-8000-%012d".format(i)),
+                "user_id" to JsonPrimitive("user-1"),
+                "key" to JsonPrimitive("Test.$i"),
+                "value" to JsonPrimitive("v"),
+                "modified_at" to JsonPrimitive(formatTimestamp(base + i)),
+                "updated_at" to JsonPrimitive(formatTimestamp(updatedAt)),
+                "deleted_at" to JsonNull,
+            ),
+        )
+        val count = 1500
+        for (i in 0 until count) server.insertRaw("user_settings", setting(i, base + i))
+        // After the first page, another device changes a row from that page: it moves to the end.
+        var changed = false
+        server.afterPage = { table ->
+            if (table == "user_settings" && !changed) {
+                changed = true
+                server.insertRaw("user_settings", setting(5, base + count + 1))
+            }
+        }
+        b.sync()
+        assertEquals(count, b.t.db.settings().liveWithPrefix("Test.").size)
     }
 
     @Test
@@ -178,7 +251,7 @@ class SyncEngineTest {
         assertEquals(3, a.t.liveTransactionCount())
         assertEquals(3, b.t.liveTransactionCount())
         assertEquals(3, server.rows("transactions").size)
-        assertEquals(6, server.rows("transaction_entries").size)
+        assertEquals(6, server.rows("transactions").sumOf { it.getValue("lines").jsonArray.size })
         assertEquals(-18_100_00L, b.t.ledger.getBalances(october)[b.account(1910).id])
         assertTrue(b.t.recurring.getRule("rent")!!.lastPostedDate == october)
     }

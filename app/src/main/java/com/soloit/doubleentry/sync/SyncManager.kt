@@ -152,7 +152,7 @@ class SyncManager(
             try {
                 applyPendingCloudWipe()
                 val result = engine.pullAll(this)
-                recordReplaced(result)
+                recordReplaced(result.replacedLocalChanges)
                 succeeded()
                 result.changed
             } catch (e: CancellationException) {
@@ -172,9 +172,10 @@ class SyncManager(
             setSyncing(true)
             try {
                 applyPendingCloudWipe()
-                // Pull first so concurrent remote edits win and stale rows are not pushed.
-                recordReplaced(engine.pullAll(this))
-                engine.pushAll(this)
+                // Pull first so later edits from other devices replace local rows before they are
+                // uploaded; the server refuses any that still arrive late, and push takes those.
+                recordReplaced(engine.pullAll(this).replacedLocalChanges)
+                recordReplaced(engine.pushAll(this).replacedLocalChanges)
                 prefs.lastSyncAtMillis = System.currentTimeMillis()
                 succeeded()
                 _status.update { it.copy(lastSyncAtMillis = prefs.lastSyncAtMillis) }
@@ -268,6 +269,7 @@ class SyncManager(
                     // other account's copy is untouched.
                     engine.markAllForUpload()
                     // This ledger replaces the account's, so the account's rows are deleted first.
+                    // Local rows count as edited at this moment, so they win over the deleted ones.
                     prefs.cloudWipeBeforeMicros = if (pending.cloudHasData) nowMicros() else null
                 }
             }
@@ -397,13 +399,10 @@ class SyncManager(
         if (!email.isNullOrBlank()) prefs.userEmail = email
     }
 
-    /** Runs a pending [replaceCloudLedger]: deletes the old cloud rows, then uploads this device's at once. */
+    /** Runs a pending [replaceCloudLedger]: deletes the old cloud rows and uploads this device's, before any pull. */
     private suspend fun applyPendingCloudWipe() {
         val before = prefs.cloudWipeBeforeMicros ?: return
-        engine.wipeCloudBefore(before, this)
-        // Push before pulling: rows sharing ids with the deleted ones (settings, default accounts)
-        // must overwrite those tombstones rather than lose to them.
-        engine.pushAll(this)
+        recordReplaced(engine.replaceCloudLedger(before, this).replacedLocalChanges)
         prefs.cloudWipeBeforeMicros = null
     }
 
@@ -416,9 +415,9 @@ class SyncManager(
 
     private fun succeeded() = _status.update { it.copy(lastError = null, offline = false, needsSignIn = false) }
 
-    private fun recordReplaced(result: PullResult) {
-        if (result.replacedLocalChanges == 0) return
-        prefs.addReplacedChanges(result.replacedLocalChanges, System.currentTimeMillis())
+    private fun recordReplaced(count: Int) {
+        if (count == 0) return
+        prefs.addReplacedChanges(count, System.currentTimeMillis())
         _status.update { it.copy(replacedChanges = prefs.replacedChanges, replacedAtMillis = prefs.replacedAtMillis) }
     }
 

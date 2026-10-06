@@ -2,22 +2,15 @@ package com.soloit.doubleentry.sync
 
 import androidx.room.withTransaction
 import com.soloit.doubleentry.data.LedgerRepository
-import com.soloit.doubleentry.data.local.AccountEntity
 import com.soloit.doubleentry.data.local.AppDatabase
-import com.soloit.doubleentry.data.local.AssetEntity
-import com.soloit.doubleentry.data.local.EntryEntity
-import com.soloit.doubleentry.data.local.InvoiceEntity
 import com.soloit.doubleentry.data.local.SyncDao
 import com.soloit.doubleentry.data.local.SyncEntity
-import com.soloit.doubleentry.data.local.TransactionEntity
-import com.soloit.doubleentry.data.local.UserSettingEntity
-import com.soloit.doubleentry.data.local.nowMicros
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -37,16 +30,29 @@ data class LocalSummary(
 data class PullResult(
     /** Local rows were added or changed. */
     val changed: Boolean,
+    /** Unsynced edits made on this device that lost to a later edit (or delete) of the same item on another device. */
+    val replacedLocalChanges: Int,
+)
+
+data class PushResult(
+    val uploaded: Int,
     /**
-     * Unsynced edits made on this device that lost to a newer edit (or delete) of the same item
-     * on another device. Transaction lines are not counted separately from their transaction.
+     * Edits the server refused because another device's later edit of the same item reached it
+     * after this cycle's pull; the later edit replaced the local one.
      */
     val replacedLocalChanges: Int,
 )
 
 /**
- * Row-level, last-write-wins sync against PostgREST. Each row carries a server-stamped
- * `updated_at` and a `deleted_at` tombstone; local rows track `is_dirty` for the push side.
+ * Row-level, last-edit-wins sync against PostgREST. Each row carries `modified_at`, when it was
+ * edited (by the server's clock, see [com.soloit.doubleentry.data.local.ServerClock]), which
+ * decides conflicts on both sides: a pull keeps the local row unless the server's edit is later,
+ * and the server refuses an upload older than what it holds. `updated_at`, stamped by the server
+ * when a row reaches it, is only the cursor for pulling what changed. Deletes are `deleted_at`
+ * tombstones, and local rows track `is_dirty` for the push side.
+ *
+ * A transaction syncs as one row with its lines, so a version of a transaction always wins or
+ * loses whole.
  */
 class SyncEngine(
     private val db: AppDatabase,
@@ -57,45 +63,68 @@ class SyncEngine(
     // keys, and `deleted_at: null` must be sent to revive a tombstone).
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
+    private val tables: List<Table<*, *>> = listOf(
+        Table(SyncTable.Accounts, AccountRow.serializer(), db.accounts(), AccountRow::toEntity) { rows, userId ->
+            rows.map { AccountRow.from(it, userId) }
+        },
+        Table(
+            SyncTable.Transactions, TransactionRow.serializer(), db.transactions(), TransactionRow::toEntity,
+            write = { rows ->
+                db.transactions().upsertAll(rows.map { it.toEntity() })
+                db.entries().deleteOf(rows.map { it.id })
+                db.entries().upsertAll(rows.flatMap { it.lineEntities() })
+            },
+        ) { rows, userId ->
+            val lines = db.entries().allOf(rows.map { it.id }).groupBy { it.transactionId }
+            rows.map { TransactionRow.from(it, lines[it.id].orEmpty(), userId) }
+        },
+        Table(SyncTable.Assets, AssetRow.serializer(), db.assets(), AssetRow::toEntity) { rows, userId ->
+            rows.map { AssetRow.from(it, userId) }
+        },
+        Table(SyncTable.Invoices, InvoiceRow.serializer(), db.invoices(), InvoiceRow::toEntity) { rows, userId ->
+            rows.map { InvoiceRow.from(it, userId) }
+        },
+        Table(
+            SyncTable.Settings, UserSettingRow.serializer(), db.settings(), UserSettingRow::toEntity,
+            write = { rows ->
+                // A key may exist locally under a different id; the unique key index must not block the server row.
+                rows.forEach { db.settings().deleteOtherWithKey(it.key, it.id) }
+                db.settings().upsertAll(rows.map { it.toEntity() })
+            },
+        ) { rows, userId ->
+            rows.map { UserSettingRow.from(it, userId) }
+        },
+    )
+
     /**
-     * Pulls every table, then advances all watermarks together — committing a parent watermark
-     * while a child table failed would skip parents on the next run.
+     * Pulls every table, then advances all watermarks together, so a failure part-way re-reads
+     * every table next time (applying a row twice changes nothing).
      */
     suspend fun pullAll(auth: AccessTokenProvider): PullResult {
         val watermarks = mutableMapOf<SyncTable, String>()
         var changed = false
         var replaced = 0
-        // Which version of each pulled transaction header won; its lines must win with it.
-        val headersFromServer = mutableSetOf<String>()
-        val headersKeptLocal = mutableSetOf<String>()
-        for (table in SyncTable.entries) {
-            val result = when (table) {
-                SyncTable.Accounts -> pull(table, AccountRow.serializer(), db.accounts(), auth) { it.toEntity() }
-                SyncTable.Transactions -> pull(
-                    table, TransactionRow.serializer(), db.transactions(), auth,
-                    onDecided = { fromServer, keptLocal ->
-                        headersFromServer += fromServer.map { it.id }
-                        headersKeptLocal += keptLocal.map { it.id }
-                    },
-                ) { it.toEntity() }
-                SyncTable.Entries -> pull(
-                    table, EntryRow.serializer(), db.entries(), auth, countReplaced = false,
-                    onDecided = { fromServer, _ -> dropLosingLocalLines(headersFromServer, fromServer) },
-                    adjust = { entries -> dropLosingServerLines(headersKeptLocal, entries) },
-                ) { it.toEntity() }
-                SyncTable.Assets -> pull(table, AssetRow.serializer(), db.assets(), auth) { it.toEntity() }
-                SyncTable.Invoices -> pull(table, InvoiceRow.serializer(), db.invoices(), auth) { it.toEntity() }
-                SyncTable.Settings -> pull(table, UserSettingRow.serializer(), db.settings(), auth, beforeWrite = { rows ->
-                    // A key may exist locally under a different id; the unique key index must not block the server row.
-                    rows.forEach { db.settings().deleteOtherWithKey(it.key, it.id) }
-                }) { it.toEntity() }
-            }
+        for (table in tables) {
+            val result = table.pull(auth)
             if (result.applied > 0) changed = true
             replaced += result.replacedLocal
-            result.watermark?.let { watermarks[table] = it }
+            result.watermark?.let { watermarks[table.remote] = it }
         }
         prefs.setWatermarks(watermarks)
         return PullResult(changed, replaced)
+    }
+
+    /** Pushes dirty rows parent → child and clears their dirty flag. */
+    suspend fun pushAll(auth: AccessTokenProvider): PushResult {
+        val userId = prefs.userId ?: throw SyncException("Please sign in again to sync.")
+        var uploaded = 0
+        var replaced = 0
+        for (table in tables) {
+            val result = table.push(auth, userId)
+            uploaded += result.uploaded
+            replaced += result.replacedLocalChanges
+        }
+        return PushResult(uploaded, replaced)
     }
 
     /** What this device holds, for deciding how a sign-in combines it with the cloud. */
@@ -117,7 +146,6 @@ class SyncEngine(
         with(db.syncStatus()) {
             markAccountsDirty()
             markTransactionsDirty()
-            markEntriesDirty()
             markAssetsDirty()
             markInvoicesDirty()
             markSettingsDirty()
@@ -128,153 +156,119 @@ class SyncEngine(
     suspend fun wipeLocal() = withContext(Dispatchers.IO) { db.clearAllTables() }
 
     /**
-     * Soft-deletes every cloud row last changed before [beforeMicros], children first, including
-     * rows this device never pulled. Rows changed later on another device are newer and survive.
+     * Makes this device's ledger replace the cloud's as of [atMicros]: every cloud row last edited
+     * before then is deleted, children first, including rows this device never pulled. The rows
+     * this device still holds from before then are restamped [atMicros] and uploaded, so they
+     * survive. Rows edited later, here or on another device, are newer and stay.
      */
-    suspend fun wipeCloudBefore(beforeMicros: Long, auth: AccessTokenProvider) {
-        val before = formatTimestamp(beforeMicros)
-        val deletedAt = formatTimestamp(nowMicros())
-        for (table in SyncTable.entries.reversed()) {
-            authorized(auth) { token -> api.tombstoneBefore(table, before, deletedAt, token) }
+    suspend fun replaceCloudLedger(atMicros: Long, auth: AccessTokenProvider): PushResult {
+        db.withTransaction {
+            with(db.syncStatus()) {
+                restampAccounts(atMicros)
+                restampTransactions(atMicros)
+                restampAssets(atMicros)
+                restampInvoices(atMicros)
+                restampSettings(atMicros)
+            }
         }
-    }
-
-    /** Pushes dirty rows parent → child and clears their dirty flag with the server timestamp. */
-    suspend fun pushAll(auth: AccessTokenProvider): Int {
-        val userId = prefs.userId ?: throw SyncException("Please sign in again to sync.")
-        return push(SyncTable.Accounts, db.accounts(), auth) { json.encodeToJsonElement(AccountRow.serializer(), AccountRow.from(it, userId)) } +
-            push(SyncTable.Transactions, db.transactions(), auth) { json.encodeToJsonElement(TransactionRow.serializer(), TransactionRow.from(it, userId)) } +
-            push(SyncTable.Entries, db.entries(), auth) { json.encodeToJsonElement(EntryRow.serializer(), EntryRow.from(it, userId)) } +
-            push(SyncTable.Assets, db.assets(), auth) { json.encodeToJsonElement(AssetRow.serializer(), AssetRow.from(it, userId)) } +
-            push(SyncTable.Invoices, db.invoices(), auth) { json.encodeToJsonElement(InvoiceRow.serializer(), InvoiceRow.from(it, userId)) } +
-            push(SyncTable.Settings, db.settings(), auth) { json.encodeToJsonElement(UserSettingRow.serializer(), UserSettingRow.from(it, userId)) }
-    }
-
-    /**
-     * Lines belong to their header. Editing a transaction replaces its lines with new rows, so when
-     * two devices edited the same transaction, row-level last-write-wins would keep both line sets
-     * (doubling the amounts). Instead the version whose header wins keeps its lines:
-     *
-     * - [dropLosingServerLines]: the local header won and its lines were replaced locally, so new
-     *   lines from the server for that transaction are stored as tombstones (and pushed as such).
-     * - [dropLosingLocalLines]: the server's header won and came with new lines, so locally replaced
-     *   lines that the server doesn't know are tombstoned. (A header-only change on the other device,
-     *   such as a new date, brings no lines and leaves the local lines alone.)
-     *
-     * Lines with deterministic ids (depreciation, recurring postings) exist on both sides with the
-     * same ids and are left to the normal row-level rule.
-     */
-    private suspend fun dropLosingServerLines(headersKeptLocal: Set<String>, incoming: List<EntryEntity>): List<EntryEntity> {
-        if (headersKeptLocal.isEmpty()) return incoming
-        val entries = db.entries()
-        val known = entries.byIds(incoming.map { it.id }).map { it.id }.toSet()
-        val replacedLocally = mutableMapOf<String, Boolean>()
-        val now = nowMicros()
-        return incoming.map { e ->
-            val losing = e.deletedAt == null && e.id !in known && e.transactionId in headersKeptLocal &&
-                replacedLocally.getOrPut(e.transactionId) { entries.liveDirtyOf(e.transactionId).isNotEmpty() }
-            if (losing) e.copy(deletedAt = now, updatedAt = now, isDirty = true) else e
+        val at = formatTimestamp(atMicros)
+        for (table in tables.reversed()) {
+            authorized(auth) { token -> api.tombstoneBefore(table.remote, at, token) }
         }
-    }
-
-    private suspend fun dropLosingLocalLines(headersFromServer: Set<String>, incoming: List<EntryRow>) {
-        if (headersFromServer.isEmpty()) return
-        val entries = db.entries()
-        val incomingIds = incoming.map { it.id }.toSet()
-        val replacedRemotely = incoming.filter { it.deletedAt == null }.map { it.transactionId }.toSet()
-        val now = nowMicros()
-        for (transactionId in headersFromServer intersect replacedRemotely) {
-            val losing = entries.liveDirtyOf(transactionId).filter { it.id !in incomingIds }
-            if (losing.isNotEmpty()) entries.upsertAll(losing.map { it.copy(deletedAt = now, updatedAt = now, isDirty = true) })
-        }
+        return pushAll(auth)
     }
 
     private class TablePull(val applied: Int, val watermark: String?, val replacedLocal: Int)
 
-    private suspend fun <R : SyncRow, E : SyncEntity> pull(
-        table: SyncTable,
-        serializer: KSerializer<R>,
-        dao: SyncDao<E>,
-        auth: AccessTokenProvider,
-        /** Whether local edits overwritten by this table's rows count as [PullResult.replacedLocalChanges]. */
-        countReplaced: Boolean = true,
-        beforeWrite: suspend (List<R>) -> Unit = {},
-        /** Called inside the write transaction with the rows applied from the server and the ones where the local row was kept. */
-        onDecided: suspend (fromServer: List<R>, keptLocal: List<R>) -> Unit = { _, _ -> },
-        /** Last chance to change the entities before they are written. */
-        adjust: suspend (List<E>) -> List<E> = { it },
-        toEntity: (R) -> E,
-    ): TablePull {
-        val watermark = prefs.watermark(table)
-        // Re-read a window before the watermark: the server stamps `updated_at` when a write
-        // starts, so a slow upload can commit rows older than a watermark already passed.
-        // Rows seen before are as new as the local copy and are skipped below.
-        val since = watermark?.let { formatTimestamp(parseTimestamp(it) - WATERMARK_OVERLAP_MICROS) }
-        val rows = mutableListOf<R>()
-        var offset = 0
-        while (true) {
-            val page = authorized(auth) { token -> api.select(table, since, offset, PAGE_SIZE, token) }
-            rows += json.decodeFromJsonElement(ListSerializer(serializer), page)
-            if (page.size < PAGE_SIZE) break
-            offset += page.size
-        }
-        if (rows.isEmpty()) return TablePull(0, null, 0)
+    private class Applied(val applied: Int, val replacedLocal: Int)
 
-        var applied = 0
-        var replacedLocal = 0
-        db.withTransaction {
-            val fromServer = mutableListOf<R>()
-            val keptLocal = mutableListOf<R>()
-            for (chunk in rows.chunked(CHUNK)) {
-                val existing = dao.byIds(chunk.map { it.id }.distinct()).associateBy { it.id }
-                // Last write wins: keep the local row when it is as new as (or newer than) the server's.
-                val (newer, older) = chunk.partition { row -> existing[row.id]?.let { it.updatedAt < row.updatedAtMicros } ?: true }
-                keptLocal += older
-                if (newer.isEmpty()) continue
-                val incoming = newer.map(toEntity)
-                if (countReplaced) replacedLocal += incoming.count { existing[it.id]?.isEditLostTo(it) == true }
-                beforeWrite(newer)
-                dao.upsertAll(adjust(incoming))
-                fromServer += newer
-                applied += newer.size
+    /** How one table's local rows map to its PostgREST rows, and how it pulls and pushes them. */
+    private inner class Table<R : SyncRow, E : SyncEntity>(
+        val remote: SyncTable,
+        private val serializer: KSerializer<R>,
+        private val dao: SyncDao<E>,
+        private val toEntity: (R) -> E,
+        /** Stores server rows that won. */
+        private val write: suspend (List<R>) -> Unit = { rows -> dao.upsertAll(rows.map(toEntity)) },
+        /** The server rows for local rows. */
+        private val toRows: suspend (List<E>, userId: String) -> List<R>,
+    ) {
+        suspend fun pull(auth: AccessTokenProvider): TablePull {
+            val watermark = prefs.watermark(remote)
+            // Re-read a window before the watermark: the server stamps `updated_at` when a write
+            // starts, so a slow upload can commit rows older than a watermark already passed.
+            // Rows seen before are as new as the local copy and are skipped when applied.
+            val since = watermark?.let { formatTimestamp(parseTimestamp(it) - WATERMARK_OVERLAP_MICROS) }
+            val rows = mutableListOf<R>()
+            var after: SupabaseApi.PageCursor? = null
+            while (true) {
+                val page = decode(authorized(auth) { token -> api.select(remote, since, after, PAGE_SIZE, token) })
+                rows += page
+                if (page.size < PAGE_SIZE) break
+                val last = page.last()
+                after = SupabaseApi.PageCursor(formatTimestamp(last.updatedAtMicros), last.id)
             }
-            onDecided(fromServer, keptLocal)
+            if (rows.isEmpty()) return TablePull(0, null, 0)
+
+            // A row changed during the pull can be read twice; its later version comes last.
+            val result = apply(rows.associateBy { it.id }.values.toList())
+            val newest = rows.maxOf { it.updatedAtMicros }
+            val previous = watermark?.let(::parseTimestamp) ?: Long.MIN_VALUE
+            return TablePull(result.applied, formatTimestamp(maxOf(newest, previous)), result.replacedLocal)
         }
-        val newest = rows.maxOf { it.updatedAtMicros }
-        val previous = watermark?.let(::parseTimestamp) ?: Long.MIN_VALUE
-        return TablePull(applied, formatTimestamp(maxOf(newest, previous)), replacedLocal)
-    }
 
-    /**
-     * True when this local row holds an edit not yet pushed that [server] (a newer version from
-     * another device) is about to overwrite with different content. Seeded default-plan rows and
-     * identical results (deterministic depreciation or recurring postings made on both devices)
-     * are not lost edits.
-     */
-    private fun SyncEntity.isEditLostTo(server: SyncEntity): Boolean =
-        isDirty && updatedAt > LedgerRepository.SEED_TIMESTAMP && content() != server.content()
-
-    private suspend fun <E : SyncEntity> push(
-        table: SyncTable,
-        dao: SyncDao<E>,
-        auth: AccessTokenProvider,
-        toJson: (E) -> kotlinx.serialization.json.JsonElement,
-    ): Int {
-        val dirty = dao.dirty()
-        for (chunk in dirty.chunked(CHUNK)) {
-            val response = authorized(auth) { token -> api.upsert(table, JsonArray(chunk.map(toJson)), token) }
-            val local = chunk.associateBy { it.id }
-            db.withTransaction {
-                for (element in response) {
-                    val row = element.jsonObject
-                    val id = row["id"]?.jsonPrimitive?.content ?: continue
-                    val serverUpdatedAt = row["updated_at"]?.jsonPrimitive?.content?.let(::parseTimestamp) ?: continue
-                    val sent = local[id] ?: continue
-                    dao.markClean(id, sent.updatedAt, serverUpdatedAt)
+        suspend fun push(auth: AccessTokenProvider, userId: String): PushResult {
+            val dirty = dao.dirty()
+            var replaced = 0
+            for (chunk in dirty.chunked(CHUNK)) {
+                val rows = toRows(chunk, userId)
+                val sent = JsonArray(rows.map { json.encodeToJsonElement(serializer, it) })
+                val response = authorized(auth) { token -> api.upsert(remote, sent, token) }
+                val stored = response.mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.content }.toSet()
+                db.withTransaction {
+                    for (entity in chunk) if (entity.id in stored) dao.markClean(entity.id, entity.updatedAt)
+                }
+                // Left out of the response: another device's later edit reached the server after
+                // this cycle's pull, and the server kept it. Take it now.
+                val refused = chunk.map { it.id }.filter { it !in stored }
+                for (ids in refused.chunked(ID_CHUNK)) {
+                    replaced += apply(decode(authorized(auth) { token -> api.selectByIds(remote, ids, token) })).replacedLocal
                 }
             }
+            return PushResult(dirty.size, replaced)
         }
-        return dirty.size
+
+        /** Stores the server rows whose edit is later than the local row's, in one database transaction. */
+        private suspend fun apply(rows: List<R>): Applied {
+            var applied = 0
+            var replaced = 0
+            db.withTransaction {
+                for (chunk in rows.chunked(CHUNK)) {
+                    val local = dao.byIds(chunk.map { it.id }).associateBy { it.id }
+                    // Last edit wins; an equal stamp is the same edit.
+                    val newer = chunk.filter { row -> local[row.id]?.let { it.updatedAt < row.modifiedAtMicros } ?: true }
+                    if (newer.isEmpty()) continue
+                    replaced += countLostEdits(newer, local)
+                    write(newer)
+                    applied += newer.size
+                }
+            }
+            return Applied(applied, replaced)
+        }
+
+        /**
+         * How many unsynced local edits [incoming] overwrites with different content. Seeded
+         * default-plan rows and identical results (deterministic depreciation or recurring
+         * postings made on both devices) are not lost edits.
+         */
+        private suspend fun countLostEdits(incoming: List<R>, local: Map<String, E>): Int {
+            val edited = incoming.mapNotNull { row -> local[row.id]?.takeIf { it.isDirty && it.updatedAt > LedgerRepository.SEED_TIMESTAMP } }
+            if (edited.isEmpty()) return 0
+            val localContent = toRows(edited, "").associate { it.id to it.content() }
+            return incoming.count { row -> localContent[row.id]?.let { it != row.content() } == true }
+        }
+
+        private fun decode(page: JsonArray): List<R> = json.decodeFromJsonElement(ListSerializer(serializer), page)
     }
 
     /** Runs [block] with a valid token, refreshing the session once if the server answers 401. */
@@ -288,25 +282,14 @@ class SyncEngine(
         }
     }
 
-    /** The row without its sync bookkeeping (whether it is deleted still counts, not when). */
-    private fun SyncEntity.content(): SyncEntity {
-        val deleted = deletedAt?.let { 0L }
-        return when (this) {
-            is AccountEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
-            is TransactionEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
-            is EntryEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
-            is AssetEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
-            is InvoiceEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
-            is UserSettingEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
-            else -> this
-        }
-    }
-
     private companion object {
         const val PAGE_SIZE = 1000
 
         /** Far longer than any upload transaction can run (Supabase's statement timeout is seconds). */
         const val WATERMARK_OVERLAP_MICROS = 5 * 60 * 1_000_000L
         const val CHUNK = 500
+
+        /** Ids per `id=in.(…)` request, keeping the URL short. */
+        const val ID_CHUNK = 100
     }
 }

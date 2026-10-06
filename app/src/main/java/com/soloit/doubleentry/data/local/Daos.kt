@@ -2,19 +2,20 @@ package com.soloit.doubleentry.data.local
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 
 /**
  * Sync bookkeeping shared by every table. `markClean` only clears the dirty flag when the row
- * was not modified again while the push was in flight (its `updated_at` is unchanged).
+ * was not modified again while the push was in flight (its `updated_at` is still `updatedAt`).
  */
 interface SyncDao<T : SyncEntity> {
     suspend fun dirty(): List<T>
     suspend fun byIds(ids: List<String>): List<T>
     suspend fun upsertAll(entities: List<T>)
-    suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+    suspend fun markClean(id: String, updatedAt: Long)
 
     /** Revives every row soft-deleted at exactly [stamp] (one delete operation shares one stamp). */
     suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -27,7 +28,7 @@ private const val ENTRY_WITH_ACCOUNT = """
     FROM transaction_entries e
     INNER JOIN accounts a ON a.id = e.account_id
     INNER JOIN transactions t ON t.id = e.transaction_id
-    WHERE e.deleted_at IS NULL AND t.deleted_at IS NULL
+    WHERE t.deleted_at IS NULL
 """
 
 private const val TOTALS = """
@@ -36,7 +37,7 @@ private const val TOTALS = """
            SUM(CASE WHEN e.entry_type = 1 THEN e.amount_cents ELSE 0 END) AS credits
     FROM transaction_entries e
     INNER JOIN transactions t ON t.id = e.transaction_id
-    WHERE e.deleted_at IS NULL AND t.deleted_at IS NULL
+    WHERE t.deleted_at IS NULL
 """
 
 @Dao
@@ -65,8 +66,8 @@ interface AccountDao : SyncDao<AccountEntity> {
     @Query("SELECT * FROM accounts WHERE is_dirty = 1")
     override suspend fun dirty(): List<AccountEntity>
 
-    @Query("UPDATE accounts SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
-    override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+    @Query("UPDATE accounts SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun markClean(id: String, updatedAt: Long)
 
     @Query("UPDATE accounts SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -101,8 +102,7 @@ interface TransactionDao : SyncDao<TransactionEntity> {
 
     @Query(
         """SELECT COUNT(*) FROM transactions t WHERE t.deleted_at IS NULL AND EXISTS (
-           SELECT 1 FROM transaction_entries e WHERE e.transaction_id = t.id
-           AND e.deleted_at IS NULL AND e.account_id = :accountId)""",
+           SELECT 1 FROM transaction_entries e WHERE e.transaction_id = t.id AND e.account_id = :accountId)""",
     )
     suspend fun countForAccount(accountId: String): Int
 
@@ -115,8 +115,8 @@ interface TransactionDao : SyncDao<TransactionEntity> {
     @Query("SELECT * FROM transactions WHERE is_dirty = 1")
     override suspend fun dirty(): List<TransactionEntity>
 
-    @Query("UPDATE transactions SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
-    override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+    @Query("UPDATE transactions SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun markClean(id: String, updatedAt: Long)
 
     @Query("UPDATE transactions SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -129,22 +129,16 @@ interface TransactionDao : SyncDao<TransactionEntity> {
 }
 
 @Dao
-interface EntryDao : SyncDao<EntryEntity> {
+interface EntryDao {
     @Query("$ENTRY_WITH_ACCOUNT AND t.date BETWEEN :from AND :to ORDER BY e.transaction_id, e.entry_type, a.number")
     suspend fun liveInRange(from: LocalDate, to: LocalDate): List<EntryWithAccount>
 
     @Query("$ENTRY_WITH_ACCOUNT AND e.transaction_id = :transactionId ORDER BY e.entry_type, a.number")
     suspend fun liveOf(transactionId: String): List<EntryWithAccount>
 
-    @Query("SELECT * FROM transaction_entries WHERE transaction_id = :transactionId")
-    suspend fun allOf(transactionId: String): List<EntryEntity>
-
-    /** Live lines of a transaction that were written locally and not pushed yet. */
-    @Query("SELECT * FROM transaction_entries WHERE transaction_id = :transactionId AND deleted_at IS NULL AND is_dirty = 1")
-    suspend fun liveDirtyOf(transactionId: String): List<EntryEntity>
-
-    @Query("SELECT * FROM transaction_entries WHERE id IN (:ids)")
-    override suspend fun byIds(ids: List<String>): List<EntryEntity>
+    /** The lines of [transactionIds], deleted transactions included. */
+    @Query("SELECT * FROM transaction_entries WHERE transaction_id IN (:transactionIds)")
+    suspend fun allOf(transactionIds: List<String>): List<EntryEntity>
 
     @Query("$TOTALS AND t.date <= :asOf GROUP BY e.account_id")
     suspend fun totalsAsOf(asOf: LocalDate): List<AccountTotals>
@@ -157,7 +151,7 @@ interface EntryDao : SyncDao<EntryEntity> {
            SUM(CASE WHEN e.entry_type = 0 THEN e.amount_cents ELSE 0 END) AS debits,
            SUM(CASE WHEN e.entry_type = 1 THEN e.amount_cents ELSE 0 END) AS credits
            FROM transaction_entries e INNER JOIN transactions t ON t.id = e.transaction_id
-           WHERE e.deleted_at IS NULL AND t.deleted_at IS NULL AND t.date BETWEEN :from AND :to
+           WHERE t.deleted_at IS NULL AND t.date BETWEEN :from AND :to
            GROUP BY e.account_id, substr(t.date, 1, 7)""",
     )
     suspend fun monthlyTotals(from: LocalDate, to: LocalDate): List<MonthlyAccountTotals>
@@ -165,28 +159,23 @@ interface EntryDao : SyncDao<EntryEntity> {
     @Query(
         """SELECT e.account_id FROM transaction_entries e
            INNER JOIN transactions t ON t.id = e.transaction_id
-           WHERE e.deleted_at IS NULL AND t.deleted_at IS NULL
+           WHERE t.deleted_at IS NULL
            GROUP BY e.account_id ORDER BY COUNT(*) DESC LIMIT :limit""",
     )
     suspend fun mostUsedAccountIds(limit: Int): List<String>
 
     @Upsert
-    override suspend fun upsertAll(entities: List<EntryEntity>)
+    suspend fun upsertAll(entities: List<EntryEntity>)
 
-    @Query("SELECT * FROM transaction_entries WHERE is_dirty = 1")
-    override suspend fun dirty(): List<EntryEntity>
+    @Query("DELETE FROM transaction_entries WHERE transaction_id IN (:transactionIds)")
+    suspend fun deleteOf(transactionIds: List<String>)
 
-    @Query("UPDATE transaction_entries SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
-    override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
-
-    @Query("UPDATE transaction_entries SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
-    override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
-
-    @Query("UPDATE transaction_entries SET deleted_at = :now, updated_at = :now, is_dirty = 1 WHERE transaction_id = :transactionId AND deleted_at IS NULL")
-    suspend fun softDeleteOf(transactionId: String, now: Long)
-
-    @Query("UPDATE transaction_entries SET deleted_at = :now, updated_at = :now, is_dirty = 1 WHERE deleted_at IS NULL")
-    suspend fun softDeleteAll(now: Long)
+    /** Replaces the lines of [transactionId]; the caller stamps the transaction itself as changed. */
+    @Transaction
+    suspend fun replaceOf(transactionId: String, lines: List<EntryEntity>) {
+        deleteOf(listOf(transactionId))
+        upsertAll(lines)
+    }
 }
 
 @Dao
@@ -215,8 +204,8 @@ interface AssetDao : SyncDao<AssetEntity> {
     @Query("SELECT * FROM assets WHERE is_dirty = 1")
     override suspend fun dirty(): List<AssetEntity>
 
-    @Query("UPDATE assets SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
-    override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+    @Query("UPDATE assets SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun markClean(id: String, updatedAt: Long)
 
     @Query("UPDATE assets SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -248,8 +237,8 @@ interface InvoiceDao : SyncDao<InvoiceEntity> {
     @Query("SELECT * FROM invoices WHERE is_dirty = 1")
     override suspend fun dirty(): List<InvoiceEntity>
 
-    @Query("UPDATE invoices SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
-    override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+    @Query("UPDATE invoices SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun markClean(id: String, updatedAt: Long)
 
     @Query("UPDATE invoices SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -290,8 +279,8 @@ interface UserSettingDao : SyncDao<UserSettingEntity> {
     @Query("SELECT * FROM user_settings WHERE is_dirty = 1")
     override suspend fun dirty(): List<UserSettingEntity>
 
-    @Query("UPDATE user_settings SET updated_at = :serverUpdatedAt, is_dirty = 0 WHERE id = :id AND updated_at = :localUpdatedAt")
-    override suspend fun markClean(id: String, localUpdatedAt: Long, serverUpdatedAt: Long)
+    @Query("UPDATE user_settings SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun markClean(id: String, updatedAt: Long)
 
     @Query("UPDATE user_settings SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -299,15 +288,10 @@ interface UserSettingDao : SyncDao<UserSettingEntity> {
 
 @Dao
 interface SyncStatusDao {
-    /**
-     * Changes not yet pushed, counted the way the user sees them: a transaction with its lines is
-     * one change, and lines only count on their own when their transaction is already synced.
-     */
+    /** Changes not yet pushed (a transaction with its lines is one change). */
     @Query(
         """SELECT (SELECT COUNT(*) FROM accounts WHERE is_dirty = 1)
                 + (SELECT COUNT(*) FROM transactions WHERE is_dirty = 1)
-                + (SELECT COUNT(DISTINCT e.transaction_id) FROM transaction_entries e WHERE e.is_dirty = 1
-                    AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.id = e.transaction_id AND t.is_dirty = 1))
                 + (SELECT COUNT(*) FROM assets WHERE is_dirty = 1)
                 + (SELECT COUNT(*) FROM invoices WHERE is_dirty = 1)
                 + (SELECT COUNT(*) FROM user_settings WHERE is_dirty = 1)""",
@@ -318,8 +302,6 @@ interface SyncStatusDao {
     @Query(
         """SELECT (SELECT COUNT(*) FROM accounts WHERE is_dirty = 1 AND updated_at > :seedStamp)
                 + (SELECT COUNT(*) FROM transactions WHERE is_dirty = 1)
-                + (SELECT COUNT(DISTINCT e.transaction_id) FROM transaction_entries e WHERE e.is_dirty = 1
-                    AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.id = e.transaction_id AND t.is_dirty = 1))
                 + (SELECT COUNT(*) FROM assets WHERE is_dirty = 1)
                 + (SELECT COUNT(*) FROM invoices WHERE is_dirty = 1)
                 + (SELECT COUNT(*) FROM user_settings WHERE is_dirty = 1 AND updated_at > :seedStamp)""",
@@ -347,8 +329,15 @@ interface SyncStatusDao {
     // Queue every live row for upload, e.g. when this device's ledger moves to another account.
     @Query("UPDATE accounts SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markAccountsDirty()
     @Query("UPDATE transactions SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markTransactionsDirty()
-    @Query("UPDATE transaction_entries SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markEntriesDirty()
     @Query("UPDATE assets SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markAssetsDirty()
     @Query("UPDATE invoices SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markInvoicesDirty()
     @Query("UPDATE user_settings SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markSettingsDirty()
+
+    // Restamp every live row last edited before `at` as edited at `at`, and queue it for upload: when
+    // this device's ledger replaces the cloud's as of `at`, the rows it still holds must survive.
+    @Query("UPDATE accounts SET updated_at = :at, is_dirty = 1 WHERE deleted_at IS NULL AND updated_at < :at") suspend fun restampAccounts(at: Long)
+    @Query("UPDATE transactions SET updated_at = :at, is_dirty = 1 WHERE deleted_at IS NULL AND updated_at < :at") suspend fun restampTransactions(at: Long)
+    @Query("UPDATE assets SET updated_at = :at, is_dirty = 1 WHERE deleted_at IS NULL AND updated_at < :at") suspend fun restampAssets(at: Long)
+    @Query("UPDATE invoices SET updated_at = :at, is_dirty = 1 WHERE deleted_at IS NULL AND updated_at < :at") suspend fun restampInvoices(at: Long)
+    @Query("UPDATE user_settings SET updated_at = :at, is_dirty = 1 WHERE deleted_at IS NULL AND updated_at < :at") suspend fun restampSettings(at: Long)
 }

@@ -18,6 +18,7 @@ supabase/
 | `20261001000000_rls_performance_and_indexes.sql` | Faster RLS policies (`(select auth.uid())`), fixed `search_path` on the trigger function, foreign-key indexes |
 | `20261006000000_per_user_row_ids.sql` | Primary keys `(user_id, id)` instead of `id`, and references that include `user_id`, so ids are unique per user |
 | `20261006000001_align_hand_made_schema.sql` | Brings the dashboard-made tables in line: drops the catch-all policies and duplicate indexes, adds the value checks, defaults and settings cascade, keeps setting keys unique per user |
+| `20261006000002_transaction_lines_and_edit_times.sql` | Moves transaction lines into `transactions.lines` (jsonb), adds `modified_at` to every table, and a trigger that refuses an update older than the stored row |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -29,15 +30,23 @@ All HTTP calls are in `app/src/main/java/com/soloit/doubleentry/sync/`:
 
 - **`SupabaseApi.kt`.** Sign-in and token refresh (`/auth/v1/token`), upsert
   (`POST /rest/v1/<table>?on_conflict=user_id,id`), incremental pull
-  (`GET /rest/v1/<table>?updated_at=gte.<watermark>&order=updated_at.asc,id.asc`) and the bulk
-  soft-delete behind *Delete all* and *Import* (`PATCH /rest/v1/<table>?deleted_at=is.null&updated_at=lt.<time>`).
-- **`RealtimeClient.kt`.** Subscribes to `postgres_changes` on all six tables.
+  (`GET /rest/v1/<table>?updated_at=gte.<watermark>&order=updated_at.asc,id.asc`, continuing each page after
+  the last row with `or=(updated_at.gt.<t>,and(updated_at.eq.<t>,id.gt.<id>))`), reading refused rows by id
+  (`id=in.(…)`) and the bulk soft-delete behind *Delete all* and *Import*
+  (`PATCH /rest/v1/<table>?deleted_at=is.null&modified_at=lt.<time>`).
+- **`RealtimeClient.kt`.** Subscribes to `postgres_changes` on the five synced tables.
 - **`SyncRows.kt`.** The JSON shape of each table. Keep it in step with the migrations.
 
 Sync rules the schema relies on:
 
-- **`updated_at`** is always set by the server trigger. Clients pull with it and resolve conflicts
-  per row, last write wins.
+- **`modified_at`** is when the edit was made (the device's clock, corrected to the server's). It
+  decides conflicts, last edit wins: a pull keeps the local row unless the server's edit is later,
+  and the `keep_newer_edit` trigger refuses an update older than the stored row. A refused row is
+  left out of the upsert response, and the client then reads the stored row instead.
+- **`updated_at`** is always set by the server trigger when a row arrives. Clients only pull with it.
+- **`transactions.lines`** holds a transaction's lines (`id`, `account_id`, `amount`, `entry_type`),
+  so a transaction and its lines are always written, pulled and resolved together.
+  `transaction_entries` is no longer used (see `queries/drop_transaction_entries.sql`).
 - **`deleted_at`** is a tombstone. Rows are never hard-deleted by the app, so no delete policy exists.
 - **`user_id`** must equal `auth.uid()` for every read and write (RLS), and is part of every primary
   and foreign key: ids only need to be unique per user.
@@ -109,9 +118,12 @@ It also lets the app copy a ledger to another account with its ids unchanged.
 
 Builds of the app from before `20261006000000_per_user_row_ids.sql` upsert with `on_conflict=id`,
 which the server rejects after that migration; update the app on every device when deploying it.
+The same goes for `20261006000002_transaction_lines_and_edit_times.sql`: older builds don't send
+`modified_at` or `lines`, so their uploads fail.
 
 ## Queries
 
 - **`queries/health_check.sql`.** Row counts, unbalanced transactions, orphaned lines, duplicate account numbers.
 - **`queries/trial_balance.sql`.** Balance of every account as of a date.
 - **`queries/purge_tombstones.sql`.** Removes old soft-deleted rows. Read the warning in the file first.
+- **`queries/drop_transaction_entries.sql`.** Drops the old lines table once every device runs a current build.

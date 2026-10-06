@@ -24,11 +24,13 @@ data class SupabaseConfig(
     val isAvailable: Boolean get() = featureEnabled && isConfigured
 }
 
-/** Tables in parent → child order; pushes and pulls follow this order to satisfy foreign keys. */
+/**
+ * Tables in parent → child order; pushes and pulls follow this order to satisfy foreign keys.
+ * Transaction lines travel inside their transaction (`transactions.lines`).
+ */
 enum class SyncTable(val remoteName: String) {
     Accounts("accounts"),
     Transactions("transactions"),
-    Entries("transaction_entries"),
     Assets("assets"),
     Invoices("invoices"),
     Settings("user_settings"),

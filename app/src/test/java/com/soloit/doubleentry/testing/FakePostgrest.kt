@@ -24,10 +24,12 @@ import java.time.ZoneOffset
 
 /**
  * In-memory stand-in for the Supabase endpoints the sync engine uses: password sign-in, `GET`
- * with `updated_at=gte.`/`deleted_at=is.null` + order + offset/limit paging, `POST ?on_conflict=id`
- * upserts that merge by (user_id, id) like the primary key, and filtered `PATCH`es. Writes stamp `updated_at` like the server
- * trigger, every one strictly later. A token from [signIn] sees only its user's rows (like
- * row-level security); the plain token "token" sees everything.
+ * with `updated_at=gte.`, the `or=(…)` page cursor, `id=in.(…)` and `deleted_at=is.null`, ordered by
+ * (updated_at, id) with a limit; `POST ?on_conflict=user_id,id` upserts that merge by
+ * (user_id, id) like the primary key; and `PATCH`es filtered by `modified_at=lt.`. Like the
+ * server triggers, a write older than the stored row (by `modified_at`) is refused, and every
+ * other write stamps `updated_at`, each strictly later. A token from [signIn] sees only its
+ * user's rows (like row-level security); the plain token "token" sees everything.
  */
 class FakePostgrest {
     private val tables = mutableMapOf<String, MutableMap<String, JsonObject>>()
@@ -35,6 +37,9 @@ class FakePostgrest {
 
     /** Number of upserted rows, per table. */
     val writes = mutableMapOf<String, Int>()
+
+    /** Called after each page a `GET` returns, with the table — e.g. to change rows while a pull is paging. */
+    var afterPage: ((String) -> Unit)? = null
 
     fun rows(table: String): List<JsonObject> = tables[table].orEmpty().values.toList()
 
@@ -61,36 +66,50 @@ class FakePostgrest {
         val rows = tables.getOrPut(table) { linkedMapOf() }
         val user = request.header("Authorization")?.removePrefix("Bearer ")?.takeIf { it.startsWith("t-") }?.removePrefix("t-")
         val visible = rows.values.filter { user == null || it["user_id"]?.jsonPrimitive?.content == user }
-        val updatedAt = request.url.queryParameter("updated_at")
-        val onlyLive = request.url.queryParameter("deleted_at") == "is.null"
+        val url = request.url
+        val onlyLive = url.queryParameter("deleted_at") == "is.null"
+        val updatedSince = url.queryParameter("updated_at")?.let { parseTimestamp(it.removePrefix("gte.")) }
+        val modifiedBefore = url.queryParameter("modified_at")?.let { parseTimestamp(it.removePrefix("lt.")) }
+        val ids = url.queryParameter("id")?.removePrefix("in.(")?.removeSuffix(")")?.split(",")?.toSet()
+        val after = url.queryParameter("or")?.let { cursor ->
+            val match = checkNotNull(CURSOR.matchEntire(cursor)) { "Unexpected filter $cursor" }
+            val (gt, eq, id) = match.destructured
+            check(gt == eq)
+            parseTimestamp(gt) to id
+        }
         fun matches(row: JsonObject): Boolean {
             if (onlyLive && row["deleted_at"].let { it != null && it !is JsonNull }) return false
-            return when {
-                updatedAt == null -> true
-                updatedAt.startsWith("gte.") -> micros(row) >= parseTimestamp(updatedAt.removePrefix("gte."))
-                updatedAt.startsWith("lt.") -> micros(row) < parseTimestamp(updatedAt.removePrefix("lt."))
-                else -> error("Unexpected filter $updatedAt")
+            if (updatedSince != null && micros(row) < updatedSince) return false
+            if (modifiedBefore != null && modified(row) >= modifiedBefore) return false
+            if (ids != null && id(row) !in ids) return false
+            if (after != null) {
+                val (afterMicros, afterId) = after
+                if (micros(row) < afterMicros || (micros(row) == afterMicros && id(row) <= afterId)) return false
             }
+            return true
         }
         val body = when (request.method) {
             "GET" -> {
-                val offset = request.url.queryParameter("offset")?.toInt() ?: 0
-                val limit = request.url.queryParameter("limit")?.toInt() ?: Int.MAX_VALUE
+                check(url.queryParameter("offset") == null) { "Pages continue after a row, not at an offset" }
+                val limit = url.queryParameter("limit")?.toInt() ?: Int.MAX_VALUE
                 JsonArray(
                     visible
                         .filter(::matches)
-                        .sortedWith(compareBy({ micros(it) }, { it.getValue("id").jsonPrimitive.content }))
-                        .drop(offset)
+                        .sortedWith(compareBy({ micros(it) }, { id(it) }))
                         .take(limit),
-                )
+                ).also { afterPage?.invoke(table) }
             }
             "POST" -> {
                 val sent = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonArray
                 JsonArray(
-                    sent.map { element ->
+                    sent.mapNotNull { element ->
                         val row = element.jsonObject
                         check(request.url.queryParameter("on_conflict") == "user_id,id") { "Upserts must target the (user_id, id) key" }
-                        val stored = JsonObject((rows[key(row)].orEmpty()) + row + ("updated_at" to JsonPrimitive(stamp(tick()))))
+                        check("modified_at" in row && "updated_at" !in row) { "Uploads carry modified_at; updated_at is the server's" }
+                        val existing = rows[key(row)]
+                        // The keep_newer_edit trigger: an older edit is left out of the response.
+                        if (existing != null && modified(row) < modified(existing)) return@mapNotNull null
+                        val stored = JsonObject(existing.orEmpty() + row + ("updated_at" to JsonPrimitive(stamp(tick()))))
                         rows[key(row)] = stored
                         writes[table] = (writes[table] ?: 0) + 1
                         stored
@@ -101,7 +120,9 @@ class FakePostgrest {
                 val changes = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonObject
                 val stamp = stamp(tick())
                 for (row in visible.filter(::matches)) {
-                    rows[key(row)] = JsonObject(row + changes + ("updated_at" to JsonPrimitive(stamp)))
+                    val changed = JsonObject(row + changes)
+                    if (modified(changed) < modified(row)) continue
+                    rows[key(row)] = JsonObject(changed + ("updated_at" to JsonPrimitive(stamp)))
                 }
                 JsonArray(emptyList())
             }
@@ -140,6 +161,14 @@ class FakePostgrest {
 
     private fun micros(row: JsonObject): Long = parseTimestamp(row.getValue("updated_at").jsonPrimitive.content)
 
+    private fun modified(row: JsonObject): Long = parseTimestamp(row.getValue("modified_at").jsonPrimitive.content)
+
+    private fun id(row: JsonObject): String = row.getValue("id").jsonPrimitive.content
+
     /** Postgres-style `timestamptz` text with an explicit offset. */
     private fun stamp(micros: Long): String = microsToInstant(micros).atOffset(ZoneOffset.UTC).toString()
+
+    private companion object {
+        val CURSOR = Regex("""\(updated_at\.gt\."([^"]+)",and\(updated_at\.eq\."([^"]+)",id\.gt\.([^)]+)\)\)""")
+    }
 }
