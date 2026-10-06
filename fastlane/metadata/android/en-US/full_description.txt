@@ -1,0 +1,38 @@
+DoubleEntry is personal bookkeeping done the way accountants do it: every transaction is a balanced entry between accounts, so your balance sheet, income statement and net worth always add up.
+
+Your ledger stays on your phone. There is no sign-up, no ads and no tracking.
+
+<b>Accounts</b>
+• Net worth at a glance, with accounts grouped by type
+• A monthly ledger per account with a running balance
+• Reconcile an account against a bank statement; later changes to a reconciled period are flagged
+• A ready-made chart of accounts to start from
+
+<b>Bank statement import</b>
+• Import your bank's CSV/TSV export into an account
+• Delimiter, encoding, columns, dates and number formats are detected for you
+• Rows already in the ledger are skipped, and new rows are booked like your earlier transactions with the same text
+
+<b>Transactions</b>
+• Balanced multi-line entries with auto-balancing
+• Suggestions from earlier transactions as you type a title
+• Edit, duplicate, and delete with undo
+• Search across all months
+
+<b>Recurring transactions</b>
+Rent, salary and subscriptions post themselves weekly, monthly, quarterly or yearly.
+
+<b>Reports</b>
+• Balance sheet, income statement (EBITDA, EBT, spendable net income) and cash flow
+• Cost trends chart by group or account
+• Month, year-to-date or full year, compared with the previous period or the same period last year
+
+<b>Assets and invoices</b>
+• Automatic monthly depreciation of assets
+• Invoices with due dates, payments in full or in instalments, and an optional daily reminder
+
+<b>Your data, your way</b>
+• Full JSON backup and restore, and CSV export of transactions and balances
+• Optional app lock with screen lock or biometrics
+• Light and dark theme, optional Material You colors
+• A net-worth home-screen widget and launcher shortcuts
