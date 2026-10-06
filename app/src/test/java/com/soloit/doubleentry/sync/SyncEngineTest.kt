@@ -9,6 +9,7 @@ import com.soloit.doubleentry.domain.RecurringRule
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.testing.FakePostgrest
 import com.soloit.doubleentry.testing.TestLedger
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,11 +34,10 @@ class SyncEngineTest {
         private val engine = SyncEngine(t.db, SupabaseApi(SupabaseConfig("https://project.supabase.co", "anon", true), server.client), prefs)
         private val auth = AccessTokenProvider { "token" }
 
-        /** One cycle as SyncManager runs it: pull, then push. */
-        suspend fun sync() {
-            engine.pullAll(auth)
-            engine.pushAll(auth)
-        }
+        /** One cycle as SyncManager runs it: pull, then push. Returns what the pull reported. */
+        suspend fun sync(): PullResult = engine.pullAll(auth).also { engine.pushAll(auth) }
+
+        suspend fun pending(): Int = t.db.syncStatus().pendingChanges().first()
 
         suspend fun account(number: Int): Account = t.ledger.getAccounts().single { it.number == number }
     }
@@ -104,8 +104,8 @@ class SyncEngineTest {
         a.sync()
         // B edits after A's change reached the server, then syncs: B's newer edit is kept and spreads.
         b.t.ledger.updateTransaction(id, draft("From B", b.account(5010), b.account(1910)))
-        b.sync()
-        a.sync()
+        assertEquals(0, b.sync().replacedLocalChanges)
+        assertEquals(0, a.sync().replacedLocalChanges)
         assertEquals("From B", a.t.ledger.getTransaction(id)!!.title)
         assertEquals("From B", b.t.ledger.getTransaction(id)!!.title)
         assertEquals(2, a.t.ledger.getTransaction(id)!!.entries.size)
@@ -121,8 +121,9 @@ class SyncEngineTest {
         b.t.ledger.updateTransaction(id, draft("From B", 200_00, b.account(5010), b.account(1910)))
         a.t.ledger.updateTransaction(id, draft("From A", 300_00, a.account(5010), a.account(1910)))
         a.sync()
-        b.sync()
-        a.sync()
+        // B's edit is discarded, and B is told so — once for the transaction, not per line.
+        assertEquals(1, b.sync().replacedLocalChanges)
+        assertEquals(0, a.sync().replacedLocalChanges)
 
         for (device in listOf(a, b)) {
             val tx = device.t.ledger.getTransaction(id)!!
@@ -170,8 +171,9 @@ class SyncEngineTest {
         assertEquals(1, a.t.recurring.process(october))
         assertEquals(1, b.t.recurring.process(october))
         a.sync()
-        b.sync()
-        a.sync()
+        // The same posting made on both devices is not a lost edit.
+        assertEquals(0, b.sync().replacedLocalChanges)
+        assertEquals(0, a.sync().replacedLocalChanges)
 
         assertEquals(3, a.t.liveTransactionCount())
         assertEquals(3, b.t.liveTransactionCount())
@@ -179,5 +181,29 @@ class SyncEngineTest {
         assertEquals(6, server.rows("transaction_entries").size)
         assertEquals(-18_100_00L, b.t.ledger.getBalances(october)[b.account(1910).id])
         assertTrue(b.t.recurring.getRule("rent")!!.lastPostedDate == october)
+    }
+
+    @Test
+    fun anEditDeletedElsewhereIsReported() = runBlocking<Unit> {
+        val id = sharedLedger()
+        b.t.ledger.updateTransaction(
+            id,
+            TransactionDraft(day, "Edited on B", "", listOf(DraftLine(b.account(5010).id, 120_00, EntryType.Debit), DraftLine(b.account(1910).id, 120_00, EntryType.Credit))),
+        )
+        a.t.ledger.deleteTransaction(id)
+        a.sync()
+        assertEquals(1, b.sync().replacedLocalChanges)
+        assertNull(b.t.ledger.getTransaction(id))
+    }
+
+    @Test
+    fun pendingChangesCountTransactionsOnceAndClearAfterPush() = runBlocking<Unit> {
+        val bank = a.t.account(1910, "Bank", AccountType.Asset)
+        val food = a.t.account(5010, "Food", AccountType.Expense)
+        a.t.post(day, "Groceries", food, bank, 100_00)
+        // Two accounts and one transaction (its two lines don't count separately).
+        assertEquals(3, a.pending())
+        a.sync()
+        assertEquals(0, a.pending())
     }
 }

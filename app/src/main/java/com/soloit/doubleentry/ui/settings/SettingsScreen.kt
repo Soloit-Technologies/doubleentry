@@ -154,7 +154,8 @@ fun SettingsScreen(
                     GroupedItem(0, 1, onClick = onCloudSync) {
                         val subtitle = when {
                             !sync.configured -> "Not set up in this build"
-                            !sync.isSignedIn -> "Sign in to sync between devices"
+                            !sync.isSignedIn -> "Sign in to use your ledger on all your devices"
+                            sync.attention != null -> sync.attentionText()!!
                             !sync.enabled -> "Paused · ${sync.signedInEmail}"
                             sync.lastError != null -> sync.lastError!!
                             sync.lastSyncAtMillis != null -> "Synced ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(sync.lastSyncAtMillis!!))} · ${sync.signedInEmail}"

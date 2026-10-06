@@ -1,11 +1,19 @@
 package com.soloit.doubleentry.sync
 
 import androidx.room.withTransaction
+import com.soloit.doubleentry.data.LedgerRepository
+import com.soloit.doubleentry.data.local.AccountEntity
 import com.soloit.doubleentry.data.local.AppDatabase
+import com.soloit.doubleentry.data.local.AssetEntity
 import com.soloit.doubleentry.data.local.EntryEntity
+import com.soloit.doubleentry.data.local.InvoiceEntity
 import com.soloit.doubleentry.data.local.SyncDao
 import com.soloit.doubleentry.data.local.SyncEntity
+import com.soloit.doubleentry.data.local.TransactionEntity
+import com.soloit.doubleentry.data.local.UserSettingEntity
 import com.soloit.doubleentry.data.local.nowMicros
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -16,6 +24,25 @@ import kotlinx.serialization.json.jsonPrimitive
 fun interface AccessTokenProvider {
     suspend fun accessToken(forceRefresh: Boolean): String
 }
+
+data class LocalSummary(
+    /** Anything besides an untouched default plan. */
+    val hasData: Boolean,
+    /** Changes not yet uploaded, without untouched default-plan rows. */
+    val unsyncedChanges: Int,
+    /** How many of those are deletions of accounts, transactions, assets or invoices. */
+    val unsyncedDeletions: Int,
+)
+
+data class PullResult(
+    /** Local rows were added or changed. */
+    val changed: Boolean,
+    /**
+     * Unsynced edits made on this device that lost to a newer edit (or delete) of the same item
+     * on another device. Transaction lines are not counted separately from their transaction.
+     */
+    val replacedLocalChanges: Int,
+)
 
 /**
  * Row-level, last-write-wins sync against PostgREST. Each row carries a server-stamped
@@ -32,16 +59,17 @@ class SyncEngine(
 
     /**
      * Pulls every table, then advances all watermarks together — committing a parent watermark
-     * while a child table failed would skip parents on the next run. Returns true when rows changed.
+     * while a child table failed would skip parents on the next run.
      */
-    suspend fun pullAll(auth: AccessTokenProvider): Boolean {
+    suspend fun pullAll(auth: AccessTokenProvider): PullResult {
         val watermarks = mutableMapOf<SyncTable, String>()
         var changed = false
+        var replaced = 0
         // Which version of each pulled transaction header won; its lines must win with it.
         val headersFromServer = mutableSetOf<String>()
         val headersKeptLocal = mutableSetOf<String>()
         for (table in SyncTable.entries) {
-            val (applied, watermark) = when (table) {
+            val result = when (table) {
                 SyncTable.Accounts -> pull(table, AccountRow.serializer(), db.accounts(), auth) { it.toEntity() }
                 SyncTable.Transactions -> pull(
                     table, TransactionRow.serializer(), db.transactions(), auth,
@@ -51,7 +79,7 @@ class SyncEngine(
                     },
                 ) { it.toEntity() }
                 SyncTable.Entries -> pull(
-                    table, EntryRow.serializer(), db.entries(), auth,
+                    table, EntryRow.serializer(), db.entries(), auth, countReplaced = false,
                     onDecided = { fromServer, _ -> dropLosingLocalLines(headersFromServer, fromServer) },
                     adjust = { entries -> dropLosingServerLines(headersKeptLocal, entries) },
                 ) { it.toEntity() }
@@ -62,11 +90,53 @@ class SyncEngine(
                     rows.forEach { db.settings().deleteOtherWithKey(it.key, it.id) }
                 }) { it.toEntity() }
             }
-            if (applied > 0) changed = true
-            watermark?.let { watermarks[table] = it }
+            if (result.applied > 0) changed = true
+            replaced += result.replacedLocal
+            result.watermark?.let { watermarks[table] = it }
         }
         prefs.setWatermarks(watermarks)
-        return changed
+        return PullResult(changed, replaced)
+    }
+
+    /** What this device holds, for deciding how a sign-in combines it with the cloud. */
+    suspend fun localSummary(): LocalSummary {
+        val dao = db.syncStatus()
+        return LocalSummary(
+            hasData = dao.hasUserData(LedgerRepository.SEED_TIMESTAMP),
+            unsyncedChanges = dao.userChanges(LedgerRepository.SEED_TIMESTAMP),
+            unsyncedDeletions = dao.userDeletions(),
+        )
+    }
+
+    /** True when the signed-in account already holds accounts or transactions. */
+    suspend fun cloudHasData(auth: AccessTokenProvider): Boolean =
+        authorized(auth) { token -> api.hasLiveRows(SyncTable.Accounts, token) || api.hasLiveRows(SyncTable.Transactions, token) }
+
+    /** Queues every live local row for upload (rows synced with another account aren't dirty). */
+    suspend fun markAllForUpload() = db.withTransaction {
+        with(db.syncStatus()) {
+            markAccountsDirty()
+            markTransactionsDirty()
+            markEntriesDirty()
+            markAssetsDirty()
+            markInvoicesDirty()
+            markSettingsDirty()
+        }
+    }
+
+    /** Deletes the local database without leaving tombstones, so nothing reaches the cloud. */
+    suspend fun wipeLocal() = withContext(Dispatchers.IO) { db.clearAllTables() }
+
+    /**
+     * Soft-deletes every cloud row last changed before [beforeMicros], children first, including
+     * rows this device never pulled. Rows changed later on another device are newer and survive.
+     */
+    suspend fun wipeCloudBefore(beforeMicros: Long, auth: AccessTokenProvider) {
+        val before = formatTimestamp(beforeMicros)
+        val deletedAt = formatTimestamp(nowMicros())
+        for (table in SyncTable.entries.reversed()) {
+            authorized(auth) { token -> api.tombstoneBefore(table, before, deletedAt, token) }
+        }
     }
 
     /** Pushes dirty rows parent → child and clears their dirty flag with the server timestamp. */
@@ -119,19 +189,27 @@ class SyncEngine(
         }
     }
 
+    private class TablePull(val applied: Int, val watermark: String?, val replacedLocal: Int)
+
     private suspend fun <R : SyncRow, E : SyncEntity> pull(
         table: SyncTable,
         serializer: KSerializer<R>,
         dao: SyncDao<E>,
         auth: AccessTokenProvider,
+        /** Whether local edits overwritten by this table's rows count as [PullResult.replacedLocalChanges]. */
+        countReplaced: Boolean = true,
         beforeWrite: suspend (List<R>) -> Unit = {},
         /** Called inside the write transaction with the rows applied from the server and the ones where the local row was kept. */
         onDecided: suspend (fromServer: List<R>, keptLocal: List<R>) -> Unit = { _, _ -> },
         /** Last chance to change the entities before they are written. */
         adjust: suspend (List<E>) -> List<E> = { it },
         toEntity: (R) -> E,
-    ): Pair<Int, String?> {
-        val since = prefs.watermark(table)
+    ): TablePull {
+        val watermark = prefs.watermark(table)
+        // Re-read a window before the watermark: the server stamps `updated_at` when a write
+        // starts, so a slow upload can commit rows older than a watermark already passed.
+        // Rows seen before are as new as the local copy and are skipped below.
+        val since = watermark?.let { formatTimestamp(parseTimestamp(it) - WATERMARK_OVERLAP_MICROS) }
         val rows = mutableListOf<R>()
         var offset = 0
         while (true) {
@@ -140,9 +218,10 @@ class SyncEngine(
             if (page.size < PAGE_SIZE) break
             offset += page.size
         }
-        if (rows.isEmpty()) return 0 to null
+        if (rows.isEmpty()) return TablePull(0, null, 0)
 
         var applied = 0
+        var replacedLocal = 0
         db.withTransaction {
             val fromServer = mutableListOf<R>()
             val keptLocal = mutableListOf<R>()
@@ -152,16 +231,28 @@ class SyncEngine(
                 val (newer, older) = chunk.partition { row -> existing[row.id]?.let { it.updatedAt < row.updatedAtMicros } ?: true }
                 keptLocal += older
                 if (newer.isEmpty()) continue
+                val incoming = newer.map(toEntity)
+                if (countReplaced) replacedLocal += incoming.count { existing[it.id]?.isEditLostTo(it) == true }
                 beforeWrite(newer)
-                dao.upsertAll(adjust(newer.map(toEntity)))
+                dao.upsertAll(adjust(incoming))
                 fromServer += newer
                 applied += newer.size
             }
             onDecided(fromServer, keptLocal)
         }
-        val watermark = formatTimestamp(rows.maxOf { it.updatedAtMicros })
-        return applied to watermark
+        val newest = rows.maxOf { it.updatedAtMicros }
+        val previous = watermark?.let(::parseTimestamp) ?: Long.MIN_VALUE
+        return TablePull(applied, formatTimestamp(maxOf(newest, previous)), replacedLocal)
     }
+
+    /**
+     * True when this local row holds an edit not yet pushed that [server] (a newer version from
+     * another device) is about to overwrite with different content. Seeded default-plan rows and
+     * identical results (deterministic depreciation or recurring postings made on both devices)
+     * are not lost edits.
+     */
+    private fun SyncEntity.isEditLostTo(server: SyncEntity): Boolean =
+        isDirty && updatedAt > LedgerRepository.SEED_TIMESTAMP && content() != server.content()
 
     private suspend fun <E : SyncEntity> push(
         table: SyncTable,
@@ -193,12 +284,29 @@ class SyncEngine(
         try {
             block(auth.accessToken(forceRefresh = true))
         } catch (again: UnauthorizedException) {
-            throw SyncException("Your session has expired. Please sign in again.", again)
+            throw SessionExpiredException(again)
+        }
+    }
+
+    /** The row without its sync bookkeeping (whether it is deleted still counts, not when). */
+    private fun SyncEntity.content(): SyncEntity {
+        val deleted = deletedAt?.let { 0L }
+        return when (this) {
+            is AccountEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
+            is TransactionEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
+            is EntryEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
+            is AssetEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
+            is InvoiceEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
+            is UserSettingEntity -> copy(updatedAt = 0, deletedAt = deleted, isDirty = false)
+            else -> this
         }
     }
 
     private companion object {
         const val PAGE_SIZE = 1000
+
+        /** Far longer than any upload transaction can run (Supabase's statement timeout is seconds). */
+        const val WATERMARK_OVERLAP_MICROS = 5 * 60 * 1_000_000L
         const val CHUNK = 500
     }
 }

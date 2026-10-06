@@ -15,7 +15,8 @@ fun Instant.toMicros(): Long = Math.addExact(Math.multiplyExact(epochSecond, 1_0
 fun microsToInstant(micros: Long): Instant =
     Instant.ofEpochSecond(Math.floorDiv(micros, 1_000_000L), Math.floorMod(micros, 1_000_000L) * 1_000L)
 
-fun nowMicros(): Long = Instant.now().toMicros()
+/** Now, by the server's clock as far as it is known (see [ServerClock]). Used for every sync stamp. */
+fun nowMicros(): Long = Instant.now().toMicros() + ServerClock.offsetMicros
 
 fun AccountEntity.toDomain() = Account(id, number, name, AccountType.fromOrdinal(type))
 

@@ -39,6 +39,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.soloit.doubleentry.AppContainer
 import com.soloit.doubleentry.data.CsvExport
+import com.soloit.doubleentry.data.local.nowMicros
+import com.soloit.doubleentry.ui.LocalAppContainer
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.ConfirmDialog
 import com.soloit.doubleentry.ui.components.GroupedItem
@@ -58,16 +60,19 @@ data class DialogMessage(val title: String, val text: String)
 class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
     val busy = MutableStateFlow(false)
     val result = MutableStateFlow<DialogMessage?>(null)
-    val signedIn: Boolean get() = c.sync.status.value.isSignedIn
 
-    private fun run(title: String, block: suspend () -> String) {
+    /** Changes a reset would lose because they couldn't be uploaded; asks before going ahead. */
+    val resetWouldLose = MutableStateFlow<Int?>(null)
+
+    /** Runs [block]; its message (if any) is shown when it finishes. */
+    private fun run(title: String, block: suspend () -> String?) {
         if (busy.value) return
         busy.value = true
         viewModelScope.launch {
             // Data operations must finish even if the user leaves the screen.
             withContext(NonCancellable) {
                 result.value = try {
-                    DialogMessage(title, block())
+                    block()?.let { DialogMessage(title, it) }
                 } catch (e: Exception) {
                     DialogMessage("$title failed", e.message ?: "Something went wrong.")
                 } finally {
@@ -106,7 +111,10 @@ class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun import(resolver: ContentResolver, uri: Uri) = run("Import") {
+        val before = nowMicros()
         resolver.openInputStream(uri)?.use { c.backup.import(it) } ?: error("Could not open the selected file.")
+        // Also replaces cloud rows this device never pulled (added on another device meanwhile).
+        c.sync.replaceCloudLedger(before)
         "Your ledger has been replaced with the imported data."
     }
 
@@ -116,15 +124,26 @@ class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun deleteAll() = run("Delete all data") {
+        val before = nowMicros()
         c.ledger.deleteAllData()
+        c.sync.replaceCloudLedger(before)
         "All data has been deleted."
     }
 
-    /** Signs out and wipes the local database without touching the cloud copy. */
-    fun factoryReset() = run("Reset device") {
-        c.sync.signOut()
-        c.ledger.wipeLocalDatabase()
-        "All local data has been cleared. Sign in again to restore your data from the cloud."
+    /**
+     * Signs out and wipes the local database without touching the cloud copy. Uploads first; when
+     * changes are still left (offline, paused, signed out), asks before they are lost.
+     */
+    fun factoryReset(evenIfUnsynced: Boolean = false) = run("Reset device") {
+        if (!evenIfUnsynced) {
+            val left = c.sync.uploadBeforeReset()
+            if (left > 0) {
+                resetWouldLose.value = left
+                return@run null
+            }
+        }
+        c.sync.resetDevice()
+        "All data on this device has been cleared. Sign in again to download your data from the cloud."
     }
 }
 
@@ -135,6 +154,8 @@ fun DataManagementScreen(onBack: () -> Unit) {
     val vm = appViewModel { DataManagementViewModel(it) }
     val busy by vm.busy.collectAsStateWithLifecycle()
     val result by vm.result.collectAsStateWithLifecycle()
+    val resetWouldLose by vm.resetWouldLose.collectAsStateWithLifecycle()
+    val sync by LocalAppContainer.current.sync.status.collectAsStateWithLifecycle()
     val resolver = LocalContext.current.contentResolver
     var confirm by remember { mutableStateOf<Confirm?>(null) }
     var pendingImport by remember { mutableStateOf<Uri?>(null) }
@@ -199,16 +220,20 @@ fun DataManagementScreen(onBack: () -> Unit) {
                 }
                 item { SectionHeader("Danger zone") }
                 item {
+                    // Resetting only makes sense with a cloud copy to come back to.
+                    val count = if (sync.isSignedIn) 2 else 1
                     Column {
-                        GroupedItem(0, 2, onClick = { if (!busy) confirm = Confirm.DeleteFirst }) {
+                        GroupedItem(0, count, onClick = { if (!busy) confirm = Confirm.DeleteFirst }) {
                             SettingRow(
                                 Icons.Rounded.DeleteForever,
-                                if (vm.signedIn) "Delete all data (including cloud)" else "Delete all data",
+                                if (sync.isSignedIn) "Delete all data (including cloud)" else "Delete all data",
                                 "Permanently removes accounts, transactions, assets and invoices",
                             )
                         }
-                        GroupedItem(1, 2, onClick = { if (!busy) confirm = Confirm.Reset }) {
-                            SettingRow(Icons.Rounded.RestartAlt, "Reset this device", "Sign out and clear local data. Cloud data is kept.")
+                        if (sync.isSignedIn) {
+                            GroupedItem(1, count, onClick = { if (!busy) confirm = Confirm.Reset }) {
+                                SettingRow(Icons.Rounded.RestartAlt, "Reset this device", "Sign out and clear the data on this device. Cloud data is kept.")
+                            }
                         }
                     }
                 }
@@ -228,7 +253,13 @@ fun DataManagementScreen(onBack: () -> Unit) {
     when (confirm) {
         Confirm.Import -> ConfirmDialog(
             title = "Import from JSON?",
-            message = "All current accounts, transactions, assets and invoices will be replaced with the contents of the file. This cannot be undone.",
+            message = when {
+                sync.isSignedIn -> "All accounts, transactions, assets and invoices will be replaced with the contents of the file — " +
+                    "on this device and in the cloud, so all your synced devices will show the imported data. This cannot be undone."
+                sync.dataOwnerEmail != null -> "All accounts, transactions, assets and invoices on this device will be replaced with the contents of the file. " +
+                    "This cannot be undone. Your cloud copy isn't changed now; when you sign in again you'll be asked whether to replace it too."
+                else -> "All current accounts, transactions, assets and invoices will be replaced with the contents of the file. This cannot be undone."
+            },
             confirmLabel = "Replace data",
             destructive = true,
             onConfirm = { confirm = null; pendingImport?.let { vm.import(resolver, it) } },
@@ -242,11 +273,12 @@ fun DataManagementScreen(onBack: () -> Unit) {
             onDismiss = { confirm = null },
         )
         Confirm.DeleteFirst -> ConfirmDialog(
-            title = if (vm.signedIn) "Delete all data, including the cloud?" else "Delete all data?",
-            message = if (vm.signedIn) {
-                "This permanently deletes all accounts and transactions from this device and from the cloud."
-            } else {
-                "This permanently deletes all accounts and transactions."
+            title = if (sync.isSignedIn) "Delete all data, including the cloud?" else "Delete all data?",
+            message = when {
+                sync.isSignedIn -> "This permanently deletes all accounts and transactions from this device, from the cloud and from all your synced devices."
+                sync.dataOwnerEmail != null -> "This permanently deletes all accounts and transactions on this device. " +
+                    "Your cloud copy isn't changed now; when you sign in again you'll be asked whether to delete it there too."
+                else -> "This permanently deletes all accounts and transactions."
             },
             confirmLabel = "Continue",
             destructive = true,
@@ -263,13 +295,27 @@ fun DataManagementScreen(onBack: () -> Unit) {
         )
         Confirm.Reset -> ConfirmDialog(
             title = "Reset this device?",
-            message = "You will be signed out and all local data deleted. Your cloud data is not touched, so you can sign in again to restore it.",
+            message = "Any remaining changes are uploaded first. Then you're signed out and the data on this device is deleted. " +
+                "Your cloud data is not touched, so you can sign in again to download it.",
             confirmLabel = "Reset",
             destructive = true,
             onConfirm = { confirm = null; vm.factoryReset() },
             onDismiss = { confirm = null },
         )
         null -> Unit
+    }
+    resetWouldLose?.let { count ->
+        ConfirmDialog(
+            title = "Changes not uploaded",
+            message = "${changesText(count)} on this device couldn't be uploaded, so resetting now deletes " +
+                "${if (count == 1) "it" else "them"} for good.\n\n" +
+                (sync.lastError ?: if (!sync.enabled) "Sync is paused." else "") +
+                " Fix sync and try again, or reset anyway.",
+            confirmLabel = "Reset anyway",
+            destructive = true,
+            onConfirm = { vm.resetWouldLose.value = null; vm.factoryReset(evenIfUnsynced = true) },
+            onDismiss = { vm.resetWouldLose.value = null },
+        )
     }
     result?.let { MessageDialog(it.title, it.text) { vm.result.value = null } }
 }

@@ -18,10 +18,8 @@ import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.domain.TransactionValidator
 import com.soloit.doubleentry.domain.newId
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -281,9 +279,6 @@ class LedgerRepository(
         sync.requestSync()
     }
 
-    /** Hard-wipes the local database without producing tombstones (cloud data is untouched). */
-    suspend fun wipeLocalDatabase() = withContext(Dispatchers.IO) { db.clearAllTables() }
-
     private suspend fun requireLiveAccounts(draft: TransactionDraft) {
         val ids = draft.lines.map { it.accountId }.distinct()
         val live = accountDao.byIds(ids).filter { it.deletedAt == null }.map { it.id }.toSet()
@@ -295,7 +290,7 @@ class LedgerRepository(
         if (name.isBlank()) throw LedgerException("Account name is required.")
     }
 
-    private companion object {
+    companion object {
         /** `updated_at` of seeded default-plan rows (1 µs after the epoch): any server row is newer. */
         const val SEED_TIMESTAMP = 1L
     }

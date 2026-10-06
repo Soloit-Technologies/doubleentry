@@ -8,6 +8,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
@@ -42,6 +43,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -75,6 +77,7 @@ import com.soloit.doubleentry.ui.settings.CashflowSettingsScreen
 import com.soloit.doubleentry.ui.settings.CloudSyncScreen
 import com.soloit.doubleentry.ui.settings.DataManagementScreen
 import com.soloit.doubleentry.ui.settings.IncomeStatementSettingsScreen
+import com.soloit.doubleentry.ui.settings.SyncBanner
 import com.soloit.doubleentry.ui.settings.InvoiceSettingsScreen
 import com.soloit.doubleentry.ui.settings.SettingsScreen
 import com.soloit.doubleentry.ui.transactions.TransactionDetailScreen
@@ -150,6 +153,7 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
         val destination = entry?.destination
         val showBar = destination == null || topLevel.any { destination.hasRoute(it.type) }
         val snackbar = remember { SnackbarHostState() }
+        val syncStatus by container.sync.status.collectAsStateWithLifecycle()
 
         // Deletes elsewhere close their screen at once, so the undo snackbar lives here.
         LaunchedEffect(Unit) {
@@ -171,15 +175,25 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
                 ) {
-                    NavigationBar {
-                        topLevel.forEach { item ->
-                            val selected = destination?.hierarchy?.any { it.hasRoute(item.type) } == true
-                            NavigationBarItem(
-                                selected = selected,
-                                onClick = { nav.navigateTopLevel(item.route) },
-                                icon = { Icon(if (selected) item.selectedIcon else item.icon, contentDescription = null) },
-                                label = { Text(item.label) },
+                    Column {
+                        // Sync trouble shows on every tab: unsynced changes are easy to lose track of.
+                        AnimatedVisibility(visible = syncStatus.attention != null) {
+                            SyncBanner(
+                                status = syncStatus,
+                                onOpen = { nav.navigate(CloudSyncRoute) },
+                                onDismissReplaced = container.sync::dismissReplaced,
                             )
+                        }
+                        NavigationBar {
+                            topLevel.forEach { item ->
+                                val selected = destination?.hierarchy?.any { it.hasRoute(item.type) } == true
+                                NavigationBarItem(
+                                    selected = selected,
+                                    onClick = { nav.navigateTopLevel(item.route) },
+                                    icon = { Icon(if (selected) item.selectedIcon else item.icon, contentDescription = null) },
+                                    label = { Text(item.label) },
+                                )
+                            }
                         }
                     }
                 }

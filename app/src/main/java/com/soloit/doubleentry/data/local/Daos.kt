@@ -296,3 +296,59 @@ interface UserSettingDao : SyncDao<UserSettingEntity> {
     @Query("UPDATE user_settings SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
 }
+
+@Dao
+interface SyncStatusDao {
+    /**
+     * Changes not yet pushed, counted the way the user sees them: a transaction with its lines is
+     * one change, and lines only count on their own when their transaction is already synced.
+     */
+    @Query(
+        """SELECT (SELECT COUNT(*) FROM accounts WHERE is_dirty = 1)
+                + (SELECT COUNT(*) FROM transactions WHERE is_dirty = 1)
+                + (SELECT COUNT(DISTINCT e.transaction_id) FROM transaction_entries e WHERE e.is_dirty = 1
+                    AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.id = e.transaction_id AND t.is_dirty = 1))
+                + (SELECT COUNT(*) FROM assets WHERE is_dirty = 1)
+                + (SELECT COUNT(*) FROM invoices WHERE is_dirty = 1)
+                + (SELECT COUNT(*) FROM user_settings WHERE is_dirty = 1)""",
+    )
+    fun pendingChanges(): Flow<Int>
+
+    /** [pendingChanges] without untouched default-plan rows (stamped [seedStamp]), which never override cloud data. */
+    @Query(
+        """SELECT (SELECT COUNT(*) FROM accounts WHERE is_dirty = 1 AND updated_at > :seedStamp)
+                + (SELECT COUNT(*) FROM transactions WHERE is_dirty = 1)
+                + (SELECT COUNT(DISTINCT e.transaction_id) FROM transaction_entries e WHERE e.is_dirty = 1
+                    AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.id = e.transaction_id AND t.is_dirty = 1))
+                + (SELECT COUNT(*) FROM assets WHERE is_dirty = 1)
+                + (SELECT COUNT(*) FROM invoices WHERE is_dirty = 1)
+                + (SELECT COUNT(*) FROM user_settings WHERE is_dirty = 1 AND updated_at > :seedStamp)""",
+    )
+    suspend fun userChanges(seedStamp: Long): Int
+
+    /** Unsynced deletions of things the user sees (accounts, transactions, assets, invoices). */
+    @Query(
+        """SELECT (SELECT COUNT(*) FROM accounts WHERE is_dirty = 1 AND deleted_at IS NOT NULL)
+                + (SELECT COUNT(*) FROM transactions WHERE is_dirty = 1 AND deleted_at IS NOT NULL)
+                + (SELECT COUNT(*) FROM assets WHERE is_dirty = 1 AND deleted_at IS NOT NULL)
+                + (SELECT COUNT(*) FROM invoices WHERE is_dirty = 1 AND deleted_at IS NOT NULL)""",
+    )
+    suspend fun userDeletions(): Int
+
+    /** True when the ledger holds anything besides an untouched default plan. */
+    @Query(
+        """SELECT EXISTS (SELECT 1 FROM accounts WHERE deleted_at IS NULL AND updated_at > :seedStamp)
+               OR EXISTS (SELECT 1 FROM transactions WHERE deleted_at IS NULL)
+               OR EXISTS (SELECT 1 FROM assets WHERE deleted_at IS NULL)
+               OR EXISTS (SELECT 1 FROM invoices WHERE deleted_at IS NULL)""",
+    )
+    suspend fun hasUserData(seedStamp: Long): Boolean
+
+    // Queue every live row for upload, e.g. when this device's ledger moves to another account.
+    @Query("UPDATE accounts SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markAccountsDirty()
+    @Query("UPDATE transactions SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markTransactionsDirty()
+    @Query("UPDATE transaction_entries SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markEntriesDirty()
+    @Query("UPDATE assets SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markAssetsDirty()
+    @Query("UPDATE invoices SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markInvoicesDirty()
+    @Query("UPDATE user_settings SET is_dirty = 1 WHERE deleted_at IS NULL") suspend fun markSettingsDirty()
+}

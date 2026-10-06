@@ -103,7 +103,14 @@ Everything else follows the original logic.
 - **Balance sheet** hides zero-balance accounts unless *Show empty accounts* is selected.
 - **Backups.** Exports include the deferred-asset prefixes, which the MAUI export omitted.
 - **Sync** runs when the app comes to the foreground, refreshes an expired session once
-  before failing, and the realtime connection reconnects with backoff.
+  before failing, and the realtime connection reconnects with backoff. A banner above the tab bar
+  shows when changes aren't reaching the cloud (offline, paused, failing, session expired) and
+  when unsynced edits were replaced by newer ones from another device. Sync stamps are corrected
+  for device clock skew, measured from the server's `Date` header. Signing in never silently
+  merges two ledgers: it asks when this device and the account each hold one, when changes were
+  made while signed out, or when the device holds another account's ledger. *Delete all* and
+  *Import* also delete cloud rows this device never pulled, and *Reset this device* uploads first
+  and warns about anything it couldn't upload.
 
 ## Project structure
 

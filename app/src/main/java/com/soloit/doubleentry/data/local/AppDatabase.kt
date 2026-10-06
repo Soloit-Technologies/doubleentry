@@ -38,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun assets(): AssetDao
     abstract fun invoices(): InvoiceDao
     abstract fun settings(): UserSettingDao
+    abstract fun syncStatus(): SyncStatusDao
 
     /** Emits once immediately and again whenever any ledger table changes (local edit or sync pull). */
     fun ledgerChanges(): Flow<Unit> =
