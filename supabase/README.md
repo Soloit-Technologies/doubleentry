@@ -16,6 +16,8 @@ supabase/
 | `20250601000000_invoices.sql` | `invoices` (unchanged from the MAUI repository) |
 | `20250601000001_user_settings.sql` | `user_settings` (unchanged from the MAUI repository) |
 | `20261001000000_rls_performance_and_indexes.sql` | Faster RLS policies (`(select auth.uid())`), fixed `search_path` on the trigger function, foreign-key indexes |
+| `20261006000000_per_user_row_ids.sql` | Primary keys `(user_id, id)` instead of `id`, and references that include `user_id`, so ids are unique per user |
+| `20261006000001_align_hand_made_schema.sql` | Brings the dashboard-made tables in line: drops the catch-all policies and duplicate indexes, adds the value checks, defaults and settings cascade, keeps setting keys unique per user |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -26,8 +28,9 @@ by hand in the dashboard.
 All HTTP calls are in `app/src/main/java/com/soloit/doubleentry/sync/`:
 
 - **`SupabaseApi.kt`.** Sign-in and token refresh (`/auth/v1/token`), upsert
-  (`POST /rest/v1/<table>?on_conflict=id`) and incremental pull
-  (`GET /rest/v1/<table>?updated_at=gte.<watermark>&order=updated_at.asc,id.asc`).
+  (`POST /rest/v1/<table>?on_conflict=user_id,id`), incremental pull
+  (`GET /rest/v1/<table>?updated_at=gte.<watermark>&order=updated_at.asc,id.asc`) and the bulk
+  soft-delete behind *Delete all* and *Import* (`PATCH /rest/v1/<table>?deleted_at=is.null&updated_at=lt.<time>`).
 - **`RealtimeClient.kt`.** Subscribes to `postgres_changes` on all six tables.
 - **`SyncRows.kt`.** The JSON shape of each table. Keep it in step with the migrations.
 
@@ -36,7 +39,8 @@ Sync rules the schema relies on:
 - **`updated_at`** is always set by the server trigger. Clients pull with it and resolve conflicts
   per row, last write wins.
 - **`deleted_at`** is a tombstone. Rows are never hard-deleted by the app, so no delete policy exists.
-- **`user_id`** must equal `auth.uid()` for every read and write (RLS).
+- **`user_id`** must equal `auth.uid()` for every read and write (RLS), and is part of every primary
+  and foreign key: ids only need to be unique per user.
 - **PostgREST `max_rows`** must be at least 1000; the app pages 1000 rows at a time.
 
 ## First-time setup against your existing project
@@ -50,9 +54,8 @@ supabase db push --include-all     # applies anything not yet recorded
 
 `--include-all` is needed because the core migration is dated before the two invoice/settings
 migrations, which may already be recorded. Re-running SQL that was originally typed into the
-dashboard is safe. If your hand-made policies have other names, the old ones stay alongside
-the new ones. Both kinds restrict rows to their owner, so remove the old ones in the dashboard
-(*Authentication → Policies*) when convenient.
+dashboard is safe. Policies and indexes that were made by hand in the dashboard are removed by
+`20261006000001_align_hand_made_schema.sql`; add any new hand-made ones to that list.
 
 ## Making a change
 
@@ -97,10 +100,15 @@ user with *Authentication → Add user* in the local Studio (http://127.0.0.1:54
 
 ## Users
 
-This is a single-user app per project: sign-ups are meant to stay disabled and you create your
-user in the dashboard. Some ids are derived only from content (default-plan accounts from the
-account number, settings rows from the key). Two different users in one project would therefore
-collide on those rows; fold the user id into the derivation first if you ever need that.
+Sign-ups are meant to stay disabled; create users in the dashboard. Several users can share one
+project. Some ids are derived only from content (default-plan accounts from the account number,
+settings rows from the key, depreciation and recurring postings from the asset/rule and month), so
+every user has rows with the same ids. That is why each table is keyed by `(user_id, id)` and every
+reference includes `user_id`: one user can never collide with, or point at, another user's rows.
+It also lets the app copy a ledger to another account with its ids unchanged.
+
+Builds of the app from before `20261006000000_per_user_row_ids.sql` upsert with `on_conflict=id`,
+which the server rejects after that migration; update the app on every device when deploying it.
 
 ## Queries
 

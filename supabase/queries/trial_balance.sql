@@ -13,7 +13,7 @@ totals as (
          sum(case when e.entry_type = 0 then e.amount else 0 end) as debits,
          sum(case when e.entry_type = 1 then e.amount else 0 end) as credits
   from public.transaction_entries e
-  join public.transactions t on t.id = e.transaction_id
+  join public.transactions t on t.user_id = e.user_id and t.id = e.transaction_id
   cross join params p
   where e.deleted_at is null and t.deleted_at is null
     and t.user_id = p.user_id and t.date <= p.as_of

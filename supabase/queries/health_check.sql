@@ -17,21 +17,21 @@ union all
 select 'user_settings', count(*) filter (where deleted_at is null), count(*) filter (where deleted_at is not null) from public.user_settings;
 
 -- Live transactions whose live lines do not balance (should return no rows).
-select t.id, t.date, t.title,
+select t.user_id, t.id, t.date, t.title,
        sum(case when e.entry_type = 0 then e.amount else 0 end) as debits,
        sum(case when e.entry_type = 1 then e.amount else 0 end) as credits
 from public.transactions t
-join public.transaction_entries e on e.transaction_id = t.id and e.deleted_at is null
+join public.transaction_entries e on e.user_id = t.user_id and e.transaction_id = t.id and e.deleted_at is null
 where t.deleted_at is null
-group by t.id, t.date, t.title
+group by t.user_id, t.id, t.date, t.title
 having sum(case when e.entry_type = 0 then e.amount else -e.amount end) <> 0
 order by t.date desc;
 
 -- Live lines that belong to a deleted transaction or point at a deleted account.
-select e.id, e.transaction_id, e.account_id, t.deleted_at as transaction_deleted_at, a.deleted_at as account_deleted_at
+select e.user_id, e.id, e.transaction_id, e.account_id, t.deleted_at as transaction_deleted_at, a.deleted_at as account_deleted_at
 from public.transaction_entries e
-join public.transactions t on t.id = e.transaction_id
-join public.accounts a on a.id = e.account_id
+join public.transactions t on t.user_id = e.user_id and t.id = e.transaction_id
+join public.accounts a on a.user_id = e.user_id and a.id = e.account_id
 where e.deleted_at is null and (t.deleted_at is not null or a.deleted_at is not null);
 
 -- Live accounts sharing a number (the app expects numbers to be unique per user).
