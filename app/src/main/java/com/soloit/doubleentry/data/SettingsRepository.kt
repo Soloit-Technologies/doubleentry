@@ -7,6 +7,7 @@ import com.soloit.doubleentry.data.local.nowMicros
 import com.soloit.doubleentry.domain.AccountGroup
 import com.soloit.doubleentry.domain.BalanceSheetSettings
 import com.soloit.doubleentry.domain.CashflowSettings
+import com.soloit.doubleentry.domain.CostPeriodAccounts
 import com.soloit.doubleentry.domain.DeterministicIds
 import com.soloit.doubleentry.domain.IncomeStatementSettings
 import com.soloit.doubleentry.domain.InvoiceSettings
@@ -37,6 +38,7 @@ class SettingsRepository(
     val incomeStatement: Flow<IncomeStatementSettings> = values.map(::incomeStatementFrom).distinctUntilChanged()
     val cashflow: Flow<CashflowSettings> = values.map(::cashflowFrom).distinctUntilChanged()
     val invoice: Flow<InvoiceSettings> = values.map(::invoiceFrom).distinctUntilChanged()
+    val costPeriodAccounts: Flow<CostPeriodAccounts> = values.map(::costPeriodAccountsFrom).distinctUntilChanged()
 
     suspend fun saveBalanceSheet(settings: BalanceSheetSettings) = set(*balanceSheetEntries(settings))
 
@@ -50,6 +52,16 @@ class SettingsRepository(
         Keys.INVOICE_CREDIT_ACCOUNT to settings.creditAccountNumber?.toString(),
         Keys.INVOICE_PAYMENT_ACCOUNTS to json.encodeToString(intList, settings.paymentAccountNumbers),
     )
+
+    suspend fun saveCostPeriodAccounts(settings: CostPeriodAccounts) = set(
+        Keys.PREPAID_EXPENSES_ACCOUNT to settings.prepaidExpenses?.toString(),
+        Keys.ACCRUED_EXPENSES_ACCOUNT to settings.accruedExpenses?.toString(),
+        Keys.ACCRUED_INCOME_ACCOUNT to settings.accruedIncome?.toString(),
+        Keys.DEFERRED_INCOME_ACCOUNT to settings.deferredIncome?.toString(),
+    )
+
+    suspend fun getCostPeriodAccounts(): CostPeriodAccounts =
+        costPeriodAccountsFrom(dao.liveWithPrefix(Keys.COST_PERIOD_ACCOUNTS_PREFIX).associate { it.key to it.value })
 
     /**
      * Live values of every key starting with [prefix], keyed by the remainder of the key. Used for
@@ -109,13 +121,22 @@ class SettingsRepository(
         const val INVOICE_CREDIT_ACCOUNT = "Invoice.CreditAccountNumber"
         const val INVOICE_PAYMENT_ACCOUNTS = "Invoice.PaymentAccountNumbers"
 
+        // Interim accounts of cost periods (Android only), by account number.
+        const val COST_PERIOD_ACCOUNTS_PREFIX = "CostPeriod.Account."
+        const val PREPAID_EXPENSES_ACCOUNT = COST_PERIOD_ACCOUNTS_PREFIX + "PrepaidExpenses"
+        const val ACCRUED_EXPENSES_ACCOUNT = COST_PERIOD_ACCOUNTS_PREFIX + "AccruedExpenses"
+        const val ACCRUED_INCOME_ACCOUNT = COST_PERIOD_ACCOUNTS_PREFIX + "AccruedIncome"
+        const val DEFERRED_INCOME_ACCOUNT = COST_PERIOD_ACCOUNTS_PREFIX + "DeferredIncome"
+
         // Per-item prefixes (Android only). The suffix is the id of the rule, account or invoice.
         const val RECURRING_PREFIX = "Recurring."
         const val RECONCILIATION_PREFIX = "Reconciliation."
         const val INVOICE_PAYMENTS_PREFIX = "Invoice.Payments."
+        /** Suffix is the id of the transaction whose lines are spread over periods. */
+        const val COST_PERIOD_PREFIX = "CostPeriod.Transaction."
 
         /** Settings that describe ledger data rather than preferences; removed by "Delete all data". */
-        val DATA_PREFIXES = listOf(RECURRING_PREFIX, RECONCILIATION_PREFIX, INVOICE_PAYMENTS_PREFIX)
+        val DATA_PREFIXES = listOf(RECURRING_PREFIX, RECONCILIATION_PREFIX, INVOICE_PAYMENTS_PREFIX, COST_PERIOD_PREFIX)
     }
 
     /** Mirrors the .NET `record GroupDto(string Name, List<string> Prefixes)`. */
@@ -175,6 +196,13 @@ class SettingsRepository(
         /** Unset or unreadable cash groups fall back to the built-in defaults (as in the .NET app). */
         internal fun cashflowFrom(values: Map<String, String>) = CashflowSettings(
             cashGroups = decodeGroups(values[Keys.CASH_GROUPS]) ?: CashflowSettings.DEFAULT_CASH_GROUPS,
+        )
+
+        internal fun costPeriodAccountsFrom(values: Map<String, String>) = CostPeriodAccounts(
+            prepaidExpenses = values[Keys.PREPAID_EXPENSES_ACCOUNT]?.trim()?.toIntOrNull(),
+            accruedExpenses = values[Keys.ACCRUED_EXPENSES_ACCOUNT]?.trim()?.toIntOrNull(),
+            accruedIncome = values[Keys.ACCRUED_INCOME_ACCOUNT]?.trim()?.toIntOrNull(),
+            deferredIncome = values[Keys.DEFERRED_INCOME_ACCOUNT]?.trim()?.toIntOrNull(),
         )
 
         internal fun invoiceFrom(values: Map<String, String>) = InvoiceSettings(

@@ -155,7 +155,7 @@ class TransactionEditorViewModel(
                 ledger.getTransaction(sourceId)?.let { tx ->
                     if (route.editId != null) original = tx
                     form.value = TransactionForm(tx.title, tx.date, tx.description)
-                    lines.load(tx.entries)
+                    lines.loadDraft(ledger.editableLines(tx))
                 }
             } else {
                 route.date?.let { date -> form.update { it.copy(date = LocalDate.parse(date)) } }
@@ -183,7 +183,10 @@ class TransactionEditorViewModel(
         form.update { it.copy(title = tx.title, description = it.description.ifBlank { tx.description }) }
         val untouched = lines.current.none { it.hasAmount || (it.accountId != null && it.accountId != route.accountId) }
         val keepsAccount = route.accountId == null || tx.entries.any { it.account.id == route.accountId }
-        if (untouched && keepsAccount) lines.load(tx.entries)
+        if (untouched && keepsAccount) {
+            // Periods are tied to the earlier transaction's dates, so its spread lines are copied whole.
+            viewModelScope.launch { lines.loadDraft(ledger.editableLines(tx).map { it.copy(period = null) }) }
+        }
         markModified()
     }
 
@@ -273,6 +276,8 @@ fun TransactionEditorScreen(route: TransactionEditorRoute, onDone: () -> Unit) {
                 onFocusCredit = vm.lines::autoFillCredit,
                 onRemove = vm.lines::remove,
                 onAdd = vm.lines::add,
+                periodDate = state.form.date,
+                onPeriodChange = vm.lines::setPeriod,
             )
             state.reconciledWarnings.forEach { warning ->
                 StatusChip(

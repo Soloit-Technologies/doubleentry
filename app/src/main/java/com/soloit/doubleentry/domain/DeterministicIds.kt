@@ -3,6 +3,7 @@ package com.soloit.doubleentry.domain
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -19,6 +20,7 @@ object DeterministicIds {
     private val planNamespace = UUID.fromString("3f8b0a3a-0a7e-4f6a-9b9b-1d6f8f6a0d10")
     private val writeoffNamespace = UUID.fromString("b6c2f1e4-3a7d-4c19-9f0b-2e5a8d7c4f11")
     private val recurringNamespace = UUID.fromString("5d0c7e2a-8f41-4b6e-a3c9-7b18e0f2d6a4")
+    private val periodNamespace = UUID.fromString("9a4e6c1d-2b7f-4e83-b5d0-6f1c3a8e2d57")
     private val monthFormat = DateTimeFormatter.ofPattern("yyyy-MM")
 
     /** UUIDv5(planNamespace, number) — id of a default-plan account. */
@@ -49,6 +51,14 @@ object DeterministicIds {
     /** Id of line [index] of a recurring posting. */
     fun recurringEntryId(transactionId: String, index: Int): String =
         namespacedGuid("${compact(transactionId)}:$index", recurringNamespace)
+
+    /** Id of the posting that moves [sourceId]'s share for [month] out of the interim account. */
+    fun periodTransactionId(sourceId: String, month: YearMonth): String =
+        namespacedGuid("${compact(sourceId)}:$month", periodNamespace)
+
+    /** Id of line [index] of a period posting. */
+    fun periodEntryId(transactionId: String, index: Int): String =
+        namespacedGuid("${compact(transactionId)}:$index", periodNamespace)
 
     /** Id of a synced user setting, derived from its key. */
     fun settingId(key: String): String =

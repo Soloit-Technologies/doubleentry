@@ -86,6 +86,8 @@ data class DraftLine(
     val amount: Long,
     val type: EntryType,
     val id: String? = null,
+    /** Spreads an expense or income line over these days instead of the transaction date (see [Periodization]). */
+    val period: CostPeriod? = null,
 )
 
 data class TransactionDraft(

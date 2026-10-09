@@ -1,5 +1,7 @@
 package com.soloit.doubleentry.ui.transactions
 
+import com.soloit.doubleentry.domain.CostPeriod
+import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.Entry
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.Money
@@ -34,6 +36,17 @@ class BookingLines(private val onUserChange: () -> Unit) {
         }.ifEmpty { listOf(newLine(), newLine()) }
     }
 
+    /** Like [load], from draft lines (which keep their periods). */
+    fun loadDraft(lines: List<DraftLine>) {
+        _lines.value = lines.map {
+            newLine(
+                accountId = it.accountId,
+                debit = if (it.type == EntryType.Debit) Money.toInput(it.amount) else "",
+                credit = if (it.type == EntryType.Credit) Money.toInput(it.amount) else "",
+            ).copy(period = it.period)
+        }.ifEmpty { listOf(newLine(), newLine()) }
+    }
+
     fun set(lines: List<LineInput>) { _lines.value = lines }
 
     fun update(key: Long, transform: (LineInput) -> LineInput) = edit { list -> list.map { if (it.key == key) transform(it) else it } }
@@ -41,6 +54,7 @@ class BookingLines(private val onUserChange: () -> Unit) {
     fun setAccount(key: Long, accountId: String) = update(key) { it.copy(accountId = accountId) }
     fun setDebit(key: Long, value: String) = update(key) { it.copy(debit = value) }
     fun setCredit(key: Long, value: String) = update(key) { it.copy(credit = value) }
+    fun setPeriod(key: Long, period: CostPeriod?) = update(key) { it.copy(period = period) }
     fun add() = edit { it + newLine() }
     fun remove(key: Long) = edit { list -> list.filterNot { it.key == key && !it.locked } }
 

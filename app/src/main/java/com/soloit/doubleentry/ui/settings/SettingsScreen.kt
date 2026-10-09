@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.AccountBalance
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.EventRepeat
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -82,6 +83,7 @@ fun SettingsScreen(
     onIncomeStatement: () -> Unit,
     onCashflow: () -> Unit,
     onInvoices: () -> Unit,
+    onCostPeriods: () -> Unit,
     onRecurring: () -> Unit,
 ) {
     val container = LocalAppContainer.current
@@ -238,10 +240,15 @@ fun SettingsScreen(
                 }
             }
 
-            item { SectionHeader("Invoices") }
+            item { SectionHeader("Bookkeeping") }
             item {
-                GroupedItem(0, 1, onClick = onInvoices) {
-                    SettingRow(Icons.AutoMirrored.Rounded.ReceiptLong, "Invoice defaults", "Credit account and payment accounts", chevron = true)
+                Column {
+                    GroupedItem(0, 2, onClick = onInvoices) {
+                        SettingRow(Icons.AutoMirrored.Rounded.ReceiptLong, "Invoice defaults", "Credit account and payment accounts", chevron = true)
+                    }
+                    GroupedItem(1, 2, onClick = onCostPeriods) {
+                        SettingRow(Icons.Rounded.DateRange, "Cost periods", "Prepaid and accrued accounts for spreading costs and income", chevron = true)
+                    }
                 }
             }
 

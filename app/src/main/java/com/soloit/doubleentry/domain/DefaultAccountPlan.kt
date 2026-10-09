@@ -48,6 +48,7 @@ object DefaultAccountPlan {
         Entry(1680, "Reimbursable Expenses (paid for others)", AccountType.Asset),
         Entry(1690, "Gift Cards & Store Credit", AccountType.Asset),
         Entry(1700, "Prepaid Expenses", AccountType.Asset),
+        Entry(1710, "Accrued Income (earned, not yet received)", AccountType.Asset),
 
         // 191x Cash
         Entry(1910, "Cash on Hand", AccountType.Asset),
@@ -83,6 +84,7 @@ object DefaultAccountPlan {
         Entry(2440, "Unpaid Bills", AccountType.Liability),
         Entry(2450, "Money Owed to Others", AccountType.Liability),
         Entry(2480, "Line of Credit / Overdraft", AccountType.Liability),
+        Entry(2490, "Income Received in Advance", AccountType.Liability),
 
         // 25xx Loans
         Entry(2510, "Mortgage", AccountType.Liability),
