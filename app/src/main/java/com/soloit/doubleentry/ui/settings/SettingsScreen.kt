@@ -164,14 +164,15 @@ fun SettingsScreen(
                     GroupedItem(0, 1, onClick = onCloudSync) {
                         val subtitle = when {
                             !sync.configured -> "Not set up in this build"
-                            !sync.isSignedIn -> "Sign in to use your ledger on all your devices"
+                            !sync.isSignedIn -> "Back up your ledger and use it on all your devices"
                             sync.attention != null -> sync.attentionText()!!
                             !sync.enabled -> "Paused · ${sync.signedInEmail}"
                             sync.lastError != null -> sync.lastError!!
+                            sync.notBackedUp -> "Not backed up · ${sync.signedInEmail}"
                             sync.lastSyncAtMillis != null -> "Synced ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(sync.lastSyncAtMillis!!))} · ${sync.signedInEmail}"
                             else -> "On · ${sync.signedInEmail}"
                         }
-                        SettingRow(if (sync.isActive) Icons.Rounded.Cloud else Icons.Rounded.CloudOff, "Cloud sync", subtitle, chevron = true)
+                        SettingRow(if (sync.isActive) Icons.Rounded.Cloud else Icons.Rounded.CloudOff, "Cloud backup & sync", subtitle, chevron = true)
                     }
                 }
             }

@@ -1,7 +1,8 @@
 name: Supabase
 
 # Validates every migration on a throwaway local Supabase stack, previews the changes
-# against the real project on pull requests and applies them on push to the main branch.
+# against the real project on pull requests and applies them (and deploys the Edge Functions)
+# on push to the main branch. The functions' secrets are set once by hand, see supabase/README.md.
 #
 # Deploying needs (Settings → Secrets and variables → Actions):
 #   variable SUPABASE_PROJECT_ID     the project ref, e.g. abcdefghijklmnopqrst
@@ -53,3 +54,6 @@ jobs:
       - name: Apply pending migrations
         if: github.event_name != 'pull_request'
         run: supabase db push --include-all
+      - name: Deploy Edge Functions
+        if: github.event_name != 'pull_request'
+        run: supabase functions deploy --project-ref "${{ vars.SUPABASE_PROJECT_ID }}"

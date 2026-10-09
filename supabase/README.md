@@ -7,6 +7,8 @@ the repository instead of the dashboard.
 supabase/
   config.toml      Supabase CLI configuration (local development)
   migrations/      Schema: tables, row-level security, triggers, realtime (applied in order)
+  functions/       Edge Functions: Google Play purchases and account deletion
+  templates/       Auth email (password-reset code)
   queries/         Read-only checks and maintenance SQL to run in the SQL editor
 ```
 
@@ -19,6 +21,7 @@ supabase/
 | `20261006000000_per_user_row_ids.sql` | Primary keys `(user_id, id)` instead of `id`, and references that include `user_id`, so ids are unique per user |
 | `20261006000001_align_hand_made_schema.sql` | Brings the dashboard-made tables in line: drops the catch-all policies and duplicate indexes, adds the value checks, defaults and settings cascade, keeps setting keys unique per user |
 | `20261006000002_transaction_lines_and_edit_times.sql` | Moves transaction lines into `transactions.lines` (jsonb), adds `modified_at` to every table, and a trigger that refuses an update older than the stored row |
+| `20261007000000_cloud_subscriptions.sql` | Paid backup: `cloud_subscriptions`, `has_cloud_access()` / `cloud_access()`, uploads only with access (reads stay open), complimentary access for every existing user |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -48,6 +51,10 @@ Sync rules the schema relies on:
   so a transaction and its lines are always written, pulled and resolved together.
   `transaction_entries` is no longer used (see `queries/drop_transaction_entries.sql`).
 - **`deleted_at`** is a tombstone. Rows are never hard-deleted by the app, so no delete policy exists.
+- **Uploads need cloud access.** Insert and update policies also require `has_cloud_access()`: a
+  `cloud_subscriptions` row whose `expires_at` is null or in the future. Without it PostgREST answers
+  403 (`42501`); the app then keeps changes on the device. Select policies don't check it, so an
+  account whose subscription ended can still restore its ledger on a new phone.
 - **`user_id`** must equal `auth.uid()` for every read and write (RLS), and is part of every primary
   and foreign key: ids only need to be unique per user.
 - **PostgREST `max_rows`** must be at least 1000; the app pages 1000 rows at a time.
@@ -105,12 +112,71 @@ supabase.anonKey=<anon key printed by supabase start>
 ```
 
 Debug builds allow plain HTTP to `10.0.2.2`/`localhost` (see `app/src/debug/`). Create a test
-user with *Authentication → Add user* in the local Studio (http://127.0.0.1:54323).
+user with *Authentication → Add user* in the local Studio (http://127.0.0.1:54323) and sign in with
+email, or export `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=<web client id>` before `supabase start`
+to test Sign in with Google locally.
+
+## Accounts and paid backup
+
+Accounts are created with **Sign in with Google**: the app gets a Google ID token from Android's
+Credential Manager and exchanges it for a session (`POST /auth/v1/token?grant_type=id_token` with
+`provider: google`, the token and the raw nonce whose SHA-256 the token carries). The first sign-in
+creates the account. A Google sign-in with the same verified email as an existing account is linked
+to that account, so older email accounts keep their ledger.
+
+Email and password remain only for accounts made before that (and for reviewer accounts); new email
+sign-ups are off. A forgotten password is reset with a 6-digit code typed into the app
+(`/auth/v1/recover`, `/auth/v1/verify`, `PUT /auth/v1/user`), so the email must contain the code.
+
+In the hosted project, set this once in the dashboard (`config.toml` only covers the local stack):
+
+1. *Authentication → Sign In / Providers → Google*: enable, and put the OAuth **web** client id in
+   *Client IDs* (comma-separated if there are several). The client secret is only needed for browser
+   sign-in, which the app doesn't use. Leave *Skip nonce check* off.
+2. *Authentication → Sign In / Providers*: *Allow new users to sign up* on;
+   under *Email*, *Allow new users to sign up* off; email OTP length 6, minimum password length 8.
+3. *Authentication → Emails → Templates*: paste `templates/recovery.html` into *Reset password*.
+   The built-in email sender is enough for the few password resets of older accounts.
+
+Creating the OAuth clients in Google Cloud is described in the main README
+([Sign in with Google](../README.md#sign-in-with-google)).
+
+Uploading needs a `cloud_subscriptions` row (see the sync rules above). Rows are written only with
+the service role:
+
+- **Google Play subscriptions** by the Edge Functions below.
+- **Complimentary access** (no end date) by hand, e.g. for family or reviewers:
+  ```sql
+  insert into public.cloud_subscriptions (user_id, source, state)
+  select id, 'complimentary', 'active' from auth.users where email = 'someone@example.com'
+  on conflict (user_id) do update set source = 'complimentary', state = 'active', expires_at = null;
+  ```
+  The migration gave every account that existed at the time complimentary access.
+
+### Edge Functions
+
+| Function | Called by | What it does |
+|---|---|---|
+| `play-verify` | the app, after a purchase and when it finds a purchase the server may not know | Reads the purchase from the Google Play Developer API, checks it was bought for this account (`obfuscatedExternalAccountId` = user id) and stores it. The app acknowledges the purchase only after this succeeds |
+| `play-notifications` | Google Play Real-time Developer Notifications (Pub/Sub push) | Re-reads the subscription on every renewal, cancellation, hold, expiry or refund and updates `expires_at` |
+| `delete-account` | the app (*Cloud backup & sync → Delete account*) | Deletes the user; their rows go with it (`on delete cascade`) |
+
+Secrets (*Edge Functions → Secrets*, or `supabase secrets set NAME=value`):
+
+| Secret | Value |
+|---|---|
+| `GOOGLE_PLAY_SERVICE_ACCOUNT` | The JSON key of a Google Cloud service account invited in Play Console → *Users and permissions* with *View financial data* and *Manage orders and subscriptions* for the app |
+| `PLAY_NOTIFICATIONS_SECRET` | A long random string, also put in the Pub/Sub push URL: `https://<project-ref>.supabase.co/functions/v1/play-notifications?secret=<it>` |
+| `PLAY_PACKAGE_NAME` | Optional; defaults to `com.soloit.doubleentry` |
+
+Deploy with `supabase functions deploy` (the GitHub workflow does this on push to `main`).
+`play-notifications` is deployed without JWT verification (`config.toml`), because Pub/Sub can't
+send a Supabase token; it checks the secret instead. The Play Console side is in
+[`docs/google-play.md`](../docs/google-play.md#paid-cloud-backup).
 
 ## Users
 
-Sign-ups are meant to stay disabled; create users in the dashboard. Several users can share one
-project. Some ids are derived only from content (default-plan accounts from the account number,
+Several users share one project. Some ids are derived only from content (default-plan accounts from the account number,
 settings rows from the key, depreciation and recurring postings from the asset/rule and month), so
 every user has rows with the same ids. That is why each table is keyed by `(user_id, id)` and every
 reference includes `user_id`: one user can never collide with, or point at, another user's rows.

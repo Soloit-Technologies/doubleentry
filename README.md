@@ -20,7 +20,9 @@ Supabase backend.
   Month, year-to-date or year, with comparison against the previous period or the same period last year.
 - **Assets.** Automatic monthly depreciation write-offs, with a repair tool for missing ones.
 - **Invoices.** Booking, due-date tracking, payment in full or in instalments, and an optional daily reminder notification.
-- **Cloud sync.** Offline-first local database, last-edit-wins sync with Supabase, realtime updates between devices.
+- **Cloud backup & sync.** Offline-first local database, last-edit-wins sync with Supabase, realtime updates between
+  devices. Accounts are created in the app; uploading is a Google Play subscription (see
+  [`docs/google-play.md`](docs/google-play.md#paid-cloud-backup)), downloading a backup is always free.
 - **Backups.** JSON export/import, compatible with backups made by the MAUI app. CSV export of transactions and balances.
 - Light/dark theme, optional Material You (wallpaper) colors, optional app lock (screen lock or biometrics),
   a net-worth home-screen widget and launcher shortcuts.
@@ -38,7 +40,7 @@ Build types:
 | Build | Application id | Name on device | Notes |
 |---|---|---|---|
 | debug | `com.soloit.doubleentry.dev` | DoubleEntry Dev | Installs next to the release app. Cloud sync on. Allows plain HTTP to a local Supabase stack. |
-| release | `com.soloit.doubleentry` | DoubleEntry | The Google Play build: minified with R8, cloud sync and the Supabase settings left out. |
+| release | `com.soloit.doubleentry` | DoubleEntry | The Google Play build: minified with R8. Cloud backup and the Supabase settings are left out unless `cloudSync.enabled=true` (or `CLOUD_SYNC_ENABLED=true`). |
 
 To sign release builds, create `keystore.properties` in the project root (git-ignored):
 
@@ -70,6 +72,31 @@ environment variables.
 
 Everything on the server (tables, row-level security, triggers, realtime) lives in
 [`supabase/`](supabase/README.md) and can be deployed from the repository.
+
+### Sign in with Google
+
+Accounts are created with Sign in with Google (Credential Manager, no browser). Add the OAuth web
+client id next to the Supabase settings (CI: `GOOGLE_WEB_CLIENT_ID`):
+
+```properties
+google.webClientId=<id>.apps.googleusercontent.com
+```
+
+Without it the app shows only email sign-in for existing accounts. To create the ids, in the Google
+Cloud project linked to the Play Console app (*APIs & Services*):
+
+1. *OAuth consent screen*: app name *DoubleEntry*, user type *External*, scopes `openid`, `email`
+   and `profile` only (no verification needed for these), then publish it.
+2. *Credentials → Create credentials → OAuth client ID → Web application*. Its id is
+   `google.webClientId` and goes into Supabase (*Authentication → Sign In / Providers → Google*).
+3. One *OAuth client ID → Android* per signing key, each with the package name and the key's SHA-1.
+   Google only checks that one exists; the app never uses these ids:
+
+   | Package | SHA-1 of |
+   |---|---|
+   | `com.soloit.doubleentry.dev` | the debug key: `keytool -list -v -keystore ~/.android/debug.keystore -storepass android` |
+   | `com.soloit.doubleentry` | the upload key: `keytool -list -v -keystore upload-key.jks` |
+   | `com.soloit.doubleentry` | the app signing key: Play Console → *Test and release → App integrity* (installs from Play are signed with it) |
 
 ## Moving from the MAUI app
 

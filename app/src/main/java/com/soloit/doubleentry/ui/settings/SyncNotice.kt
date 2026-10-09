@@ -33,6 +33,7 @@ fun changesText(count: Int): String = if (count == 1) "1 change" else "$count ch
 fun SyncStatus.attentionText(): String? = when (attention) {
     SyncAttention.SignInAgain -> "Sign in again to keep syncing" +
         if (pendingChanges > 0) " · ${changesText(pendingChanges)} only on this device" else ""
+    SyncAttention.NotBackedUp -> "Cloud backup isn't active · ${changesText(pendingChanges)} only on this device"
     SyncAttention.Failing -> "Sync isn't working · ${changesText(pendingChanges)} not uploaded yet"
     SyncAttention.Offline -> "Offline · ${changesText(pendingChanges)} will upload when you're back online"
     SyncAttention.Paused -> "Sync is paused · ${changesText(pendingChanges)} only on this device"
@@ -56,6 +57,7 @@ fun SyncBanner(status: SyncStatus, onOpen: () -> Unit, onDismissReplaced: () -> 
         Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val icon = when (attention) {
                 SyncAttention.SignInAgain -> Icons.AutoMirrored.Rounded.Login
+                SyncAttention.NotBackedUp -> Icons.Rounded.CloudOff
                 SyncAttention.Failing -> Icons.Rounded.ErrorOutline
                 SyncAttention.Offline -> Icons.Rounded.CloudOff
                 SyncAttention.Paused -> Icons.Rounded.PauseCircleOutline

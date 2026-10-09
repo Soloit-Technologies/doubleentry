@@ -20,14 +20,22 @@ fun config(key: String, env: String): String =
 
 val supabaseUrl = config("supabase.url", "SUPABASE_URL")
 val supabaseAnonKey = config("supabase.anonKey", "SUPABASE_ANON_KEY")
+// The OAuth "Web application" client id that Sign in with Google issues tokens for (README → "Sign in with Google").
+val googleWebClientId = config("google.webClientId", "GOOGLE_WEB_CLIENT_ID")
 // Cloud sync is on in debug builds and off in release (Google Play) builds unless set explicitly.
 val cloudSyncSetting = config("cloudSync.enabled", "CLOUD_SYNC_ENABLED").ifEmpty { null }?.toBoolean()
 
 // Builds without cloud sync don't embed the Supabase project at all.
 fun VariantDimension.cloudSync(default: Boolean) {
     val enabled = cloudSyncSetting ?: default
+    // A store build with cloud backup but no project would show "not set up" to customers.
+    check(!enabled || default || (supabaseUrl.isNotEmpty() && supabaseAnonKey.isNotEmpty() && googleWebClientId.isNotEmpty())) {
+        "cloudSync.enabled is true, but supabase.url / supabase.anonKey / google.webClientId " +
+            "(SUPABASE_URL / SUPABASE_ANON_KEY / GOOGLE_WEB_CLIENT_ID) are missing."
+    }
     buildConfigField("String", "SUPABASE_URL", "\"${if (enabled) supabaseUrl else ""}\"")
     buildConfigField("String", "SUPABASE_ANON_KEY", "\"${if (enabled) supabaseAnonKey else ""}\"")
+    buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${if (enabled) googleWebClientId else ""}\"")
     buildConfigField("boolean", "CLOUD_SYNC_FEATURE", enabled.toString())
 }
 
@@ -141,6 +149,10 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.fragment)
+    implementation(libs.google.play.billing)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.google.identity.googleid)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

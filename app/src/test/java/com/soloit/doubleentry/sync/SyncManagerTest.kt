@@ -324,4 +324,69 @@ class SyncManagerTest {
         b.sync.syncNow()
         assertEquals("Late", b.t.db.transactions().byId("00000000-0000-4000-8000-000000000001")?.title)
     }
+
+    @Test
+    fun withoutASubscriptionChangesStayLocalButTheCloudCopyStillRestores() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Backed up")
+        a.sync.signIn("me@example.com", "pw")
+        server.withoutAccess += server.userIdFor("me@example.com")
+
+        // A new phone gets everything back, even after the subscription ended.
+        val b = Device("b")
+        assertNull(b.sync.signIn("me@example.com", "pw"))
+        assertEquals(setOf("Backed up"), b.titles())
+        assertEquals(false, b.sync.status.value.access?.active)
+        assertTrue(b.sync.status.value.notBackedUp)
+
+        // New changes stay on the device, without an error.
+        val accounts = b.t.ledger.getAccounts()
+        b.t.post(day, "Not yet", accounts.first { it.number == 5010 }, accounts.first { it.number == 1910 }, 50_00)
+        b.sync.syncNow()
+        assertNull(b.sync.status.value.lastError)
+        assertEquals(setOf("Backed up"), cloudTitles())
+
+        // Subscribing uploads them.
+        server.withoutAccess.clear()
+        b.sync.syncNow()
+        assertEquals(true, b.sync.status.value.access?.active)
+        assertEquals(setOf("Backed up", "Not yet"), cloudTitles())
+    }
+
+    @Test
+    fun aLedgerWaitingToReplaceTheCloudIsNotMergedWithItWithoutASubscription() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Cloud ledger")
+        a.sync.signIn("me@example.com", "pw")
+        server.withoutAccess += server.userIdFor("me@example.com")
+        val b = Device("b")
+        b.ledgerWithOneTransaction("Device ledger")
+
+        assertTrue(b.sync.signIn("me@example.com", "pw") is SignInQuestion.TwoLedgers)
+        b.sync.completeSignIn(SignInChoice.UseThisDevice)
+        assertEquals(setOf("Device ledger"), b.titles())
+        assertEquals(setOf("Cloud ledger"), cloudTitles())
+
+        server.withoutAccess.clear()
+        b.sync.syncNow()
+        assertEquals(setOf("Device ledger"), b.titles())
+        assertEquals(setOf("Device ledger"), cloudTitles())
+    }
+
+    @Test
+    fun signingInWithGoogleReachesTheSameLedgerAsEmail() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("From email")
+        a.sync.signIn("me@example.com", "pw")
+
+        // Supabase links a Google identity with the same verified email to the existing account.
+        val b = Device("b")
+        assertNull(b.sync.signInWithGoogle("me@example.com", "nonce", "me@example.com"))
+        assertEquals(setOf("From email"), b.titles())
+        assertTrue(b.sync.status.value.signedInWithGoogle)
+        assertTrue(!a.sync.status.value.signedInWithGoogle)
+
+        b.sync.signOut()
+        assertTrue(!b.sync.status.value.signedInWithGoogle)
+    }
 }

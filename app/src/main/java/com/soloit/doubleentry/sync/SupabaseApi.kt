@@ -30,6 +30,20 @@ class OfflineException(cause: Throwable? = null) :
 /** The session can't be renewed: the user has to sign in again before anything syncs. */
 class SessionExpiredException(cause: Throwable? = null) : SyncException("Your session has expired. Please sign in again.", cause)
 
+/**
+ * The server refused an upload because the account has no active cloud backup subscription.
+ * Reading (and so restoring) what is already in the cloud still works.
+ */
+class CloudAccessRequiredException(cause: Throwable? = null) :
+    SyncException("Cloud backup isn't active for this account, so changes aren't uploaded.", cause)
+
+/** The Google Play purchase is already linked to a different DoubleEntry account. */
+class PurchaseOwnedElsewhereException(cause: Throwable? = null) :
+    SyncException("This Google Play subscription belongs to another DoubleEntry account. Sign in with that account to use it.", cause)
+
+/** HTTP 404: the endpoint (table, function) doesn't exist on this project. */
+class NotFoundException(message: String, cause: Throwable) : SyncException(message, cause)
+
 /** Thrown for HTTP 401 so the caller can refresh the session once and retry. */
 class UnauthorizedException(cause: Throwable) : IOException("Unauthorized", cause)
 
@@ -43,6 +57,22 @@ data class AuthTokenResponse(
 
 @Serializable
 data class AuthUser(val id: String? = null, val email: String? = null)
+
+/** One row of `rpc/cloud_access`: whether the signed-in user may upload, and why. */
+@Serializable
+data class CloudAccess(
+    val active: Boolean = false,
+    /** `google_play` or `complimentary`; null without any subscription. */
+    val source: String? = null,
+    @SerialName("base_plan_id") val basePlanId: String? = null,
+    /** Google's subscription state, lower case: active, in_grace_period, canceled, on_hold, expired, … */
+    val state: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("auto_renewing") val autoRenewing: Boolean = false,
+) {
+    val complimentary: Boolean get() = source == "complimentary"
+    val expiresAtMillis: Long? get() = expiresAt?.let { runCatching { parseTimestamp(it) / 1000 }.getOrNull() }
+}
 
 /**
  * Thin client for Supabase Auth (GoTrue) and the PostgREST data API. Every request the app sends
@@ -63,7 +93,7 @@ class SupabaseApi(
     private val json = Json { ignoreUnknownKeys = true }
     private val jsonMedia = "application/json".toMediaType()
 
-    enum class Operation { SignIn, Session, Sync }
+    enum class Operation { SignIn, GoogleSignIn, Session, Sync, Password, Code, Account, Purchase }
 
     /** `POST /auth/v1/token?grant_type=password` */
     suspend fun signIn(email: String, password: String): AuthTokenResponse {
@@ -76,6 +106,75 @@ class SupabaseApi(
         val body = buildJsonObject { put("refresh_token", refreshToken) }
         return auth("refresh_token", body.toString(), Operation.Session)
     }
+
+    /**
+     * `POST /auth/v1/token?grant_type=id_token` with a Google ID token: signs in, creating the
+     * account the first time. [nonce] is the raw nonce whose SHA-256 the token carries.
+     */
+    suspend fun signInWithGoogle(idToken: String, nonce: String): AuthTokenResponse {
+        val body = buildJsonObject { put("provider", "google"); put("id_token", idToken); put("nonce", nonce) }
+        return auth("id_token", body.toString(), Operation.GoogleSignIn)
+    }
+
+    /** `POST /auth/v1/verify` with the 6-digit password-reset code from an email; returns a session. */
+    suspend fun verifyRecoveryCode(email: String, code: String): AuthTokenResponse {
+        val body = buildJsonObject { put("type", "recovery"); put("email", email); put("token", code) }
+        return json.decodeFromString(AuthTokenResponse.serializer(), execute(authRequest("verify", body.toString()), Operation.Code))
+    }
+
+    /** `POST /auth/v1/recover`: emails a password-reset code (silently does nothing for unknown addresses). */
+    suspend fun requestPasswordReset(email: String) {
+        execute(authRequest("recover", buildJsonObject { put("email", email) }.toString()), Operation.Code)
+    }
+
+    /** `PUT /auth/v1/user`: sets a new password for the signed-in user. */
+    suspend fun updatePassword(password: String, accessToken: String) {
+        val request = Request.Builder()
+            .url("${config.baseUrl}/auth/v1/user")
+            .header("apikey", config.anonKey)
+            .header("Authorization", "Bearer $accessToken")
+            .put(buildJsonObject { put("password", password) }.toString().toRequestBody(jsonMedia))
+            .build()
+        execute(request, Operation.Password)
+    }
+
+    private fun authRequest(path: String, body: String) = Request.Builder()
+        .url("${config.baseUrl}/auth/v1/$path")
+        .header("apikey", config.anonKey)
+        .post(body.toRequestBody(jsonMedia))
+        .build()
+
+    /**
+     * `POST /rest/v1/rpc/cloud_access`: the signed-in user's backup subscription. A project without
+     * the function (from before paid backup) doesn't restrict uploads, and says so.
+     */
+    suspend fun cloudAccess(accessToken: String): CloudAccess {
+        val text = try {
+            execute(postJson("rest/v1/rpc/cloud_access", "{}", accessToken), Operation.Sync)
+        } catch (e: NotFoundException) {
+            return CloudAccess(active = true, source = "complimentary")
+        }
+        val rows = json.parseToJsonElement(text) as JsonArray
+        return rows.firstOrNull()?.let { json.decodeFromJsonElement(CloudAccess.serializer(), it) } ?: CloudAccess()
+    }
+
+    /** `POST /functions/v1/play-verify`: the server checks a Google Play purchase with Google and records it. */
+    suspend fun verifyPurchase(purchaseToken: String, accessToken: String) {
+        val body = buildJsonObject { put("purchaseToken", purchaseToken) }.toString()
+        execute(postJson("functions/v1/play-verify", body, accessToken), Operation.Purchase)
+    }
+
+    /** `POST /functions/v1/delete-account`: deletes the account and everything it stored in the cloud. */
+    suspend fun deleteAccount(accessToken: String) {
+        execute(postJson("functions/v1/delete-account", "{}", accessToken), Operation.Account)
+    }
+
+    private fun postJson(path: String, body: String, accessToken: String) = Request.Builder()
+        .url("${config.baseUrl}/$path")
+        .header("apikey", config.anonKey)
+        .header("Authorization", "Bearer $accessToken")
+        .post(body.toRequestBody(jsonMedia))
+        .build()
 
     private suspend fun auth(grantType: String, body: String, op: Operation): AuthTokenResponse {
         val request = Request.Builder()
@@ -191,9 +290,14 @@ class SupabaseApi(
             val body = it.body.string()
             if (it.isSuccessful) return body
             val technical = IOException("${request.method} ${request.url.encodedPath}: HTTP ${it.code}. $body")
-            if (it.code == 401 && op == Operation.Sync) throw UnauthorizedException(technical)
+            if (it.code == 401 && op in AUTHORIZED) throw UnauthorizedException(technical)
             if (op == Operation.Session && it.code in 400..499 && it.code != 408 && it.code != 429) throw SessionExpiredException(technical)
-            throw SyncException(friendlyMessage(op, it.code), technical)
+            // Row-level security (42501) refuses uploads without an active subscription.
+            if (it.code == 403 && op == Operation.Sync && "42501" in body) throw CloudAccessRequiredException(technical)
+            if (it.code == 409 && op == Operation.Purchase) throw PurchaseOwnedElsewhereException(technical)
+            val code = errorCode(body)
+            if (it.code == 404) throw NotFoundException(friendlyMessage(op, it.code, code), technical)
+            throw SyncException(friendlyMessage(op, it.code, code), technical)
         }
     }
 
@@ -205,11 +309,30 @@ class SupabaseApi(
         }
     }
 
+    /** GoTrue's machine-readable `error_code`, e.g. `weak_password`. */
+    private fun errorCode(body: String): String? = runCatching {
+        (json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject)?.get("error_code")
+            ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+    }.getOrNull()
+
     companion object {
-        fun friendlyMessage(op: Operation, status: Int): String = when {
+        private val AUTHORIZED = setOf(Operation.Sync, Operation.Account, Operation.Purchase)
+
+        fun friendlyMessage(op: Operation, status: Int, errorCode: String? = null): String = when {
+            errorCode == "weak_password" -> "Choose a longer password: at least 8 characters."
+            errorCode == "email_address_invalid" || errorCode == "validation_failed" -> "Please check the email address."
+            errorCode == "otp_expired" -> "That code is wrong or has expired. Check the latest email, or send a new code."
+            errorCode == "over_email_send_rate_limit" -> "Too many emails were sent just now. Please wait a minute and try again."
+            errorCode == "signup_disabled" -> "New accounts can't be created right now."
+            errorCode == "provider_disabled" -> "Sign in with Google isn't set up for this cloud service yet."
             status >= 500 -> "The cloud service is temporarily unavailable. Please try again in a few minutes."
             status == 408 || status == 429 -> "The cloud service is busy right now. Please wait a moment and try again."
             op == Operation.SignIn -> "We couldn't sign you in. Please check your email and password, then try again."
+            op == Operation.GoogleSignIn -> "We couldn't sign you in with Google. Please try again."
+            op == Operation.Password -> "We couldn't save the new password. Please try again."
+            op == Operation.Code -> "That code didn't work. Check the latest email and try again."
+            op == Operation.Account -> "We couldn't delete your account right now. Please try again later."
+            op == Operation.Purchase -> "We couldn't confirm your purchase yet. It will be checked again the next time the app opens."
             op == Operation.Session -> "Your session has expired. Please sign in again."
             else -> "We couldn't sync your data right now. Please try again later."
         }

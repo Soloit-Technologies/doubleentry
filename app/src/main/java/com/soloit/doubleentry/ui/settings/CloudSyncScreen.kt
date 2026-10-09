@@ -1,5 +1,6 @@
 package com.soloit.doubleentry.ui.settings
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,7 +21,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Cloud
-import androidx.compose.material.icons.rounded.CloudSync
+import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.PhonelinkSetup
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -47,6 +50,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -74,23 +78,27 @@ fun CloudSyncScreen(onBack: () -> Unit) {
     val status by sync.status.collectAsStateWithLifecycle()
     // App-wide scope: a sign-in or sync keeps running if the user leaves this screen.
     val scope = container.appScope
-    var email by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmSignOut by remember { mutableStateOf(false) }
     var question by remember { mutableStateOf<SignInQuestion?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
-    fun signIn(again: Boolean) {
-        if ((!again && email.isBlank()) || password.isBlank()) {
-            error = if (again) "Enter your password." else "Email and password are required."
+    val context = LocalActivity.current ?: LocalContext.current
+
+    /** Renews an expired session, with Google or the password; first sign-ins go through [AccountForms]. */
+    fun signInAgain() {
+        val google = status.signedInWithGoogle
+        if (!google && password.isBlank()) {
+            error = "Enter your password."
             return
         }
         busy = true
         error = null
         scope.launch {
             try {
-                if (again) sync.signInAgain(password) else question = sync.signIn(email, password)
+                if (google) signInWithGoogle(context, sync, sync.googleClientId) else sync.signInAgain(password)
                 password = ""
             } catch (e: CancellationException) {
                 throw e
@@ -105,7 +113,7 @@ fun CloudSyncScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Cloud sync") },
+                title = { Text("Cloud backup & sync") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") } },
             )
         },
@@ -116,12 +124,13 @@ fun CloudSyncScreen(onBack: () -> Unit) {
         ) {
             SectionCard(contentPadding = PaddingValues(20.dp), containerColor = MaterialTheme.colorScheme.primaryContainer) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconAvatar(Icons.Rounded.CloudSync, MaterialTheme.colorScheme.onPrimaryContainer, size = 48)
+                    IconAvatar(Icons.Rounded.CloudDone, MaterialTheme.colorScheme.onPrimaryContainer, size = 48)
                     Spacer(Modifier.width(16.dp))
                     Column {
-                        Text("Sync across devices", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("Your books, safe in the cloud", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text(
-                            "Use the same ledger on your phone, tablet and other devices. A copy is kept in the cloud.",
+                            "Every change is backed up to the server as you make it. " +
+                                "If your phone is lost, stolen or broken, sign in on the new one and your ledger is back.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
@@ -129,28 +138,12 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                 }
             }
 
+            if (status.configured && !status.isSignedIn) BenefitsCard()
+
             if (!status.configured) {
                 NotConfiguredCard()
             } else if (!status.isSignedIn) {
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Email") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                PasswordField(password, { password = it }, onDone = { signIn(again = false) })
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Button(onClick = { signIn(again = false) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                    else Text("Sign in")
-                }
-                Text(
-                    "Sign in with the email and password of your cloud account.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                AccountForms(sync, scope, sync.googleClientId, onQuestion = { question = it })
             } else {
                 Column {
                     GroupedItem(0, 2) { SettingRow(Icons.Rounded.Cloud, "Signed in", status.signedInEmail) }
@@ -158,29 +151,37 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                         SettingRow(
                             Icons.Rounded.Sync,
                             "Automatic sync",
-                            if (status.enabled) "On — every change is uploaded right away" else "Paused — new changes stay on this device until you turn it back on",
+                            if (status.enabled) "On — every change is backed up right away" else "Paused — new changes are only on this device and aren't backed up",
                             trailing = { Switch(checked = status.enabled, onCheckedChange = sync::setEnabled) },
                         )
                     }
                 }
+
+                BackupPlanCard(status.access, container.billing)
 
                 if (status.needsSignIn) {
                     SectionCard(contentPadding = PaddingValues(20.dp), containerColor = MaterialTheme.colorScheme.errorContainer) {
                         Text("Sign in again", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Your session has ended, so nothing is syncing. Enter the password for ${status.signedInEmail} to continue." +
+                            "Your session has ended, so nothing is syncing. " +
+                                (if (status.signedInWithGoogle) "Sign in with Google as ${status.signedInEmail} to continue." else "Enter the password for ${status.signedInEmail} to continue.") +
                                 if (status.pendingChanges > 0) " ${changesText(status.pendingChanges)} on this device will then be uploaded." else "",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
                         Spacer(Modifier.height(12.dp))
-                        PasswordField(password, { password = it }, onDone = { signIn(again = true) })
-                        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
-                        Spacer(Modifier.height(12.dp))
-                        Button(onClick = { signIn(again = true) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                            else Text("Sign in again")
+                        if (status.signedInWithGoogle) {
+                            error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
+                            GoogleButton(busy, label = "Sign in with Google again", onClick = ::signInAgain)
+                        } else {
+                            PasswordField(password, { password = it }, onDone = ::signInAgain)
+                            error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = ::signInAgain, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                else Text("Sign in again")
+                            }
                         }
                     }
                 }
@@ -200,7 +201,11 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                 }
 
                 val finance = AppTheme.finance
-                val waiting = if (status.pendingChanges > 0) "${changesText(status.pendingChanges)} waiting to upload" else "Everything is uploaded"
+                val waiting = when {
+                    status.pendingChanges == 0 && !status.notBackedUp -> "Everything is backed up"
+                    status.pendingChanges == 0 -> "No new changes"
+                    else -> "${changesText(status.pendingChanges)} not backed up yet"
+                }
                 val statusText = when {
                     status.isSyncing -> "Syncing…"
                     status.lastError != null -> "${status.lastError} $waiting."
@@ -224,6 +229,10 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                     Spacer(Modifier.width(8.dp))
                     Text("Sign out")
                 }
+                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Text("Delete account", color = MaterialTheme.colorScheme.error)
+                }
+                error?.takeIf { !status.needsSignIn }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 HowSyncWorksCard()
             }
         }
@@ -254,10 +263,32 @@ fun CloudSyncScreen(onBack: () -> Unit) {
         )
     }
 
+    if (confirmDelete) {
+        val access = status.access
+        DeleteAccountDialog(
+            email = status.signedInEmail,
+            paidThroughPlay = access?.source == "google_play" && access.active && access.autoRenewing,
+            onConfirm = {
+                confirmDelete = false
+                error = null
+                scope.launch {
+                    try {
+                        sync.deleteAccount()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        error = com.soloit.doubleentry.sync.SupabaseApi.userMessage(e)
+                    }
+                }
+            },
+            onDismiss = { confirmDelete = false },
+        )
+    }
+
     if (confirmSignOut) {
         ConfirmDialog(
             title = "Sign out?",
-            message = "Cloud sync will stop. The data stays on this device." +
+            message = "Backup and sync will stop. The data stays on this device, and your cloud copy is kept." +
                 if (status.pendingChanges > 0) {
                     " ${changesText(status.pendingChanges)} haven't been uploaded yet; you'll be asked about them when you sign in again."
                 } else {
@@ -275,12 +306,12 @@ private fun com.soloit.doubleentry.sync.SyncStatus.attentionTextForReplaced(): S
         (replacedAtMillis?.let { " during the sync on ${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))}" } ?: "") + "."
 
 @Composable
-private fun PasswordField(value: String, onValueChange: (String) -> Unit, onDone: () -> Unit) {
+internal fun PasswordField(value: String, onValueChange: (String) -> Unit, onDone: () -> Unit, label: String = "Password") {
     var showPassword by remember { mutableStateOf(false) }
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text("Password") },
+        label = { Text(label) },
         singleLine = true,
         visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
         trailingIcon = {
@@ -355,13 +386,35 @@ private fun SignInQuestionDialog(question: SignInQuestion, onChoose: (SignInChoi
     )
 }
 
+/** What signing in gets you, backup first: losing the phone is a stronger reason than a second device. */
+@Composable
+private fun BenefitsCard() {
+    SectionCard(contentPadding = PaddingValues(20.dp)) {
+        listOf(
+            Triple(Icons.Rounded.CloudDone, "Automatic backup", "No files to remember to export. Your ledger is copied to the server as you work."),
+            Triple(Icons.Rounded.PhonelinkSetup, "Restore on a new phone", "Lost, broken or upgraded phone? Sign in and everything is back: accounts, transactions, invoices and assets."),
+            Triple(Icons.Rounded.Devices, "Every device up to date", "Use the same ledger on your phone and tablet. Changes show up on the others right away."),
+        ).forEachIndexed { i, (icon, title, text) ->
+            Row(Modifier.padding(top = if (i == 0) 0.dp else 16.dp)) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
 /** Sets expectations in plain words, including what happens when two devices edit the same item. */
 @Composable
 private fun HowSyncWorksCard() {
     SectionCard(contentPadding = PaddingValues(20.dp)) {
         Text("How sync works", style = MaterialTheme.typography.titleSmall)
         listOf(
-            "Every change is saved on this device first and uploaded when there's a connection. Changes made offline upload later.",
+            "Every change is saved on this device first and backed up to the server when there's a connection. Changes made offline upload later.",
+            "On a new or reset phone, sign in with the same account to download your whole ledger.",
             "Your other devices pick up changes when they're opened, and right away while they're open.",
             "If the same item is changed on two devices before they've synced, only the most recent change is kept, " +
                 "and a transaction is kept whole, with its own lines. " +
