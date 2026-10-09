@@ -394,8 +394,14 @@ fun AccountLedgerScreen(
     message?.let { MessageDialog("Something went wrong", it) { vm.message.value = null } }
 }
 
-/** CSV/TSV exports; banks and browsers label them inconsistently, so any text or spreadsheet-like type. */
-private val STATEMENT_TYPES = arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "application/octet-stream")
+/** CSV/TSV and .xlsx exports; banks and browsers label them inconsistently, so any text or spreadsheet-like type. */
+private val STATEMENT_TYPES = arrayOf(
+    "text/*",
+    "application/csv",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/octet-stream",
+)
 
 /** Shows whether the account still matches the statement it was reconciled against. */
 @Composable

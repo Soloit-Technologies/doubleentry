@@ -267,7 +267,12 @@ class StatementImportViewModel(
             }
             out.toByteArray()
         } ?: throw LedgerException("The selected file could not be opened.")
-        val table = BankStatement.table(BankStatement.decode(bytes))
+        val table = try {
+            BankStatement.table(bytes)
+        } catch (e: Exception) {
+            if (e is LedgerException) throw e
+            throw LedgerException("The file could not be read as a CSV or Excel (.xlsx) file.")
+        }
         if (table.rows.isEmpty()) throw LedgerException("The file has no rows to import.")
         val name = runCatching {
             resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
