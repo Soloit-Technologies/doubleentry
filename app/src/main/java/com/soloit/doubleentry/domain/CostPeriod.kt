@@ -175,8 +175,8 @@ object Periodization {
 }
 
 /**
- * Interim accounts for [Periodization], by account number (like the invoice settings). Unset ones
- * fall back to the default chart of accounts and are created when first needed.
+ * Interim accounts for [Periodization], by account number (like the invoice settings). They have
+ * no defaults: lines can only be spread over months whose interim account has been chosen.
  */
 data class CostPeriodAccounts(
     val prepaidExpenses: Int? = null,
@@ -189,15 +189,5 @@ data class CostPeriodAccounts(
         Periodization.Interim.AccruedExpenses -> accruedExpenses
         Periodization.Interim.AccruedIncome -> accruedIncome
         Periodization.Interim.DeferredIncome -> deferredIncome
-    }
-
-    companion object {
-        /** The default-plan account used when [numberFor] is unset: number, name and type. */
-        fun default(interim: Periodization.Interim): DefaultAccountPlan.Entry = when (interim) {
-            Periodization.Interim.PrepaidExpenses -> DefaultAccountPlan.Entry(1700, "Prepaid Expenses", AccountType.Asset)
-            Periodization.Interim.AccruedExpenses -> DefaultAccountPlan.Entry(2420, "Accrued Expenses (not yet billed)", AccountType.Liability)
-            Periodization.Interim.AccruedIncome -> DefaultAccountPlan.Entry(1710, "Accrued Income (earned, not yet received)", AccountType.Asset)
-            Periodization.Interim.DeferredIncome -> DefaultAccountPlan.Entry(2490, "Income Received in Advance", AccountType.Liability)
-        }
     }
 }

@@ -1,5 +1,6 @@
 package com.soloit.doubleentry.data
 
+import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.CostPeriod
 import com.soloit.doubleentry.domain.CostPeriodAccounts
@@ -32,11 +33,19 @@ class CostPeriodsTest {
     @After
     fun tearDown() = t.close()
 
-    private suspend fun accounts() = Triple(
-        t.account(1930, "Checking", AccountType.Asset),
-        t.account(8510, "Home Insurance", AccountType.Expense),
-        t.account(3110, "Salary", AccountType.Revenue),
-    )
+    /** The accounts most tests use; [interims] adds prepaid and accrued expense accounts and chooses them in settings. */
+    private suspend fun accounts(interims: Boolean = true): Triple<Account, Account, Account> {
+        if (interims) {
+            t.account(1700, "Prepaid Expenses", AccountType.Asset)
+            t.account(2420, "Accrued Expenses", AccountType.Liability)
+            t.settings.saveCostPeriodAccounts(CostPeriodAccounts(prepaidExpenses = 1700, accruedExpenses = 2420))
+        }
+        return Triple(
+            t.account(1930, "Checking", AccountType.Asset),
+            t.account(8510, "Home Insurance", AccountType.Expense),
+            t.account(3110, "Salary", AccountType.Revenue),
+        )
+    }
 
     private fun insuranceDraft(bankId: String, expenseId: String, date: LocalDate = paid, period: CostPeriod? = insurance) =
         TransactionDraft(date, "Insurance", "", listOf(DraftLine(expenseId, 620_00, EntryType.Debit, period = period), DraftLine(bankId, 620_00, EntryType.Credit)))
@@ -55,7 +64,7 @@ class CostPeriodsTest {
         assertEquals(150_00L, expenseIn(YearMonth.of(2026, 12), expense.id))
         assertEquals(-620_00L, t.ledger.getBalances(paid)[bank.id])
 
-        // The prepaid account was created from the default plan and is empty once the period is over.
+        // The prepaid account is empty once the period is over.
         val prepaid = t.ledger.getAccounts().single { it.number == 1700 }
         assertEquals(620_00L, t.ledger.getBalances(paid)[prepaid.id])
         assertEquals(0L, t.ledger.getBalances(LocalDate.of(2026, 12, 31))[prepaid.id])
@@ -85,7 +94,7 @@ class CostPeriodsTest {
 
     @Test
     fun configuredInterimAccountsAreUsed() = runBlocking<Unit> {
-        val (bank, expense, _) = accounts()
+        val (bank, expense, _) = accounts(interims = false)
         val mine = t.account(1790, "My prepaid", AccountType.Asset)
         t.settings.saveCostPeriodAccounts(CostPeriodAccounts(prepaidExpenses = 1790))
         t.ledger.post(insuranceDraft(bank.id, expense.id))
@@ -94,6 +103,20 @@ class CostPeriodsTest {
 
         t.settings.saveCostPeriodAccounts(CostPeriodAccounts(prepaidExpenses = 1799))
         assertThrows(LedgerException::class.java) { runBlocking { t.ledger.post(insuranceDraft(bank.id, expense.id)) } }
+    }
+
+    @Test
+    fun interimAccountsMustBeChosen() = runBlocking<Unit> {
+        val (bank, expense, _) = accounts(interims = false)
+        // Accounts with the usual numbers aren't used until they are chosen.
+        t.account(1700, "Prepaid Expenses", AccountType.Asset)
+        // Paid in November: October is accrued and December prepaid, so both accounts are needed.
+        val error = assertThrows(LedgerException::class.java) {
+            runBlocking { t.ledger.post(insuranceDraft(bank.id, expense.id, date = LocalDate.of(2026, 11, 3))) }
+        }
+        assertEquals("Choose accounts for prepaid expenses and accrued expenses in Settings > Cost periods.", error.message)
+        assertTrue(t.ledger.getAccounts().none { it.number == 2420 })
+        assertEquals(0, t.liveTransactionCount())
     }
 
     @Test

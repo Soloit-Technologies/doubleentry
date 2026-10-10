@@ -1,13 +1,10 @@
 package com.soloit.doubleentry.data
 
-import com.soloit.doubleentry.data.local.AccountEntity
 import com.soloit.doubleentry.data.local.AppDatabase
 import com.soloit.doubleentry.data.local.EntryEntity
 import com.soloit.doubleentry.data.local.TransactionEntity
-import com.soloit.doubleentry.data.local.nowMicros
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.CostPeriod
-import com.soloit.doubleentry.domain.CostPeriodAccounts
 import com.soloit.doubleentry.domain.DeterministicIds
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
@@ -15,7 +12,6 @@ import com.soloit.doubleentry.domain.LedgerException
 import com.soloit.doubleentry.domain.Periodization
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.domain.label
-import com.soloit.doubleentry.domain.newId
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -46,7 +42,7 @@ internal class CostPeriods(private val db: AppDatabase, private val settings: Se
     /** What saving a draft writes: the transaction's own lines, its postings and the record of the period lines. */
     class Plan(val sourceLines: List<DraftLine>, val postings: List<TransactionDraft>, val record: Record?)
 
-    /** Expands the period lines of [draft], creating default interim accounts when needed. */
+    /** Expands the period lines of [draft]; fails when an interim account it needs isn't set up. */
     suspend fun plan(id: String, draft: TransactionDraft): Plan {
         if (draft.lines.none { it.period != null }) return Plan(draft.lines, emptyList(), null)
         val types = db.accounts().byIds(draft.lines.map { it.accountId }.distinct())
@@ -58,8 +54,7 @@ internal class CostPeriods(private val db: AppDatabase, private val settings: Se
             val type = types[line.accountId] ?: throw LedgerException("One of the selected accounts no longer exists.")
             if (!Periodization.canHavePeriod(type)) throw LedgerException("Only expense and income lines can be spread over a period.")
         }
-        val accounts = settings.getCostPeriodAccounts()
-        val interims = Periodization.interimsNeeded(draft.lines, types, draft.date).associateWith { interimAccountId(it, accounts) }
+        val interims = interimAccountIds(Periodization.interimsNeeded(draft.lines, types, draft.date))
         val expansion = Periodization.expand(draft, types, interims)
 
         val postings = expansion.postings.map { (month, lines) ->
@@ -155,21 +150,34 @@ internal class CostPeriods(private val db: AppDatabase, private val settings: Se
             .mapTo(mutableSetOf()) { DeterministicIds.periodTransactionId(sourceId, it) }
 
     /**
-     * The live account for [interim]: the one chosen in settings, or else the default-plan
-     * account, created when the chart of accounts doesn't have it.
+     * The live account chosen in settings for each of [needed]. There are no defaults and interim
+     * accounts are never created here: when one isn't chosen the user is asked to choose it.
      */
-    private suspend fun interimAccountId(interim: Periodization.Interim, accounts: CostPeriodAccounts): String {
+    private suspend fun interimAccountIds(needed: Set<Periodization.Interim>): Map<Periodization.Interim, String> {
+        if (needed.isEmpty()) return emptyMap()
+        val accounts = settings.getCostPeriodAccounts()
+        val missing = needed.sorted().filter { accounts.numberFor(it) == null }
+        if (missing.isNotEmpty()) {
+            val names = missing.map { it.description }
+            val list = if (names.size == 1) names[0] else names.dropLast(1).joinToString(", ") + " and " + names.last()
+            val noun = if (names.size == 1) "an account" else "accounts"
+            throw LedgerException("Choose $noun for $list in Settings > Cost periods.")
+        }
         val live = db.accounts().live()
-        accounts.numberFor(interim)?.let { number ->
-            return live.firstOrNull { it.number == number }?.id
+        return needed.associateWith { interim ->
+            val number = accounts.numberFor(interim)!!
+            live.firstOrNull { it.number == number }?.id
                 ?: throw LedgerException("Account #$number, chosen for cost periods in Settings, no longer exists.")
         }
-        val default = CostPeriodAccounts.default(interim)
-        live.firstOrNull { it.number == default.number }?.let { return it.id }
-        val id = default.id.takeIf { db.accounts().byId(it) == null } ?: newId()
-        db.accounts().upsert(AccountEntity(id, default.number, default.name, default.type.ordinal, updatedAt = nowMicros()))
-        return id
     }
+
+    private val Periodization.Interim.description: String
+        get() = when (this) {
+            Periodization.Interim.PrepaidExpenses -> "prepaid expenses"
+            Periodization.Interim.AccruedExpenses -> "accrued expenses"
+            Periodization.Interim.AccruedIncome -> "accrued income"
+            Periodization.Interim.DeferredIncome -> "income received in advance"
+        }
 
     @Serializable
     internal data class Record(@SerialName("Lines") val lines: List<LineJson>)

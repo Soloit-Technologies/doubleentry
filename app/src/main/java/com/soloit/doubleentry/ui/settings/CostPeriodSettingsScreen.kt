@@ -51,13 +51,9 @@ data class CostPeriodSettingsUiState(
     val accounts: List<Account> = emptyList(),
     val chosen: CostPeriodAccounts = CostPeriodAccounts(),
 ) {
-    /** The chosen account, or the default-plan one that is used while none is chosen. */
-    fun accountFor(interim: Interim): Account? {
-        val number = chosen.numberFor(interim) ?: CostPeriodAccounts.default(interim).number
-        return accounts.firstOrNull { it.number == number }
-    }
-
-    fun isDefault(interim: Interim): Boolean = chosen.numberFor(interim) == null
+    /** The chosen account; null while none is chosen. */
+    fun accountFor(interim: Interim): Account? =
+        chosen.numberFor(interim)?.let { number -> accounts.firstOrNull { it.number == number } }
 }
 
 class CostPeriodSettingsViewModel(private val settings: SettingsRepository, ledger: LedgerRepository) : ViewModel() {
@@ -139,15 +135,11 @@ fun CostPeriodSettingsScreen(onBack: () -> Unit) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SectionHeader(interim.title)
                         Text(interim.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val default = CostPeriodAccounts.default(interim)
                         AccountSelector(
                             interim.title,
-                            "#${default.number} ${default.name} is created when first needed",
+                            "Needed to spread lines over this kind of period",
                             state.accountFor(interim),
                         ) { picking = interim }
-                        if (!state.isDefault(interim)) {
-                            TextButton(onClick = { vm.set(interim, null) }) { Text("Use default (#${default.number})") }
-                        }
                     }
                 }
             }
