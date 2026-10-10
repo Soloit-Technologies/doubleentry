@@ -72,6 +72,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 data class TransactionDetailUiState(
     val loading: Boolean = true,
@@ -133,6 +134,8 @@ fun TransactionDetailScreen(
     onRepeat: () -> Unit,
     onOpenRecurring: (String) -> Unit,
     onOpenTransaction: (String) -> Unit,
+    /** Opens an account's ledger at the month of this transaction's date. */
+    onOpenAccount: (String, LocalDate) -> Unit,
 ) {
     val vm = appViewModel { TransactionDetailViewModel(it.ledger, it.recurring, it.undo, transactionId) }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -216,7 +219,7 @@ fun TransactionDetailScreen(
                         Text(tx.description, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
-                EntriesCard(tx)
+                EntriesCard(tx, onOpenAccount = { onOpenAccount(it, tx.date) })
                 state.costPeriods?.let { CostPeriodsCard(it, state.accounts, onOpenTransaction) }
             }
         }
@@ -269,7 +272,7 @@ private fun CostPeriodsCard(summary: CostPeriodSummary, accounts: Map<String, Ac
 }
 
 @Composable
-internal fun EntriesCard(tx: Transaction) {
+internal fun EntriesCard(tx: Transaction, onOpenAccount: ((String) -> Unit)? = null) {
     Column {
         SectionHeader("Lines")
         SectionCard {
@@ -279,17 +282,25 @@ internal fun EntriesCard(tx: Transaction) {
                 Text("Credit", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(96.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
             }
             tx.entries.forEach { e ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .then(if (onOpenAccount != null) Modifier.clickable { onOpenAccount(e.account.id) } else Modifier)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Icon(e.account.type.icon(), null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 10.dp))
+                    // The name gets the full row width; the amounts share the second line with the account number
                     Column(Modifier.weight(1f)) {
-                        Text(e.account.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("#${e.account.number}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
-                        if (e.type == EntryType.Debit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
-                        if (e.type == EntryType.Credit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
+                        Text(e.account.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("#${e.account.number}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                            Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
+                                if (e.type == EntryType.Debit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
+                                if (e.type == EntryType.Credit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
                     }
                 }
             }
