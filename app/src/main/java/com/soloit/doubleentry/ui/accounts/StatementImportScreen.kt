@@ -141,8 +141,8 @@ data class NewRowUi(
 ) {
     val isBooked: Boolean get() = lines != null || invoice != null
 
-    /** Made in the booking editor (split or described), so a tap reopens the editor instead of the account picker. */
-    val isDetailed: Boolean get() = (lines?.size ?: 0) > 2 || description.isNotBlank()
+    /** Made in the booking editor (split, described or spread over a period), so a tap reopens the editor instead of the account picker. */
+    val isDetailed: Boolean get() = (lines?.size ?: 0) > 2 || description.isNotBlank() || lines.orEmpty().any { it.period != null }
 }
 
 data class StatementImportUiState(
@@ -267,7 +267,12 @@ class StatementImportViewModel(
             }
             out.toByteArray()
         } ?: throw LedgerException("The selected file could not be opened.")
-        val table = BankStatement.table(BankStatement.decode(bytes))
+        val table = try {
+            BankStatement.table(bytes)
+        } catch (e: Exception) {
+            if (e is LedgerException) throw e
+            throw LedgerException("The file could not be read as a CSV or Excel (.xlsx) file.")
+        }
         if (table.rows.isEmpty()) throw LedgerException("The file has no rows to import.")
         val name = runCatching {
             resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
@@ -335,11 +340,13 @@ class StatementImportViewModel(
 
     private fun counterLabel(lines: List<DraftLine>, accounts: Map<String, Account>): String {
         val names = lines.filter { it.accountId != accountId }.map { accounts[it.accountId]?.name ?: "Unknown account" }.distinct()
-        return when (names.size) {
+        val label = when (names.size) {
             0 -> "—"
             1 -> names[0]
             else -> "${names[0]} +${names.size - 1}"
         }
+        val period = lines.firstNotNullOfOrNull { it.period }
+        return if (period != null) "$label · ${period.label()}" else label
     }
 
     fun setColumns(value: StatementColumns) { columns.value = value }

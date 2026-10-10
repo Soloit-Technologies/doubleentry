@@ -29,11 +29,15 @@ import java.time.ZoneOffset
  * (user_id, id) like the primary key; and `PATCH`es filtered by `modified_at=lt.`. Like the
  * server triggers, a write older than the stored row (by `modified_at`) is refused, and every
  * other write stamps `updated_at`, each strictly later. A token from [signIn] sees only its
- * user's rows (like row-level security); the plain token "token" sees everything.
+ * user's rows (like row-level security); the plain token "token" sees everything. Uploads need
+ * cloud access ([withoutAccess] lists users who have none), read with `rpc/cloud_access`.
  */
 class FakePostgrest {
     private val tables = mutableMapOf<String, MutableMap<String, JsonObject>>()
     private var clock = 0L
+
+    /** Users without a backup subscription: their uploads are refused like row-level security does. */
+    val withoutAccess = mutableSetOf<String>()
 
     /** Number of upserted rows, per table. */
     val writes = mutableMapOf<String, Int>()
@@ -53,7 +57,10 @@ class FakePostgrest {
         tables.getOrPut(table) { linkedMapOf() }[key(row)] = row
     }
 
-    /** Password sign-in accepts anything; the user id is derived from the email. */
+    /**
+     * Password sign-in accepts anything; the user id is derived from the email. Google sign-in
+     * (`grant_type=id_token`) treats the ID token as the email of the Google account.
+     */
     fun userIdFor(email: String) = "user-" + email.substringBefore('@')
 
     val client: OkHttpClient = OkHttpClient.Builder().addInterceptor(Interceptor { chain -> handle(chain) }).build()
@@ -62,9 +69,16 @@ class FakePostgrest {
     private fun handle(chain: Interceptor.Chain): Response {
         val request = chain.request()
         if ("auth" in request.url.pathSegments) return respond(request, 200, signIn(request))
+        val user = request.header("Authorization")?.removePrefix("Bearer ")?.takeIf { it.startsWith("t-") }?.removePrefix("t-")
+        val allowed = user == null || user !in withoutAccess
+        if ("rpc" in request.url.pathSegments) {
+            return respond(request, 200, JsonArray(listOf(buildJsonObject { put("active", allowed); put("source", if (allowed) "complimentary" else null) })))
+        }
+        if (!allowed && request.method != "GET") {
+            return respond(request, 403, buildJsonObject { put("code", "42501"); put("message", "new row violates row-level security policy") })
+        }
         val table = request.url.pathSegments.last()
         val rows = tables.getOrPut(table) { linkedMapOf() }
-        val user = request.header("Authorization")?.removePrefix("Bearer ")?.takeIf { it.startsWith("t-") }?.removePrefix("t-")
         val visible = rows.values.filter { user == null || it["user_id"]?.jsonPrimitive?.content == user }
         val url = request.url
         val onlyLive = url.queryParameter("deleted_at") == "is.null"
@@ -133,12 +147,13 @@ class FakePostgrest {
 
     private fun signIn(request: okhttp3.Request): JsonObject {
         val sent = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonObject
-        val id = userIdFor(sent.getValue("email").jsonPrimitive.content)
+        val email = (sent["email"] ?: sent.getValue("id_token")).jsonPrimitive.content
+        val id = userIdFor(email)
         return buildJsonObject {
             put("access_token", "t-$id")
             put("refresh_token", "r-$id")
             put("expires_in", 3600)
-            put("user", buildJsonObject { put("id", id) })
+            put("user", buildJsonObject { put("id", id); put("email", email) })
         }
     }
 

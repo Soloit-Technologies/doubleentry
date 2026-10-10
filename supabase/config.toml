@@ -32,8 +32,30 @@ port = 54323
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:3000"
-# Personal app: create the user in the dashboard instead of allowing sign-ups.
-enable_signup = false
+# Accounts are created by Sign in with Google (the provider below); email sign-up stays off.
+enable_signup = true
+minimum_password_length = 8
 
 [auth.email]
+# Only accounts made before Sign in with Google use email and password. They can still reset a
+# forgotten password with a 6-digit code typed into the app ({{ .Token }} in the template).
 enable_signup = false
+otp_length = 6
+otp_expiry = 3600
+
+[auth.email.template.recovery]
+subject = "Reset your DoubleEntry password"
+content_path = "./supabase/templates/recovery.html"
+
+# Sign in with Google: the app sends a Google ID token (grant_type=id_token). client_id is the
+# OAuth web client id the tokens are issued for; the secret is only used by browser sign-in.
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+skip_nonce_check = false
+
+# Google Play's notifications come from Pub/Sub, which can't send a Supabase JWT; the function
+# checks a shared secret instead (see functions/play-notifications).
+[functions.play-notifications]
+verify_jwt = false

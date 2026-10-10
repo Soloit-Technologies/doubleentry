@@ -61,7 +61,7 @@ data class StatementRead(
 )
 
 /**
- * Reads CSV/TSV account exports from banks. They disagree on nearly everything (delimiter,
+ * Reads CSV/TSV and Excel (.xlsx) account exports from banks. They disagree on nearly everything (delimiter,
  * encoding, header names and language, date and number formats, preamble lines), so the layout
  * is detected from the content; the user can correct the columns before importing.
  */
@@ -86,9 +86,15 @@ object BankStatement {
         }
     }
 
+    /** Reads a statement file: an Excel workbook's first sheet, or CSV/TSV text in any encoding [decode] knows. */
+    fun table(bytes: ByteArray): StatementTable =
+        if (Xlsx.isXlsx(bytes)) table(Xlsx.records(bytes)) else table(decode(bytes))
+
     /** Splits [text] into records, finds the header row (skipping preamble lines) and the data rows below it. */
-    fun table(text: String): StatementTable {
-        val records = records(text, detectDelimiter(text)).filter { r -> r.any { it.isNotBlank() } }
+    fun table(text: String): StatementTable = table(records(text, detectDelimiter(text)))
+
+    private fun table(all: List<List<String>>): StatementTable {
+        val records = all.filter { r -> r.any { it.isNotBlank() } }
         val headerIndex = records.take(HEADER_SEARCH_ROWS).indexOfFirst(::isHeader)
         if (headerIndex >= 0) {
             val header = records[headerIndex]

@@ -10,6 +10,8 @@ import com.soloit.doubleentry.domain.AccountGroup
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.BalanceSheetSettings
 import com.soloit.doubleentry.domain.CashflowSettings
+import com.soloit.doubleentry.domain.CostPeriod
+import com.soloit.doubleentry.domain.DeterministicIds
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.Frequency
@@ -33,6 +35,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.YearMonth
 import java.time.ZoneOffset
 
 /**
@@ -133,6 +136,10 @@ class BackupService(
             throw LedgerException("Backup references unknown account #${it.accountNumber}.")
         }
 
+        val android = backup.extensions?.get("android")?.let { element ->
+            runCatching { json.decodeFromJsonElement(AndroidDataDto.serializer(), element) }.getOrNull()
+        }
+
         db.withTransaction {
             val now = nowMicros()
             db.invoices().softDeleteAll(now)
@@ -149,9 +156,11 @@ class BackupService(
             }
 
             val indexToTransactionId = mutableMapOf<Int, String>()
+            val newIds = transactionIds(transactions.size, android?.costPeriods.orEmpty())
             transactions.forEachIndexed { index, t ->
                 val date = parseDate(t.date, "transaction #${index + 1}")
                 val draft = TransactionDraft(
+                    id = newIds[index],
                     date = date,
                     title = t.title.orEmpty(),
                     description = t.description.orEmpty(),
@@ -210,10 +219,7 @@ class BackupService(
                 )
             }
 
-            backup.extensions?.get("android")?.let { element ->
-                runCatching { json.decodeFromJsonElement(AndroidDataDto.serializer(), element) }.getOrNull()
-                    ?.let { applyAndroidData(it, numberToId, indexToTransactionId, indexToInvoiceId) }
-            }
+            android?.let { applyAndroidData(it, numberToId, indexToTransactionId, indexToInvoiceId) }
         }
 
         backup.extensions?.get("settings")?.let { element ->
@@ -250,7 +256,44 @@ class BackupService(
             val ids = runCatching { json.decodeFromString(ListSerializer(String.serializer()), raw) }.getOrNull().orEmpty()
             InvoicePaymentsDto(index, ids.mapNotNull { transactionIndex[it] }).takeIf { it.transactionIndexes.isNotEmpty() }
         }.sortedBy { it.invoiceIndex }
-        return AndroidDataDto(recurring, reconciliations, payments)
+        val costPeriods = settings.livePrefix(SettingsRepository.Keys.COST_PERIOD_PREFIX).mapNotNull { (sourceId, raw) ->
+            val index = transactionIndex[sourceId] ?: return@mapNotNull null
+            val stored = CostPeriods.decodeLines(raw) ?: return@mapNotNull null
+            fun entry(line: DraftLine) = accountNumbers[line.accountId]?.let { EntryDto(it, line.amount, line.type) }
+            CostPeriodDto(
+                transactionIndex = index,
+                lines = stored.map { (line, parts) ->
+                    CostPeriodLineDto(
+                        entry = entry(line) ?: return@mapNotNull null,
+                        start = line.period!!.start.toString(),
+                        end = line.period.end.toString(),
+                        parts = parts.map { entry(it) ?: return@mapNotNull null },
+                    )
+                },
+                postings = CostPeriods.postingMonths(stored).sorted().mapNotNull { month ->
+                    transactionIndex[DeterministicIds.periodTransactionId(sourceId, month)]?.let { CostPeriodPostingDto(month.toString(), it) }
+                },
+            )
+        }.sortedBy { it.transactionIndex }
+        return AndroidDataDto(recurring, reconciliations, payments, costPeriods)
+    }
+
+    /**
+     * New ids for the backup's transactions. Period postings get the id derived from their
+     * transaction's new id and their month, as when they were posted, so they stay linked to it.
+     */
+    private fun transactionIds(count: Int, costPeriods: List<CostPeriodDto>): List<String> {
+        val ids = MutableList(count) { newId() }
+        for (cp in costPeriods) {
+            val sourceId = ids.getOrNull(cp.transactionIndex) ?: continue
+            for (p in cp.postings) {
+                val month = runCatching { YearMonth.parse(p.month) }.getOrNull() ?: continue
+                if (p.transactionIndex in ids.indices && p.transactionIndex != cp.transactionIndex) {
+                    ids[p.transactionIndex] = DeterministicIds.periodTransactionId(sourceId, month)
+                }
+            }
+        }
+        return ids
     }
 
     private suspend fun applyAndroidData(
@@ -279,6 +322,19 @@ class BackupService(
             val accountId = numberToId[r.accountNumber] ?: continue
             val mark = Reconciliation(accountId, parseDate(r.date, "reconciliation of #${r.accountNumber}"), r.statementBalance)
             settings.put(ReconciliationRepository.PREFIX + accountId, ReconciliationRepository.encode(mark))
+        }
+        for (cp in data.costPeriods) {
+            val sourceId = indexToTransactionId[cp.transactionIndex] ?: continue
+            val stored = cp.lines.map { l ->
+                fun line(e: EntryDto) = numberToId[e.accountNumber]?.let { DraftLine(it, e.amount, e.entryType) }
+                val period = runCatching { CostPeriod(LocalDate.parse(l.start), LocalDate.parse(l.end)) }.getOrNull()
+                val parts = l.parts.map { line(it) }
+                val entered = line(l.entry)
+                if (period == null || entered == null || parts.any { it == null }) null
+                else CostPeriods.StoredLine(entered.copy(period = period), parts.filterNotNull())
+            }
+            if (stored.isEmpty() || stored.any { it == null }) continue
+            settings.put(CostPeriods.KEY_PREFIX + sourceId, CostPeriods.encodeLines(stored.filterNotNull()))
         }
         for (p in data.invoicePayments) {
             val invoiceId = indexToInvoiceId[p.invoiceIndex] ?: continue
@@ -423,6 +479,7 @@ class BackupService(
         val recurring: List<RecurringDto> = emptyList(),
         val reconciliations: List<ReconciliationDto> = emptyList(),
         val invoicePayments: List<InvoicePaymentsDto> = emptyList(),
+        val costPeriods: List<CostPeriodDto> = emptyList(),
     )
 
     @Serializable
@@ -447,6 +504,30 @@ class BackupService(
     /** Instalments of the invoice at [invoiceIndex], as indexes into the transaction list. */
     @Serializable
     data class InvoicePaymentsDto(val invoiceIndex: Int, val transactionIndexes: List<Int>)
+
+    /**
+     * Lines of the transaction at [transactionIndex] that are spread over periods, and the
+     * transactions (by index) that post their shares for each month.
+     */
+    @Serializable
+    data class CostPeriodDto(
+        val transactionIndex: Int,
+        val lines: List<CostPeriodLineDto>,
+        val postings: List<CostPeriodPostingDto> = emptyList(),
+    )
+
+    /** A line as entered ([entry], spread from [start] to [end]) and the [parts] it became in the transaction. */
+    @Serializable
+    data class CostPeriodLineDto(
+        val entry: EntryDto,
+        val start: String,
+        val end: String,
+        val parts: List<EntryDto> = emptyList(),
+    )
+
+    /** [month] is `yyyy-MM`. */
+    @Serializable
+    data class CostPeriodPostingDto(val month: String, val transactionIndex: Int)
 
     companion object {
         const val CURRENT_SCHEMA_VERSION = 7

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
@@ -232,6 +233,19 @@ fun AccountLedgerScreen(
     var requestDelete by remember { mutableStateOf(false) }
     val statementPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onImportStatement) }
 
+    val listState = rememberLazyListState()
+    var focused by rememberSaveable { mutableStateOf(route.focusTransactionId == null) }
+    // Coming from a transaction: scroll its row into view once, the first time the month has loaded.
+    LaunchedEffect(state.rows, state.loading) {
+        if (focused || state.loading || state.searching) return@LaunchedEffect
+        val index = state.rows.indexOfFirst { it.transactionId == route.focusTransactionId }
+        if (index < 0) return@LaunchedEffect
+        focused = true
+        // Search field, month selector, balance card, reconciliation banner and spacer come before the rows.
+        val header = 4 + (if (state.reconciliation != null) 1 else 0)
+        listState.animateScrollToItem(header + index)
+    }
+
     LaunchedEffect(deleted) { if (deleted) onBack() }
     LaunchedEffect(requestDelete) {
         if (requestDelete) {
@@ -294,7 +308,7 @@ fun AccountLedgerScreen(
             )
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = ScreenPadding) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding), state = listState, contentPadding = ScreenPadding) {
             item { SearchField(vm.query, { vm.query = it }, "Search all months", Modifier.padding(bottom = 12.dp)) }
             // A search covers every month, so the month selector and that month's balances step aside.
             if (!state.searching) item { MonthSelector(state.month, vm::setMonth) }
@@ -394,8 +408,14 @@ fun AccountLedgerScreen(
     message?.let { MessageDialog("Something went wrong", it) { vm.message.value = null } }
 }
 
-/** CSV/TSV exports; banks and browsers label them inconsistently, so any text or spreadsheet-like type. */
-private val STATEMENT_TYPES = arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "application/octet-stream")
+/** CSV/TSV and .xlsx exports; banks and browsers label them inconsistently, so any text or spreadsheet-like type. */
+private val STATEMENT_TYPES = arrayOf(
+    "text/*",
+    "application/csv",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/octet-stream",
+)
 
 /** Shows whether the account still matches the statement it was reconciled against. */
 @Composable

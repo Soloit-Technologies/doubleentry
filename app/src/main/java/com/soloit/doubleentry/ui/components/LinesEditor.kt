@@ -31,11 +31,14 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.domain.Account
+import com.soloit.doubleentry.domain.CostPeriod
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.Money
+import com.soloit.doubleentry.domain.Periodization
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
+import java.time.LocalDate
 
 /** Editable state of one bookkeeping line. Exactly one of [debit]/[credit] should hold an amount. */
 data class LineInput(
@@ -45,6 +48,8 @@ data class LineInput(
     val credit: String = "",
     /** Managed by the app (e.g. the fixed invoice credit line); account and amount can't be edited. */
     val locked: Boolean = false,
+    /** Days the line's cost or income belongs to, when they differ from the transaction date. */
+    val period: CostPeriod? = null,
 ) {
     val debitCents: Long? get() = Money.parse(debit)?.takeIf { it > 0 }
     val creditCents: Long? get() = Money.parse(credit)?.takeIf { it > 0 }
@@ -89,7 +94,11 @@ object Lines {
             val credit = line.creditCents
             if (debit != null && credit != null) return failure("Each line must have either a debit or a credit amount, not both.")
             if (debit == null && credit == null) return failure("Each line must have a debit or credit amount greater than zero.")
-            result += if (debit != null) DraftLine(line.accountId!!, debit, EntryType.Debit) else DraftLine(line.accountId!!, credit!!, EntryType.Credit)
+            result += if (debit != null) {
+                DraftLine(line.accountId!!, debit, EntryType.Debit, period = line.period)
+            } else {
+                DraftLine(line.accountId!!, credit!!, EntryType.Credit, period = line.period)
+            }
         }
         val debits = result.filter { it.type == EntryType.Debit }.sumOf { it.amount }
         val credits = result.filter { it.type == EntryType.Credit }.sumOf { it.amount }
@@ -115,6 +124,9 @@ fun LinesEditor(
     modifier: Modifier = Modifier,
     /** Why locked lines can't be changed (read by screen readers). */
     lockedReason: String = "Fixed by invoice settings",
+    /** The transaction date; when set, expense and income lines can be spread over a period. */
+    periodDate: LocalDate? = null,
+    onPeriodChange: (Long, CostPeriod?) -> Unit = { _, _ -> },
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         lines.forEachIndexed { index, line ->
@@ -130,6 +142,8 @@ fun LinesEditor(
                 onFocusCredit = { onFocusCredit(line.key) },
                 onRemove = { onRemove(line.key) },
                 lockedReason = lockedReason,
+                periodDate = periodDate,
+                onPeriodChange = { onPeriodChange(line.key, it) },
             )
         }
         OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
@@ -154,6 +168,8 @@ private fun LineCard(
     onFocusCredit: () -> Unit,
     onRemove: () -> Unit,
     lockedReason: String,
+    periodDate: LocalDate?,
+    onPeriodChange: (CostPeriod?) -> Unit,
 ) {
     SectionCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -200,6 +216,15 @@ private fun LineCard(
                 label = "Credit",
                 enabled = !line.locked && line.debitCents == null,
                 modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onFocusCredit() },
+            )
+        }
+        // A period stays visible if the account changes, so it can be seen and removed.
+        if (periodDate != null && !line.locked && (line.period != null || account?.type?.let(Periodization::canHavePeriod) == true)) {
+            CostPeriodInput(
+                period = line.period,
+                amount = line.debitCents ?: line.creditCents,
+                date = periodDate,
+                onChange = onPeriodChange,
             )
         }
     }

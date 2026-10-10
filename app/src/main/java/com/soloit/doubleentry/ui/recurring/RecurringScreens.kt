@@ -242,7 +242,8 @@ class RecurringEditorViewModel(
                 }
                 route.fromTransactionId != null -> ledger.getTransaction(route.fromTransactionId)?.let { tx ->
                     form.value = RecurringForm(tx.title, tx.description, Frequency.Monthly, tx.date, postedThrough = tx.date)
-                    lines.load(tx.entries)
+                    // A rule has no periods: spread lines repeat as plain lines on their own account.
+                    lines.loadDraft(ledger.editableLines(tx).map { it.copy(period = null) })
                 }
             }
             status.update { it.copy(loading = false) }

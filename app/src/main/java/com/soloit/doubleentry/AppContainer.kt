@@ -1,6 +1,7 @@
 package com.soloit.doubleentry
 
 import android.content.Context
+import com.soloit.doubleentry.billing.CloudBilling
 import com.soloit.doubleentry.data.AppPreferences
 import com.soloit.doubleentry.data.AssetRepository
 import com.soloit.doubleentry.data.BackupService
@@ -38,6 +39,7 @@ class AppContainer(private val context: Context, val appScope: CoroutineScope) {
         url = BuildConfig.SUPABASE_URL,
         anonKey = BuildConfig.SUPABASE_ANON_KEY,
         featureEnabled = BuildConfig.CLOUD_SYNC_FEATURE,
+        googleClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID,
     )
 
     val database: AppDatabase = AppDatabase.build(context)
@@ -49,6 +51,8 @@ class AppContainer(private val context: Context, val appScope: CoroutineScope) {
         supabaseConfig, syncPreferences, api, SyncEngine(database, api, syncPreferences), appScope,
         pendingChanges = database.syncStatus().pendingChanges(),
     )
+    /** Google Play subscriptions for cloud backup; null in builds without cloud sync. */
+    val billing: CloudBilling? = if (supabaseConfig.isAvailable) CloudBilling(context, sync, appScope) else null
     val ledger = LedgerRepository(database, sync)
     val assets = AssetRepository(database, ledger, sync)
     val settings = SettingsRepository(database, sync)
@@ -70,6 +74,7 @@ class AppContainer(private val context: Context, val appScope: CoroutineScope) {
         appScope.launch {
             runCatching { sync.pullIfNewer() }
             _startupComplete.value = true
+            checkPurchases()
             // Non-critical: post any depreciation and recurring transactions that became due since the app last ran.
             runCatching { assets.processWriteoffs(LocalDate.now()) }
             runCatching { recurring.process(LocalDate.now()) }
@@ -91,6 +96,19 @@ class AppContainer(private val context: Context, val appScope: CoroutineScope) {
         appScope.launch {
             runCatching { assets.processWriteoffs(LocalDate.now()) }
             runCatching { recurring.process(LocalDate.now()) }
+        }
+        checkPurchases()
+    }
+
+    /**
+     * Sends Google Play purchases the server may have missed (the app closed mid-purchase, a
+     * reinstall) to the server, so a paid subscription is never left unused or refunded.
+     */
+    private fun checkPurchases() {
+        val billing = billing ?: return
+        appScope.launch {
+            sync.refreshAccess()
+            runCatching { billing.restore(everything = sync.status.value.notBackedUp) }
         }
     }
 }

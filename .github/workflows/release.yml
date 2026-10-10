@@ -1,7 +1,12 @@
 name: Release
 
 # Builds the signed Google Play bundle (.aab) when a version tag (v2.0.0, …) is pushed.
-# Cloud sync is left out of release builds, so no Supabase settings are passed.
+#
+# Cloud backup is left out of release builds unless these repository variables are set:
+#   variable CLOUD_SYNC_ENABLED   true
+#   variable SUPABASE_URL         https://<project-ref>.supabase.co
+#   variable SUPABASE_ANON_KEY    the project's anon (publishable) key; it is public by design
+#   variable GOOGLE_WEB_CLIENT_ID the OAuth web client id for Sign in with Google (public as well)
 #
 # Signing needs (Settings → Secrets and variables → Actions):
 #   secret SIGNING_KEYSTORE_BASE64   the upload keystore, `base64 -w0 upload-key.jks`
@@ -45,6 +50,10 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          CLOUD_SYNC_ENABLED: ${{ vars.CLOUD_SYNC_ENABLED }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
         run: ./gradlew testDebugUnitTest bundleRelease
 
       - uses: actions/upload-artifact@v7

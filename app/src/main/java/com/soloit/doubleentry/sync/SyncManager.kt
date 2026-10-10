@@ -40,17 +40,25 @@ data class SyncStatus(
     val replacedAtMillis: Long? = null,
     /** The account this device's data belongs to, also while signed out; null when it never synced. */
     val dataOwnerEmail: String? = null,
+    /** The signed-in account's backup subscription; null while signed out or not checked yet. */
+    val access: CloudAccess? = null,
+    /** The account signs in with Google, so an expired session is renewed through Google, not a password. */
+    val signedInWithGoogle: Boolean = false,
 ) {
     /** Feature flag on and Supabase configured: signing in is possible. */
     val available: Boolean get() = featureEnabled && configured
     val isSignedIn: Boolean get() = signedInEmail != null
     val isActive: Boolean get() = available && enabled && isSignedIn
 
+    /** Signed in, but changes stay on this device: the account has no active backup subscription. */
+    val notBackedUp: Boolean get() = isSignedIn && access?.active == false
+
     /** Something the user should know about even when they're not looking at the sync screen. */
     val attention: SyncAttention?
         get() = when {
             !available || !isSignedIn -> null
             needsSignIn -> SyncAttention.SignInAgain
+            notBackedUp && pendingChanges > 0 -> SyncAttention.NotBackedUp
             !enabled && pendingChanges > 0 -> SyncAttention.Paused
             lastError != null && pendingChanges > 0 -> if (offline) SyncAttention.Offline else SyncAttention.Failing
             replacedChanges > 0 -> SyncAttention.Replaced
@@ -58,7 +66,7 @@ data class SyncStatus(
         }
 }
 
-enum class SyncAttention { SignInAgain, Failing, Offline, Paused, Replaced }
+enum class SyncAttention { SignInAgain, NotBackedUp, Failing, Offline, Paused, Replaced }
 
 /** A decision signing in needs from the user before anything syncs. */
 sealed interface SignInQuestion {
@@ -94,6 +102,9 @@ enum class SignInChoice {
  * Coordinates cloud sync: coalesces push requests, runs pull-then-push cycles one at a time,
  * keeps the session fresh and, while the app is in the foreground, listens to Realtime events
  * with a 15-minute polling fallback.
+ *
+ * Downloading works for every signed-in account; uploading needs an active backup subscription
+ * ([CloudAccess]), which the server enforces and this class checks at the start of each cycle.
  */
 class SyncManager(
     private val config: SupabaseConfig,
@@ -116,7 +127,7 @@ class SyncManager(
     private var foregroundJob: Job? = null
 
     /** An authenticated session waiting for the answer to a [SignInQuestion]; nothing is stored yet. */
-    private class PendingSignIn(val token: AuthTokenResponse, val email: String, val sameOwner: Boolean, val cloudHasData: Boolean)
+    private class PendingSignIn(val token: AuthTokenResponse, val email: String, val google: Boolean, val sameOwner: Boolean, val cloudHasData: Boolean)
 
     @Volatile private var pendingSignIn: PendingSignIn? = null
 
@@ -134,6 +145,14 @@ class SyncManager(
 
     private val canSync: Boolean get() = config.isAvailable && prefs.enabled && prefs.userId != null
 
+    private val canUpload: Boolean get() = prefs.cloudAccess?.active == true
+
+    /** OAuth web client id for Sign in with Google; empty when this build has none. */
+    val googleClientId: String get() = config.googleClientId
+
+    /** The signed-in account's id; Google Play purchases are tagged with it. */
+    val userId: String? get() = prefs.userId
+
     override fun requestSync() {
         if (canSync) requests.trySend(Unit)
     }
@@ -150,6 +169,8 @@ class SyncManager(
         return gate.withLock {
             setSyncing(true)
             try {
+                // A ledger waiting to replace the cloud's mustn't be merged with it by a pull.
+                if (prefs.cloudWipeBeforeMicros != null && !canUpload) return@withLock false
                 applyPendingCloudWipe()
                 val result = engine.pullAll(this)
                 recordReplaced(result.replacedLocalChanges)
@@ -171,16 +192,29 @@ class SyncManager(
         gate.withLock {
             setSyncing(true)
             try {
-                applyPendingCloudWipe()
+                val upload = refreshAccess()
+                // Without a subscription a ledger waiting to replace the cloud's waits whole: a
+                // pull would merge the two.
+                if (!upload && prefs.cloudWipeBeforeMicros != null) {
+                    succeeded()
+                    return@withLock
+                }
+                if (upload) applyPendingCloudWipe()
                 // Pull first so later edits from other devices replace local rows before they are
                 // uploaded; the server refuses any that still arrive late, and push takes those.
                 recordReplaced(engine.pullAll(this).replacedLocalChanges)
-                recordReplaced(engine.pushAll(this).replacedLocalChanges)
-                prefs.lastSyncAtMillis = System.currentTimeMillis()
+                if (upload) {
+                    recordReplaced(engine.pushAll(this).replacedLocalChanges)
+                    prefs.lastSyncAtMillis = System.currentTimeMillis()
+                }
                 succeeded()
                 _status.update { it.copy(lastSyncAtMillis = prefs.lastSyncAtMillis) }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: CloudAccessRequiredException) {
+                // The subscription ended since the check: same as having none.
+                storeAccess(CloudAccess(active = false))
+                succeeded()
             } catch (e: Exception) {
                 fail(e)
             } finally {
@@ -195,7 +229,30 @@ class SyncManager(
      */
     suspend fun signIn(email: String, password: String): SignInQuestion? {
         val address = email.trim()
-        val token = api.signIn(address, password)
+        return signInWith(api.signIn(address, password), address)
+    }
+
+    /**
+     * Signs in with a Google ID token (from Credential Manager), creating the account the first
+     * time; otherwise like [signIn]. [nonce] is the raw nonce the token was requested with.
+     */
+    suspend fun signInWithGoogle(idToken: String, nonce: String, email: String): SignInQuestion? {
+        val session = api.signInWithGoogle(idToken, nonce)
+        return signInWith(session, session.user?.email ?: email, google = true)
+    }
+
+    /** Emails a code for [resetPassword]. */
+    suspend fun requestPasswordReset(email: String) = api.requestPasswordReset(email.trim())
+
+    /** Sets a new password with the emailed code and signs in, like [signIn]. */
+    suspend fun resetPassword(email: String, code: String, newPassword: String): SignInQuestion? {
+        val address = email.trim()
+        val session = api.verifyRecoveryCode(address, code.trim())
+        api.updatePassword(newPassword, session.accessToken ?: throw SyncException("Please try again."))
+        return signInWith(session, address)
+    }
+
+    private suspend fun signInWith(token: AuthTokenResponse, address: String, google: Boolean = false): SignInQuestion? {
         val userId = token.user?.id
         val accessToken = token.accessToken
         if (userId.isNullOrBlank() || accessToken.isNullOrBlank()) {
@@ -206,6 +263,7 @@ class SyncManager(
             // Renewing an expired session: the data on this device already belongs to the account.
             if (current != userId) throw SyncException("That is a different account. Sign out first to switch accounts.")
             storeTokens(token, address)
+            prefs.signedInWithGoogle = google
             publish()
             runSync()
             if (inForeground) startForegroundWork()
@@ -216,7 +274,7 @@ class SyncManager(
         val owner = prefs.dataOwnerId
         val sameOwner = owner == userId
         val cloudHasData = engine.cloudHasData { accessToken }
-        val pending = PendingSignIn(token, address, sameOwner, cloudHasData)
+        val pending = PendingSignIn(token, address, google, sameOwner, cloudHasData)
         val question = when {
             // Includes deletions made while signed out: uploading them deletes data on every device.
             sameOwner -> if (local.unsyncedChanges > 0) {
@@ -274,6 +332,7 @@ class SyncManager(
                 }
             }
             storeTokens(pending.token, pending.email)
+            prefs.signedInWithGoogle = pending.google
             prefs.dataOwnerId = prefs.userId
             prefs.dataOwnerEmail = pending.email
             prefs.enabled = true
@@ -283,6 +342,60 @@ class SyncManager(
         // must exist remotely before their children are pushed).
         runSync()
         if (inForeground) startForegroundWork()
+    }
+
+    /**
+     * Has the server check a Google Play purchase and record it for the signed-in account, then
+     * starts uploading. Throws when the server couldn't record it; the purchase then mustn't be
+     * acknowledged, so it's checked again later (or refunded by Google).
+     */
+    suspend fun verifyPurchase(purchaseToken: String) {
+        if (prefs.userId == null) throw SyncException("Sign in to start cloud backup.")
+        authorized { api.verifyPurchase(purchaseToken, it) }
+        refreshAccess()
+        requestSync()
+    }
+
+    /** Reads the account's subscription again (after a purchase, or when the app returns). */
+    suspend fun refreshAccess(): Boolean {
+        if (prefs.userId == null || !config.isAvailable) return false
+        try {
+            storeAccess(authorized { api.cloudAccess(it) })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Offline or a passing failure: keep the last known answer; the server enforces it anyway.
+            Log.i(TAG, "Couldn't check cloud access", e)
+        }
+        return canUpload
+    }
+
+    /**
+     * Deletes the account and its cloud copy for good. The ledger on this device stays and is no
+     * longer linked to any account.
+     */
+    suspend fun deleteAccount() {
+        authorized { api.deleteAccount(it) }
+        stopForegroundWork()
+        gate.withLock {
+            prefs.clearSession()
+            prefs.enabled = false
+            prefs.dataOwnerId = null
+            prefs.dataOwnerEmail = null
+            prefs.cloudWipeBeforeMicros = null
+        }
+        publish()
+    }
+
+    private suspend fun <T> authorized(block: suspend (String) -> T): T = try {
+        block(accessToken(forceRefresh = false))
+    } catch (e: UnauthorizedException) {
+        block(accessToken(forceRefresh = true))
+    }
+
+    private fun storeAccess(access: CloudAccess) {
+        prefs.cloudAccess = access
+        _status.update { it.copy(access = access) }
     }
 
     /**
@@ -437,6 +550,8 @@ class SyncManager(
         replacedChanges = prefs.replacedChanges,
         replacedAtMillis = prefs.replacedAtMillis,
         dataOwnerEmail = prefs.dataOwnerId?.let { prefs.dataOwnerEmail },
+        access = prefs.userId?.let { prefs.cloudAccess },
+        signedInWithGoogle = prefs.userId != null && prefs.signedInWithGoogle,
     )
 
     private companion object {

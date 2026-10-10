@@ -45,6 +45,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.AccountType
+import com.soloit.doubleentry.domain.CostPeriod
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.Money
@@ -147,6 +148,8 @@ fun StatementBookingDialog(
                     onRemove = booking::remove,
                     onAdd = booking::add,
                     lockedReason = "Set by the bank statement",
+                    periodDate = row.date,
+                    onPeriodChange = booking::setPeriod,
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                 Button(onClick = ::done, enabled = canSave, modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) { Text("Done") }
@@ -181,13 +184,13 @@ fun StatementBookingDialog(
  * those, empty ones are added to split into.
  */
 private fun initialLines(booking: BookingLines, accountId: String, row: NewRowUi): List<LineInput> {
-    fun line(accountId: String?, cents: Long, type: EntryType, locked: Boolean = false) = booking.newLine(
+    fun line(accountId: String?, cents: Long, type: EntryType, locked: Boolean = false, period: CostPeriod? = null) = booking.newLine(
         accountId = accountId,
         debit = if (type == EntryType.Debit) Money.toInput(cents) else "",
         credit = if (type == EntryType.Credit) Money.toInput(cents) else "",
         locked = locked,
-    )
+    ).copy(period = period)
     val bank = line(accountId, row.amount.absoluteValue, if (row.amount > 0) EntryType.Debit else EntryType.Credit, locked = true)
-    val others = row.lines.orEmpty().filter { it.accountId != accountId }.map { line(it.accountId, it.amount, it.type) }
+    val others = row.lines.orEmpty().filter { it.accountId != accountId }.map { line(it.accountId, it.amount, it.type, period = it.period) }
     return listOf(bank) + others + List((2 - others.size).coerceAtLeast(0)) { booking.newLine() }
 }

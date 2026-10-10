@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.AccountBalance
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.EventRepeat
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -82,6 +83,7 @@ fun SettingsScreen(
     onIncomeStatement: () -> Unit,
     onCashflow: () -> Unit,
     onInvoices: () -> Unit,
+    onCostPeriods: () -> Unit,
     onRecurring: () -> Unit,
 ) {
     val container = LocalAppContainer.current
@@ -164,14 +166,15 @@ fun SettingsScreen(
                     GroupedItem(0, 1, onClick = onCloudSync) {
                         val subtitle = when {
                             !sync.configured -> "Not set up in this build"
-                            !sync.isSignedIn -> "Sign in to use your ledger on all your devices"
+                            !sync.isSignedIn -> "Back up your ledger and use it on all your devices"
                             sync.attention != null -> sync.attentionText()!!
                             !sync.enabled -> "Paused · ${sync.signedInEmail}"
                             sync.lastError != null -> sync.lastError!!
+                            sync.notBackedUp -> "Not backed up · ${sync.signedInEmail}"
                             sync.lastSyncAtMillis != null -> "Synced ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(sync.lastSyncAtMillis!!))} · ${sync.signedInEmail}"
                             else -> "On · ${sync.signedInEmail}"
                         }
-                        SettingRow(if (sync.isActive) Icons.Rounded.Cloud else Icons.Rounded.CloudOff, "Cloud sync", subtitle, chevron = true)
+                        SettingRow(if (sync.isActive) Icons.Rounded.Cloud else Icons.Rounded.CloudOff, "Cloud backup & sync", subtitle, chevron = true)
                     }
                 }
             }
@@ -237,10 +240,15 @@ fun SettingsScreen(
                 }
             }
 
-            item { SectionHeader("Invoices") }
+            item { SectionHeader("Bookkeeping") }
             item {
-                GroupedItem(0, 1, onClick = onInvoices) {
-                    SettingRow(Icons.AutoMirrored.Rounded.ReceiptLong, "Invoice defaults", "Credit account and payment accounts", chevron = true)
+                Column {
+                    GroupedItem(0, 2, onClick = onInvoices) {
+                        SettingRow(Icons.AutoMirrored.Rounded.ReceiptLong, "Invoice defaults", "Credit account and payment accounts", chevron = true)
+                    }
+                    GroupedItem(1, 2, onClick = onCostPeriods) {
+                        SettingRow(Icons.Rounded.DateRange, "Cost periods", "Prepaid and accrued accounts for spreading costs and income", chevron = true)
+                    }
                 }
             }
 

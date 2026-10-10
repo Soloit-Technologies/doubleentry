@@ -78,6 +78,7 @@ import com.soloit.doubleentry.ui.settings.CloudSyncScreen
 import com.soloit.doubleentry.ui.settings.DataManagementScreen
 import com.soloit.doubleentry.ui.settings.IncomeStatementSettingsScreen
 import com.soloit.doubleentry.ui.settings.SyncBanner
+import com.soloit.doubleentry.ui.settings.CostPeriodSettingsScreen
 import com.soloit.doubleentry.ui.settings.InvoiceSettingsScreen
 import com.soloit.doubleentry.ui.settings.SettingsScreen
 import com.soloit.doubleentry.ui.transactions.TransactionDetailScreen
@@ -95,7 +96,8 @@ import kotlin.reflect.KClass
 @Serializable data object InvoicesRoute
 @Serializable data object AssetsRoute
 
-@Serializable data class AccountLedgerRoute(val accountId: String, val year: Int, val month: Int)
+/** [focusTransactionId]: a transaction in that month to scroll to. */
+@Serializable data class AccountLedgerRoute(val accountId: String, val year: Int, val month: Int, val focusTransactionId: String? = null)
 @Serializable data class AccountEditorRoute(val accountId: String? = null)
 /** Imports the bank statement file at [uri] (a document picked by the user) into [accountId]. */
 @Serializable data class StatementImportRoute(val accountId: String, val uri: String)
@@ -119,6 +121,7 @@ data class TransactionEditorRoute(
 @Serializable data object IncomeStatementSettingsRoute
 @Serializable data object CashflowSettingsRoute
 @Serializable data object InvoiceSettingsRoute
+@Serializable data object CostPeriodSettingsRoute
 @Serializable data object RecurringListRoute
 @Serializable data class RecurringEditorRoute(val ruleId: String? = null, val fromTransactionId: String? = null)
 
@@ -256,6 +259,8 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                         onDuplicate = { nav.navigate(TransactionEditorRoute(duplicateId = id)) },
                         onRepeat = { nav.navigate(RecurringEditorRoute(fromTransactionId = id)) },
                         onOpenRecurring = { nav.navigate(RecurringEditorRoute(ruleId = it)) },
+                        onOpenTransaction = { nav.navigate(TransactionDetailRoute(it)) },
+                        onOpenAccount = { accountId, date -> nav.navigate(AccountLedgerRoute(accountId, date.year, date.monthValue, focusTransactionId = id)) },
                     )
                 }
                 composable<TransactionEditorRoute> { e -> TransactionEditorScreen(e.toRoute<TransactionEditorRoute>(), onDone = back) }
@@ -312,6 +317,7 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                         onIncomeStatement = { nav.navigate(IncomeStatementSettingsRoute) },
                         onCashflow = { nav.navigate(CashflowSettingsRoute) },
                         onInvoices = { nav.navigate(InvoiceSettingsRoute) },
+                        onCostPeriods = { nav.navigate(CostPeriodSettingsRoute) },
                         onRecurring = { nav.navigate(RecurringListRoute) },
                     )
                 }
@@ -321,6 +327,7 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                 composable<IncomeStatementSettingsRoute> { IncomeStatementSettingsScreen(onBack = back) }
                 composable<CashflowSettingsRoute> { CashflowSettingsScreen(onBack = back) }
                 composable<InvoiceSettingsRoute> { InvoiceSettingsScreen(onBack = back) }
+                composable<CostPeriodSettingsRoute> { CostPeriodSettingsScreen(onBack = back) }
                 composable<RecurringListRoute> {
                     RecurringListScreen(
                         onBack = back,

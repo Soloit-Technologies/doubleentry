@@ -13,6 +13,7 @@ import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.DefaultAccountPlan
 import com.soloit.doubleentry.domain.Depreciation
 import com.soloit.doubleentry.domain.DeterministicIds
+import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.LedgerException
 import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.TransactionDraft
@@ -39,6 +40,7 @@ class LedgerRepository(
     private val accountDao = db.accounts()
     private val transactionDao = db.transactions()
     private val entryDao = db.entries()
+    private val periods = CostPeriods(db, SettingsRepository(db, sync))
 
     /** Emits whenever any ledger table changes, including changes pulled from the cloud. */
     val changes: Flow<Unit> = db.ledgerChanges()
@@ -184,6 +186,21 @@ class LedgerRepository(
             .filter { accountId == null || it.entries.any { e -> e.account.id == accountId } }
     }
 
+    /**
+     * The lines of [tx] as they were entered: lines spread over a period come back as one line with
+     * its [com.soloit.doubleentry.domain.CostPeriod] instead of the parts it was posted as.
+     */
+    suspend fun editableLines(tx: Transaction): List<DraftLine> {
+        val entries = tx.entries.map { DraftLine(it.account.id, it.amount, it.type) }
+        return periods.editableLines(tx.id, entries) ?: entries
+    }
+
+    /** How [tx]'s lines are spread over periods, or null when none are. */
+    suspend fun getCostPeriods(tx: Transaction): CostPeriodSummary? = periods.summary(tx.id, tx.date)
+
+    /** The transaction a period posting belongs to; null for any other transaction. */
+    suspend fun periodSourceOf(transactionId: String): String? = periods.sourceOf(transactionId)
+
     /** Validates and stores a new transaction; returns its id. */
     suspend fun post(draft: TransactionDraft): String {
         val id = db.withTransaction { insertTransaction(draft) }
@@ -198,13 +215,16 @@ class LedgerRepository(
         val now = nowMicros()
         val id = draft.id ?: newId()
         if (transactionDao.byId(id) != null) throw LedgerException("A transaction with this id already exists.")
+        val plan = periods.plan(id, draft)
         transactionDao.upsert(TransactionEntity(id, draft.date, draft.title.trim(), draft.description.trim(), now))
-        entryDao.upsertAll(draft.lines.map { EntryEntity(it.id ?: newId(), id, it.accountId, it.amount, it.type.ordinal) })
+        entryDao.upsertAll(plan.sourceLines.map { EntryEntity(it.id ?: newId(), id, it.accountId, it.amount, it.type.ordinal) })
+        periods.apply(id, plan, now)
         return id
     }
 
     /** Replaces the header and lines of an existing transaction; they sync as one. */
     suspend fun updateTransaction(id: String, draft: TransactionDraft) {
+        if (periodSourceOf(id) != null) throw LedgerException(PERIOD_POSTING_MESSAGE)
         db.withTransaction { replaceTransaction(id, draft) }
         sync.requestSync()
     }
@@ -214,10 +234,12 @@ class LedgerRepository(
         requireLiveAccounts(draft)
         val existing = transactionDao.byId(id)?.takeIf { it.deletedAt == null } ?: throw LedgerException("Transaction not found.")
         val now = nowMicros()
+        val plan = periods.plan(id, draft)
         transactionDao.upsert(
             existing.copy(date = draft.date, title = draft.title.trim(), description = draft.description.trim(), updatedAt = now, isDirty = true),
         )
-        entryDao.replaceOf(id, draft.lines.map { EntryEntity(newId(), id, it.accountId, it.amount, it.type.ordinal) })
+        entryDao.replaceOf(id, plan.sourceLines.map { EntryEntity(newId(), id, it.accountId, it.amount, it.type.ordinal) })
+        periods.apply(id, plan, now)
     }
 
     /** True when [transactionId] is an automatic depreciation posting of a live asset. */
@@ -234,15 +256,20 @@ class LedgerRepository(
                 "This is an automatic depreciation posting and cannot be deleted directly. Delete the asset to remove its depreciation.",
             )
         }
+        if (periodSourceOf(id) != null) throw LedgerException(PERIOD_POSTING_MESSAGE)
         val now = nowMicros()
         db.withTransaction { softDeleteTransaction(id, now) }
         sync.requestSync()
         return now
     }
 
-    /** Soft-deletes a transaction with [now] as the deletion stamp. It keeps its lines, so undo brings them back. */
+    /**
+     * Soft-deletes a transaction, and the postings of its period lines, with [now] as the deletion
+     * stamp. It keeps its lines, so undo brings them back.
+     */
     internal suspend fun softDeleteTransaction(id: String, now: Long = nowMicros()) {
         transactionDao.softDelete(id, now)
+        periods.remove(id, now)
     }
 
     /**
@@ -289,5 +316,8 @@ class LedgerRepository(
     companion object {
         /** `updated_at` of seeded default-plan rows (1 µs after the epoch): any server row is newer. */
         const val SEED_TIMESTAMP = 1L
+
+        private const val PERIOD_POSTING_MESSAGE =
+            "This posting moves a share of a transaction spread over a period. Edit or delete that transaction instead."
     }
 }

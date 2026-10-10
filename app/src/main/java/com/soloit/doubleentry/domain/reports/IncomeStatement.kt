@@ -67,7 +67,7 @@ object IncomeStatementCalculator {
 
         return IncomeStatementReport(
             revenue = ReportSection.build(revenueRows, settings.revenueGroups),
-            expenses = ReportSection.build(expenseRows, settings.expenseGroups),
+            expenses = ReportSection.build(expenseRows, settings.expenseGroups).sortedByAmountDescending(),
             taxExpenses = tax,
             depreciationExpenses = depreciation,
             deferredFromRevenue = deferredFromRevenue(sorted, transactions, settings.deferredAssetPrefixes),

@@ -16,6 +16,8 @@ data class SupabaseConfig(
     val url: String,
     val anonKey: String,
     val featureEnabled: Boolean,
+    /** OAuth web client id for Sign in with Google; empty when not set up. */
+    val googleClientId: String = "",
 ) {
     val baseUrl: String get() = url.trimEnd('/')
     val isConfigured: Boolean get() = url.isNotBlank() && anonKey.isNotBlank()
@@ -36,6 +38,8 @@ enum class SyncTable(val remoteName: String) {
     Settings("user_settings"),
 }
 
+private val accessJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
 /** Device-local sync state: account, token expiry and per-table pull watermarks. */
 class SyncPreferences(context: Context, private val tokens: TokenStore = SecureTokenStore(context)) {
     private val prefs = context.getSharedPreferences("supabase_sync", Context.MODE_PRIVATE)
@@ -51,6 +55,11 @@ class SyncPreferences(context: Context, private val tokens: TokenStore = SecureT
     var userEmail: String?
         get() = prefs.getString("userEmail", null)
         set(value) = prefs.edit { putString("userEmail", value) }
+
+    /** The signed-in account uses Sign in with Google (no password), so renewing a session asks Google. */
+    var signedInWithGoogle: Boolean
+        get() = prefs.getBoolean("signedInWithGoogle", false)
+        set(value) = prefs.edit { putBoolean("signedInWithGoogle", value) }
 
     var accessTokenExpiresAtMillis: Long?
         get() = prefs.getLong("expiresAt", 0L).takeIf { it > 0 }
@@ -85,6 +94,13 @@ class SyncPreferences(context: Context, private val tokens: TokenStore = SecureT
     var clockOffsetMicros: Long
         get() = prefs.getLong("clockOffsetMicros", 0L)
         set(value) = prefs.edit { putLong("clockOffsetMicros", value) }
+
+    /** The last known [CloudAccess] of the signed-in account; used while the server can't be reached. */
+    var cloudAccess: CloudAccess?
+        get() = prefs.getString("cloudAccess", null)?.let { runCatching { accessJson.decodeFromString(CloudAccess.serializer(), it) }.getOrNull() }
+        set(value) = prefs.edit {
+            if (value == null) remove("cloudAccess") else putString("cloudAccess", accessJson.encodeToString(CloudAccess.serializer(), value))
+        }
 
     /** Unsynced local edits that lost to another device's newer edits since the user last dismissed the notice. */
     val replacedChanges: Int get() = prefs.getInt("replacedChanges", 0)
@@ -121,10 +137,12 @@ class SyncPreferences(context: Context, private val tokens: TokenStore = SecureT
         prefs.edit {
             remove("userId")
             remove("userEmail")
+            remove("signedInWithGoogle")
             remove("expiresAt")
             remove("lastSyncAt")
             remove("replacedChanges")
             remove("replacedAt")
+            remove("cloudAccess")
             SyncTable.entries.forEach { remove("watermark.${it.remoteName}") }
         }
         tokens.clear()
