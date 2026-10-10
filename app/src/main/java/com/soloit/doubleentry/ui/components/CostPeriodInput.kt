@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DateRange
@@ -25,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.soloit.doubleentry.domain.CostPeriod
 import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.Periodization
@@ -32,6 +34,8 @@ import com.soloit.doubleentry.domain.label
 import com.soloit.doubleentry.domain.shortLabel
 import com.soloit.doubleentry.domain.yearMonth
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * The period a line's cost or income belongs to. Unset, it offers to choose one; set, it shows
@@ -139,6 +143,31 @@ private fun RangePickerModal(initial: CostPeriod, onDismiss: () -> Unit, onConfi
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     ) {
-        DateRangePicker(state = state, modifier = Modifier.weight(1f))
+        DateRangePicker(
+            state = state,
+            modifier = Modifier.weight(1f),
+            title = { Text("Select period", Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)) },
+            headline = { RangeHeadline(state.selectedStartDateMillis?.fromPickerMillis(), state.selectedEndDateMillis?.fromPickerMillis()) },
+        )
     }
+}
+
+/**
+ * The selected range on one line, as the period chip shows it. The default headline is inset for
+ * the full-screen picker and wraps in a dialog.
+ */
+@Composable
+private fun RangeHeadline(start: LocalDate?, end: LocalDate?) {
+    val format = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault())
+    val text = when {
+        start == null -> "Start date – End date"
+        end == null -> "${start.format(format).replace(".", "")} – End date"
+        else -> CostPeriod(start, end).label()
+    }
+    Text(
+        text,
+        modifier = Modifier.padding(start = 24.dp, end = 12.dp, bottom = 12.dp),
+        maxLines = 1,
+        autoSize = TextAutoSize.StepBased(minFontSize = 14.sp, maxFontSize = MaterialTheme.typography.headlineSmall.fontSize),
+    )
 }
