@@ -122,7 +122,7 @@ class InvoiceEditorViewModel(
                     form.value = InvoiceForm(Money.toInput(invoice.amountDue), invoice.invoiceDate, invoice.dueDate, booking?.title.orEmpty(), booking?.description.orEmpty())
                 }
                 if (booking != null) {
-                    lines.load(booking.entries)
+                    lines.loadDraft(ledger.editableLines(booking))
                     // Keep the configured credit line locked when editing, without adding a second one.
                     creditAccount?.let { acc ->
                         lines.current.firstOrNull { it.accountId == acc.id && it.creditCents != null }?.let { match ->
@@ -246,6 +246,8 @@ fun InvoiceEditorScreen(editId: String?, onDone: () -> Unit) {
                 onFocusCredit = vm.lines::autoFillCredit,
                 onRemove = vm.lines::remove,
                 onAdd = vm.lines::add,
+                periodDate = state.form.invoiceDate,
+                onPeriodChange = vm.lines::setPeriod,
             )
             state.status.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
             Button(onClick = vm::save, enabled = state.canSave, modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
