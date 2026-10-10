@@ -73,6 +73,20 @@ class ReportsTest {
     }
 
     @Test
+    fun incomeStatementListsLargestExpensesFirst() {
+        val movements = mapOf("rent" to 8_000L, "food" to 9_000L, "tax" to 20_000L)
+        val ungrouped = IncomeStatementCalculator.compute(accounts, movements, emptyList(), IncomeStatementSettings())
+        assertEquals(listOf(8910, 6010, 5010), ungrouped.expenses.ungrouped.map { it.number })
+
+        val grouped = IncomeStatementCalculator.compute(
+            accounts, movements, emptyList(),
+            IncomeStatementSettings(expenseGroups = listOf(AccountGroup("Living", listOf("5", "6")), AccountGroup("Tax", listOf("89")))),
+        )
+        assertEquals(listOf("Tax", "Living"), grouped.expenses.groups.map { it.title })
+        assertEquals(listOf(6010, 5010), grouped.expenses.groups[1].rows.map { it.number })
+    }
+
+    @Test
     fun cashFlowNetsTransfersInsideAGroup() {
         val groups = listOf(AccountGroup("Bank", listOf("1910", "1920")), AccountGroup("Cash", listOf("1010")))
         val transactions = listOf(

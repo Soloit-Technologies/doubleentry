@@ -31,6 +31,12 @@ data class ReportSection(
     val isEmpty: Boolean get() = groups.isEmpty() && ungrouped.isEmpty()
     val hasGroups: Boolean get() = groups.isNotEmpty()
 
+    /** Largest first: groups by total, rows within each group and the ungrouped rows by amount. */
+    fun sortedByAmountDescending(): ReportSection = ReportSection(
+        groups = groups.map { it.copy(rows = it.rows.sortedByDescending { r -> r.amount }) }.sortedByDescending { it.total },
+        ungrouped = ungrouped.sortedByDescending { it.amount },
+    )
+
     companion object {
         /** Rows matching a group go to the first matching group; empty groups are omitted. */
         fun build(rows: List<Pair<Account, ReportRow>>, groups: List<AccountGroup>): ReportSection {
