@@ -24,11 +24,15 @@ data class CostSeries(
 data class CostTrendResult(
     val months: List<YearMonth>,
     val series: List<CostSeries>,
+    /** Every expense account summed per month. */
+    val total: CostSeries = CostSeries(CostTrendCalculator.TOTAL_KEY, CostTrendCalculator.TOTAL_NAME, months.map { 0L }, isGroup = false),
 )
 
 object CostTrendCalculator {
 
     const val OTHER_KEY = "other"
+    const val TOTAL_KEY = "total"
+    const val TOTAL_NAME = "All expenses"
 
     /** Every month from [start] to [end] inclusive; swapped when given in reverse. */
     fun months(start: YearMonth, end: YearMonth): List<YearMonth> {
@@ -52,7 +56,8 @@ object CostTrendCalculator {
             val perMonth = monthlyMovements[account.id].orEmpty()
             CostSeries("acct:${account.number}", "${account.number} · ${account.name}", months.map { perMonth[it] ?: 0L }, isGroup = false) to account
         }
-        if (!useGroups) return CostTrendResult(months, accountSeries.map { it.first })
+        val total = CostSeries(TOTAL_KEY, TOTAL_NAME, months.indices.map { m -> accountSeries.sumOf { it.first.monthly[m] } }, isGroup = false)
+        if (!useGroups) return CostTrendResult(months, accountSeries.map { it.first }, total)
 
         val byGroup = accountSeries.groupBy({ (_, account) -> groups.indexOfGroupFor(account.number) }, { it.first })
         fun groupSeries(key: String, name: String, members: List<CostSeries>) = CostSeries(
@@ -61,6 +66,6 @@ object CostTrendCalculator {
         val series = groups.indices.mapNotNull { gi -> byGroup[gi]?.let { groupSeries("group:$gi", groups[gi].name, it) } } +
             listOfNotNull(byGroup[-1]?.let { groupSeries(OTHER_KEY, "Other expenses", it) })
 
-        return CostTrendResult(months, series)
+        return CostTrendResult(months, series, total)
     }
 }

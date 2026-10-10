@@ -123,6 +123,7 @@ class ReportsTest {
         assertEquals(listOf("acct:5010"), result.series[0].accounts.map { it.key })
         assertEquals(listOf("acct:6010", "acct:8910"), result.series[1].accounts.map { it.key })
         assertEquals(1_000L, result.series[1].accounts[1].total)
+        assertEquals(listOf(10_000L, 11_000L, 3_000L), result.total.monthly)
     }
 
     @Test
