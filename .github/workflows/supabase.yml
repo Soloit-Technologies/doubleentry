@@ -1,15 +1,20 @@
 name: Supabase
 
 # Validates every migration on a throwaway local Supabase stack (security tests, re-runs, and an
-# upgrade over existing data), tests the Edge Functions, previews the changes against the real
-# project on pull requests and applies them (and deploys the Edge Functions) on push to the main
-# branch. The functions' secrets are set once by hand, see supabase/README.md.
+# upgrade over existing data) and tests the Edge Functions. On push to the main branch, it applies
+# the migrations to the real project and deploys the Edge Functions, after approval in the
+# `production` environment. Pull requests never see the deploy secrets; preview pending
+# migrations locally with `supabase db push --dry-run`. The functions' secrets are set once by
+# hand, see supabase/README.md.
 #
-# Deploying needs (Settings → Secrets and variables → Actions):
-#   variable SUPABASE_PROJECT_ID     the project ref, e.g. abcdefghijklmnopqrst
+# Deploying needs (Settings → Environments → production; only the main branch may deploy):
+#   variable SUPABASE_PROJECT_ID     the project ref, e.g. abcdefghijklmnopqrst (repository variable)
 #   secret   SUPABASE_ACCESS_TOKEN   https://supabase.com/dashboard/account/tokens
-#   secret   SUPABASE_DB_PASSWORD    the database password of the project
-# Without them only the validation job runs.
+#   secret   SUPABASE_DB_PASSWORD    optional, the database password of the project
+# Without them only the validation jobs run.
+#
+# Actions are pinned to commit SHAs and the Supabase CLI to a version, so a moved tag or a new
+# release can't reach the deploy token unreviewed.
 
 on:
   push:
@@ -19,14 +24,17 @@ on:
     paths: ['supabase/**', '.github/workflows/supabase.yml']
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: supabase/setup-cli@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3
         with:
-          version: latest
+          version: 2.117.0
       - name: Apply all migrations to a fresh database
         run: supabase start -x studio,imgproxy,vector,logflare,mailpit,edge-runtime,storage-api,postgres-meta,supavisor
       - name: Security tests (pgTAP, supabase/tests)
@@ -51,7 +59,7 @@ jobs:
     env:
       DB: postgresql://postgres:postgres@127.0.0.1:54322/postgres
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Find the schema before this change
@@ -64,10 +72,10 @@ jobs:
           else
             echo "The base commit ($BASE) has no sample data; nothing to upgrade from."
           fi
-      - uses: supabase/setup-cli@v3
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3
         if: steps.base.outputs.sha
         with:
-          version: latest
+          version: 2.117.0
       - name: Start the old schema with its sample data
         if: steps.base.outputs.sha
         run: |
@@ -88,8 +96,8 @@ jobs:
   functions:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: denoland/setup-deno@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.x
       - name: Edge Function tests
@@ -101,23 +109,19 @@ jobs:
 
   deploy:
     needs: [validate, upgrade, functions]
-    if: vars.SUPABASE_PROJECT_ID != ''
+    if: github.event_name != 'pull_request' && vars.SUPABASE_PROJECT_ID != ''
     runs-on: ubuntu-latest
+    environment: production
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: supabase/setup-cli@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3
         with:
-          version: latest
+          version: 2.117.0
       - run: supabase link --project-ref "${{ vars.SUPABASE_PROJECT_ID }}"
-      - name: Preview pending migrations
-        if: github.event_name == 'pull_request'
-        run: supabase db push --dry-run --include-all
       - name: Apply pending migrations
-        if: github.event_name != 'pull_request'
         run: supabase db push --include-all
       - name: Deploy Edge Functions
-        if: github.event_name != 'pull_request'
         run: supabase functions deploy --project-ref "${{ vars.SUPABASE_PROJECT_ID }}"

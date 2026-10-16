@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(31);
+select plan(35);
 
 -- -----------------------------------------------------------------------------
 -- Guards for whatever is added later
@@ -32,6 +32,20 @@ select is(
    where n.nspname = 'public' and p.prorettype <> 'trigger'::regtype and has_function_privilege('anon', p.oid, 'execute')),
   array['sync_control'],
   'signed out, only sync_control() can be called');
+
+select is(
+  (select array_agg(c.relname::text order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public' and c.relkind = 'r'
+     and has_table_privilege('anon', c.oid, 'select, insert, update, delete, truncate, references, trigger')),
+  null,
+  'signed out, no table privileges at all');
+
+select is(
+  (select array_agg(c.relname::text order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public' and c.relkind = 'r'
+     and has_table_privilege('authenticated', c.oid, 'delete, truncate')),
+  null,
+  'signed in, no table can be deleted from or truncated');
 
 -- -----------------------------------------------------------------------------
 -- A ledger with an owner (who has cloud access), an editor, a viewer, and a stranger
@@ -57,7 +71,7 @@ values (public.invite_code_hash('ABCD-EFGH-JKMN-PQRS'), 'aaaaaaaa-aaaa-4aaa-8aaa
 -- Signed out
 -- -----------------------------------------------------------------------------
 set local role anon;
-select is((select count(*) from public.accounts), 0::bigint, 'signed out, no rows can be read');
+select throws_ok($$ select count(*) from public.accounts $$, '42501', null, 'signed out, no table can be read');
 select throws_ok($$ select public.own_ledger() $$, '42501', null, 'signed out, own_ledger() is refused');
 select is((select paused from public.sync_control()), false, 'signed out, the sync switch can be read');
 
@@ -83,15 +97,17 @@ select throws_ok(
 select throws_ok(
   $$ insert into public.ledgers (owner_id) values ('11111111-1111-4111-8111-111111111111') $$,
   '42501', null, 'nobody makes ledgers by hand (own_ledger() does)');
-select is((select count(*) from public.ledger_invites), 0::bigint, 'invite codes can''t be read, not even their hashes');
+select throws_ok($$ select count(*) from public.ledger_invites $$, '42501', null, 'invite codes can''t be read, not even their hashes');
 select throws_ok($$ select public.list_members('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa') $$, 'P0001', 'not_member',
   'a stranger can''t list the members');
 select throws_ok($$ select public.create_invite('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'editor') $$, 'P0001', 'not_owner',
   'a stranger can''t invite people');
 
 -- Granting oneself cloud access.
-update public.cloud_subscriptions set expires_at = now() + interval '100 years'
-where user_id = '44444444-4444-4444-8444-444444444444';
+select throws_ok(
+  $$ update public.cloud_subscriptions set expires_at = now() + interval '100 years'
+     where user_id = '44444444-4444-4444-8444-444444444444' $$,
+  '42501', null, 'cloud access can''t be extended by its user');
 select is((select expires_at from public.cloud_subscriptions where user_id = '44444444-4444-4444-8444-444444444444'), null,
   'cloud access can''t be changed by its user');
 select throws_ok(
@@ -120,7 +136,9 @@ select is((select count(*) from public.accounts where ledger_id = 'aaaaaaaa-aaaa
 select throws_ok(
   $$ update public.accounts set name = 'Renamed', modified_at = now() where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' $$,
   '42501', null, 'a viewer can''t edit it');
-update public.ledger_members set role = 'editor' where user_id = '33333333-3333-4333-8333-333333333333';
+select throws_ok(
+  $$ update public.ledger_members set role = 'editor' where user_id = '33333333-3333-4333-8333-333333333333' $$,
+  '42501', null, 'members can''t be changed directly');
 select is((select role from public.ledger_members where user_id = '33333333-3333-4333-8333-333333333333'), 'viewer',
   'a viewer can''t promote themselves');
 

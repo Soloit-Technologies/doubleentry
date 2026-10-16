@@ -28,6 +28,7 @@ supabase/
 | `20261017000000_ledger_invites.sql` | Invites: `ledger_invites` (single-use codes, stored hashed), and the functions the app shares ledgers with: `create_invite`, `invite_details`, `accept_invite`, `list_ledgers`, `list_members`, `remove_member`, `rename_ledger`, `ledger_access` |
 | `20261018000000_sync_control.sql` | The switch that stops sync from the server: `service_control` (`sync_paused`, `min_version_code`, `message`) and `sync_control()`, which the app reads before every sync (see [Stopping sync](#stopping-sync)) |
 | `20261018000001_sync_error_reports.sql` | `sync_error_reports`: unexpected sync failures the app sends in, without ledger data; users can only add their own, 50 a day (see [Sync error reports](#sync-error-reports)) |
+| `20261019000000_tighten_table_grants.sql` | Table privileges no wider than the policies: nothing for signed-out users, no delete or truncate for signed-in users, only select on `ledgers`, `ledger_members` and `cloud_subscriptions`, nothing on `ledger_invites`; the same defaults for tables added later |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -99,16 +100,19 @@ entity in `data/local/Entities.kt` (bump the Room database version with a migrat
 ## Deploy from GitHub
 
 `.github/workflows/supabase.yml` always checks that every migration applies cleanly to a fresh
-Supabase stack and can be re-run. To also deploy, add these in the repository settings
-(*Settings → Secrets and variables → Actions*):
+Supabase stack and can be re-run. Deploying runs in the `production` environment
+(*Settings → Environments*), which only the protected `main` branch may use and which waits for
+approval. Its secrets live in that environment, not in the repository, so no other workflow or
+branch can read them:
 
-| Kind | Name | Value |
-|---|---|---|
-| Variable | `SUPABASE_PROJECT_ID` | the project ref |
-| Secret | `SUPABASE_ACCESS_TOKEN` | a personal access token from https://supabase.com/dashboard/account/tokens |
-| Secret | `SUPABASE_DB_PASSWORD` | the project's database password |
+| Kind | Where | Name | Value |
+|---|---|---|---|
+| Variable | repository | `SUPABASE_PROJECT_ID` | the project ref |
+| Secret | `production` | `SUPABASE_ACCESS_TOKEN` | a personal access token from https://supabase.com/dashboard/account/tokens |
+| Secret | `production` | `SUPABASE_DB_PASSWORD` | optional, the project's database password |
 
-Pull requests then show a dry run of pending migrations, and pushes to `main`/`master` apply them.
+Pushes to `main` then apply pending migrations once approved. Pull requests don't get the
+secrets; preview pending migrations locally with `supabase db push --dry-run --include-all`.
 
 ## Local development
 
