@@ -15,6 +15,24 @@ Release builds leave out cloud sync and the Supabase settings (see README → *B
 Play app is offline-only and needs no login. Shipping paid cloud backup is described in
 [Paid cloud backup](#paid-cloud-backup) below.
 
+## Developer account
+
+The app is published by the company, so the Play Console account is an **organization** account,
+not a personal one.
+
+1. **D-U-N-S number.** The legal name and address in the Dun & Bradstreet record must match what
+   you enter in Play exactly; verification fails otherwise.
+2. **Payments profile.** A Google payments profile of type *Business* with the company's legal name,
+   address and VAT number. Subscription payouts go here.
+3. **Sign up** at <https://play.google.com/console/signup>, choose *Organization*, and enter the
+   D-U-N-S number, the payments profile, a public developer name, a website, and a contact email and
+   phone number on the company's domain. Google verifies the email, the phone and the identity of
+   the person signing up; the fee is a one-time $25.
+4. **Trader status (EU).** Selling subscriptions makes the company a trader under the Digital
+   Services Act: its address, phone and email are shown on the store listing.
+5. **Users.** Invite other people and the release service account under *Users and permissions*
+   instead of sharing the login.
+
 ## One-time setup
 
 1. **Upload key.** Create it once and keep it (and its passwords) somewhere safe:
@@ -29,9 +47,8 @@ Play app is offline-only and needs no login. Shipping paid cloud backup is descr
    name `com.soloit.doubleentry` is fixed from then on. Later uploads can come from the workflow
    (secret `PLAY_SERVICE_ACCOUNT_JSON`: a Google Cloud service account invited in
    *Users and permissions* with release rights for this app).
-4. **Testing requirement.** Personal developer accounts created after November 2023 must run a
-   closed test with at least 12 testers for 14 days before production access. Organization
-   accounts are exempt.
+4. **Production.** Organization accounts don't need the 12-tester, 14-day closed test that new
+   personal accounts do; a release can be promoted from internal testing straight to production.
 
 ## App content answers
 

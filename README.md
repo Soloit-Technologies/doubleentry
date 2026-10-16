@@ -171,3 +171,27 @@ Amounts are stored as `Long` cents everywhere; dates as ISO `yyyy-MM-dd`. All de
 - `.github/workflows/supabase.yml` validates the migrations on a throwaway Supabase stack, previews
   them on pull requests and applies them to your project on push. Setup is in
   [`supabase/README.md`](supabase/README.md#deploy-from-github).
+
+## License
+
+DoubleEntry is open source. Copyright © Soloit Technologies AB.
+
+| Part | License |
+|---|---|
+| The apps: this Android app and the planned iOS and Windows apps | [Mozilla Public License 2.0](LICENSE) |
+| The backend: everything in [`supabase/`](supabase/) | [GNU Affero General Public License v3.0](supabase/LICENSE) |
+
+- **The apps (MPL-2.0).** You may use, change and redistribute the code, also in apps built for
+  other platforms and in closed-source projects. Files you change must stay under MPL-2.0 and
+  their source must be made available. MPL-2.0 permits distribution through app stores such as
+  Google Play, the Apple App Store and the Microsoft Store.
+- **The backend (AGPL-3.0).** If you run a changed version of the backend as a service for others,
+  you must make the changed source available to its users. Apps that only talk to the backend over
+  its API are not affected.
+- **Contributions** are accepted under the license of the part they change, so they can be
+  shipped in the official apps on every platform.
+- **Name and icon.** The licenses don't cover the DoubleEntry name, the Soloit name or the app icon
+  and artwork. Forks must use a different name and icon and must not present themselves as the
+  official app.
+
+iOS and Windows versions are planned. No date yet.
