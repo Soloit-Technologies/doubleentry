@@ -39,7 +39,10 @@ minimum_password_length = 8
 [auth.email]
 # Only accounts made before Sign in with Google use email and password. They can still reset a
 # forgotten password with a 6-digit code typed into the app ({{ .Token }} in the template).
-enable_signup = false
+# On a local stack this setting switches email sign-in off altogether ("Email logins are
+# disabled"), so it stays on here: the contract tests and local development sign in with email.
+# In the hosted project, new email sign-ups are off in the dashboard (see README).
+enable_signup = true
 otp_length = 6
 otp_expiry = 3600
 

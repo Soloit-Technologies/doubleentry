@@ -1,0 +1,54 @@
+name: Sync contract
+
+# The app's sync code against a real local Supabase stack with every migration applied
+# (LocalSupabaseContractTest): row-level security, the conflict trigger, paging, invites,
+# Realtime and account deletion as the server really does them. The same tests run against the
+# in-memory fake in the Android workflow, so a difference between the two shows up here.
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore: ['**.md']
+  pull_request:
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - uses: supabase/setup-cli@v3
+        with:
+          version: latest
+
+      # Realtime and the Edge Functions are part of what is tested.
+      - name: Start Supabase
+        run: supabase start -x studio,imgproxy,vector,logflare,mailpit,storage-api,postgres-meta,supavisor
+
+      - name: Contract tests against the stack
+        run: |
+          eval "$(supabase status -o env | grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY)=')"
+          export SUPABASE_TEST_URL="$API_URL" SUPABASE_TEST_ANON_KEY="$ANON_KEY" SUPABASE_TEST_SERVICE_KEY="$SERVICE_ROLE_KEY"
+          ./gradlew testDebugUnitTest --tests '*LocalSupabaseContractTest*'
+
+      - name: Fail when the contract tests were skipped
+        run: |
+          grep -q 'skipped="0"' app/build/test-results/testDebugUnitTest/TEST-com.soloit.doubleentry.sync.LocalSupabaseContractTest.xml
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: contract-test-report
+          path: app/build/reports/tests/testDebugUnitTest
+
+      - run: supabase stop --no-backup
+        if: always()

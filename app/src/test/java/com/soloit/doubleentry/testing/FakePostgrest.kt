@@ -35,6 +35,10 @@ import java.time.ZoneOffset
  * Uploads need the ledger owner's cloud access ([withoutAccess] lists users who have none), read
  * with `rpc/cloud_access` and `rpc/ledger_access`. The sharing functions (invites, members,
  * renaming) work like the migration's, with the same refusals.
+ *
+ * Failures can be injected with [fail]: a request can be refused before the server applies it, or
+ * applied with its response lost. Access tokens can be expired ([expireAccessTokens]) and refresh
+ * tokens are single-use, like GoTrue's.
  */
 class FakePostgrest {
     private val tables = mutableMapOf<String, MutableMap<String, JsonObject>>()
@@ -46,6 +50,11 @@ class FakePostgrest {
     /** Ledgers users were added to, besides their own, by user id; they're editors there. */
     val members = mutableMapOf<String, MutableSet<String>>()
 
+    /** What `rpc/sync_control` answers: the operator's switch for stopping sync. */
+    var syncPaused = false
+    var minVersionCode = 0
+    var serviceMessage: String? = null
+
     /** Ledger names; unnamed ledgers are "My ledger". */
     val ledgerNames = mutableMapOf<String, String>()
 
@@ -54,11 +63,73 @@ class FakePostgrest {
     private val usedInvites = mutableSetOf<String>()
     private val emails = mutableMapOf<String, String>()
 
+    /** Rows the app sent to `sync_error_reports`, with the reporter as `user_id`. */
+    val errorReports = mutableListOf<JsonObject>()
+
     /** Number of upserted rows, per table. */
     val writes = mutableMapOf<String, Int>()
 
     /** Called after each page a `GET` returns, with the table — e.g. to change rows while a pull is paging. */
     var afterPage: ((String) -> Unit)? = null
+
+    /** How an injected failure ends a request. */
+    enum class Failure {
+        /** The connection drops before the request reaches the server: nothing is applied. */
+        Dropped,
+
+        /** The server answers 503 without applying anything. */
+        Unavailable,
+
+        /** The server applies the request, then the connection drops before the response arrives. */
+        ResponseLost,
+
+        /** The server refuses the row with a check violation whose details quote the row, as Postgres does. */
+        Rejected,
+    }
+
+    private class Fault(val failure: Failure, var skip: Int, var times: Int, val matches: (okhttp3.Request) -> Boolean)
+
+    private val faults = mutableListOf<Fault>()
+
+    /**
+     * Fails [times] requests matching [matches] with [failure], after letting [skip] matching
+     * requests through. Use [times] = [Int.MAX_VALUE] to stay down until [heal].
+     */
+    @Synchronized
+    fun fail(failure: Failure, skip: Int = 0, times: Int = 1, matches: (okhttp3.Request) -> Boolean = { true }) {
+        faults += Fault(failure, skip, times, matches)
+    }
+
+    /** Removes every injected failure that hasn't happened yet. */
+    @Synchronized
+    fun heal() = faults.clear()
+
+    /** Every request handled, as "METHOD /path", failed ones included. */
+    val requests = mutableListOf<String>()
+
+    /** Number of successful refresh-token exchanges. */
+    var refreshes = 0
+        private set
+
+    private var tokenGeneration = 0
+    private val revokedAccessTokens = mutableSetOf<String>()
+    private val issuedAccessTokens = mutableSetOf<String>()
+
+    /** Refresh tokens that may still be exchanged once, to their user. */
+    private val refreshTokens = mutableMapOf<String, String>()
+
+    /** Makes every access token issued so far answer 401, as when they expire. */
+    @Synchronized
+    fun expireAccessTokens() {
+        revokedAccessTokens += issuedAccessTokens
+    }
+
+    /** Ends every session: refresh tokens issued so far can't be exchanged any more. */
+    @Synchronized
+    fun revokeSessions() {
+        expireAccessTokens()
+        refreshTokens.clear()
+    }
 
     fun rows(table: String): List<JsonObject> = tables[table].orEmpty().values.toList()
 
@@ -102,17 +173,53 @@ class FakePostgrest {
     @Synchronized
     private fun handle(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        if ("auth" in request.url.pathSegments) return respond(request, 200, signIn(request))
-        val user = request.header("Authorization")?.removePrefix("Bearer ")?.takeIf { it.startsWith("t-") }?.removePrefix("t-")
+        requests += "${request.method} ${request.url.encodedPath}"
+        val fault = faults.firstOrNull { it.matches(request) && (it.skip-- <= 0) }
+        if (fault != null && --fault.times <= 0) faults -= fault
+        when (fault?.failure) {
+            Failure.Dropped -> throw java.io.IOException("Injected: connection dropped")
+            Failure.Unavailable -> return respond(request, 503, buildJsonObject { put("message", "Service Unavailable") })
+            Failure.Rejected -> return respond(request, 400, buildJsonObject {
+                put("code", "23514")
+                put("message", "new row for relation \"transactions\" violates check constraint \"transactions_lines_check\"")
+                put("details", "Failing row contains (Salary from Acme AB, 2026-09-15, 25000.00).")
+                put("hint", JsonNull)
+            })
+            Failure.ResponseLost -> {
+                serve(request)
+                throw java.io.IOException("Injected: response lost")
+            }
+            null -> Unit
+        }
+        return serve(request)
+    }
+
+    private fun serve(request: okhttp3.Request): Response {
+        if ("auth" in request.url.pathSegments) return auth(request)
+        val bearer = request.header("Authorization")?.removePrefix("Bearer ")
+        if (bearer != null && bearer in revokedAccessTokens) {
+            return respond(request, 401, buildJsonObject { put("code", "PGRST301"); put("message", "JWT expired") })
+        }
+        // Tokens are "t-<user id>~<n>"; tests may also send a plain "t-<user id>".
+        val user = bearer?.takeIf { it.startsWith("t-") }?.removePrefix("t-")?.substringBefore('~')
         if ("rpc" in request.url.pathSegments) return rpc(request, request.url.pathSegments.last(), user)
         if (request.url.encodedPath == "/functions/v1/delete-account") {
             // The account goes with its ledger; its memberships of other ledgers end.
             val me = checkNotNull(user) { "delete-account needs a signed-in user" }
             tables.values.forEach { rows -> rows.values.removeAll { it["ledger_id"]?.jsonPrimitive?.content == ownLedger(me) } }
+            // Their edits elsewhere stay, no longer attributed (on delete set null).
+            tables.values.forEach { rows ->
+                rows.replaceAll { _, row -> if (row["user_id"]?.jsonPrimitive?.content == me) JsonObject(row + ("user_id" to JsonNull)) else row }
+            }
             members.remove(me)
             return respond(request, 200, buildJsonObject { put("deleted", true) })
         }
         val table = request.url.pathSegments.last()
+        if (table == "sync_error_reports") {
+            val report = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonObject
+            errorReports += JsonObject(report + ("user_id" to JsonPrimitive(checkNotNull(user) { "Reports need a signed-in user" })))
+            return respond(request, 201, JsonArray(emptyList()))
+        }
         val rows = tables.getOrPut(table) { linkedMapOf() }
         val reachable = user?.let(::ledgersOf)
         fun ledger(row: JsonObject) = row["ledger_id"]?.jsonPrimitive?.content
@@ -211,6 +318,11 @@ class FakePostgrest {
             put("member_count", membersOf(ledger).size)
         }
         return when (name) {
+            "sync_control" -> respond(request, 200, JsonArray(listOf(buildJsonObject {
+                put("paused", syncPaused)
+                put("min_version_code", minVersionCode)
+                put("message", serviceMessage)
+            })))
             "own_ledger" -> respond(request, 200, JsonPrimitive(ownLedger(checkNotNull(user) { "own_ledger needs a signed-in user" })))
             "cloud_access" -> {
                 val allowed = user == null || user !in withoutAccess
@@ -283,14 +395,30 @@ class FakePostgrest {
         }
     }
 
-    private fun signIn(request: okhttp3.Request): JsonObject {
+    private fun auth(request: okhttp3.Request): Response {
         val sent = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonObject
+        if (request.url.queryParameter("grant_type") == "refresh_token") {
+            // Single-use, like GoTrue's: a second exchange of the same token fails.
+            val id = refreshTokens.remove(sent.getValue("refresh_token").jsonPrimitive.content)
+                ?: return respond(request, 400, buildJsonObject { put("error_code", "refresh_token_already_used") })
+            refreshes++
+            return respond(request, 200, session(id, emailOf(id)))
+        }
         val email = (sent["email"] ?: sent.getValue("id_token")).jsonPrimitive.content
         val id = userIdFor(email)
         emails[id] = email
+        return respond(request, 200, session(id, email))
+    }
+
+    private fun session(id: String, email: String): JsonObject {
+        val generation = ++tokenGeneration
+        val access = "t-$id~$generation"
+        val refresh = "r-$id~$generation"
+        issuedAccessTokens += access
+        refreshTokens[refresh] = id
         return buildJsonObject {
-            put("access_token", "t-$id")
-            put("refresh_token", "r-$id")
+            put("access_token", access)
+            put("refresh_token", refresh)
             put("expires_in", 3600)
             put("user", buildJsonObject { put("id", id); put("email", email) })
         }

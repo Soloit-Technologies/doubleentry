@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.PauseCircleOutline
 import androidx.compose.material.icons.rounded.PersonOff
 import androidx.compose.material.icons.rounded.SyncProblem
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +33,10 @@ fun changesText(count: Int): String = if (count == 1) "1 change" else "$count ch
 
 /** One line on what needs the user's attention, or null when sync is fine. */
 fun SyncStatus.attentionText(): String? = when (attention) {
+    SyncAttention.UpdateRequired -> "Update the app to keep syncing" +
+        if (pendingChanges > 0) " · ${changesText(pendingChanges)} only on this device" else ""
+    SyncAttention.ServicePaused -> "Cloud sync is paused for maintenance" +
+        if (pendingChanges > 0) " · ${changesText(pendingChanges)} only on this device" else ""
     SyncAttention.SignInAgain -> "Sign in again to keep syncing" +
         if (pendingChanges > 0) " · ${changesText(pendingChanges)} only on this device" else ""
     SyncAttention.LostAccess -> "You no longer have access to this shared ledger"
@@ -50,7 +55,8 @@ fun SyncStatus.attentionText(): String? = when (attention) {
 fun SyncBanner(status: SyncStatus, onOpen: () -> Unit, onDismissReplaced: () -> Unit, modifier: Modifier = Modifier) {
     val attention = status.attention ?: return
     val text = status.attentionText() ?: return
-    val urgent = attention == SyncAttention.SignInAgain || attention == SyncAttention.LostAccess || attention == SyncAttention.Failing
+    val urgent = attention == SyncAttention.UpdateRequired || attention == SyncAttention.SignInAgain ||
+        attention == SyncAttention.LostAccess || attention == SyncAttention.Failing
     val colors = MaterialTheme.colorScheme
     Surface(
         color = if (urgent) colors.errorContainer else colors.secondaryContainer,
@@ -59,6 +65,8 @@ fun SyncBanner(status: SyncStatus, onOpen: () -> Unit, onDismissReplaced: () -> 
     ) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val icon = when (attention) {
+                SyncAttention.UpdateRequired -> Icons.Rounded.SystemUpdate
+                SyncAttention.ServicePaused -> Icons.Rounded.PauseCircleOutline
                 SyncAttention.SignInAgain -> Icons.AutoMirrored.Rounded.Login
                 SyncAttention.LostAccess -> Icons.Rounded.PersonOff
                 SyncAttention.NotBackedUp -> Icons.Rounded.CloudOff

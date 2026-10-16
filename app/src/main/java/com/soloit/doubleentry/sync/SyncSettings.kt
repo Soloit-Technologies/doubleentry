@@ -20,6 +20,8 @@ data class SupabaseConfig(
     val featureEnabled: Boolean,
     /** OAuth web client id for Sign in with Google; empty when not set up. */
     val googleClientId: String = "",
+    /** This build's versionCode, compared with the server's [SyncControl.minVersionCode]. */
+    val appVersionCode: Int = 0,
 ) {
     val baseUrl: String get() = url.trimEnd('/')
     val isConfigured: Boolean get() = url.isNotBlank() && anonKey.isNotBlank()

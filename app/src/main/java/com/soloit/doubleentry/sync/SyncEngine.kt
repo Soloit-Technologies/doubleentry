@@ -160,17 +160,22 @@ class SyncEngine(
     /**
      * Makes this device's ledger replace the cloud's as of [atMicros]: every cloud row last edited
      * before then is deleted, children first, including rows this device never pulled. The rows
-     * this device still holds from before then are restamped [atMicros] and uploaded, so they
-     * survive. Rows edited later, here or on another device, are newer and stay.
+     * this device still holds from before then are restamped just after [atMicros] and uploaded,
+     * so they survive. Rows edited later, here or on another device, are newer and stay.
+     *
+     * The restamp must be strictly later than the deletions: a device that syncs between the two
+     * steps holds the deletion, and would keep it over a row stamped the same (an equal stamp is
+     * the same edit).
      */
     suspend fun replaceCloudLedger(atMicros: Long, auth: AccessTokenProvider): PushResult {
+        val kept = atMicros + 1
         db.withTransaction {
             with(db.syncStatus()) {
-                restampAccounts(atMicros)
-                restampTransactions(atMicros)
-                restampAssets(atMicros)
-                restampInvoices(atMicros)
-                restampSettings(atMicros)
+                restampAccounts(kept)
+                restampTransactions(kept)
+                restampAssets(kept)
+                restampInvoices(kept)
+                restampSettings(kept)
             }
         }
         val at = formatTimestamp(atMicros)

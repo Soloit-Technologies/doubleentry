@@ -10,6 +10,8 @@ supabase/
   functions/       Edge Functions: Google Play purchases and account deletion
   templates/       Auth email (password-reset code)
   queries/         Read-only checks and maintenance SQL to run in the SQL editor
+  tests/           Security tests (pgTAP), run with `supabase test db`
+  fixtures/        Sample data and the upgrade check run by GitHub Actions
 ```
 
 | Migration | What it does |
@@ -24,6 +26,8 @@ supabase/
 | `20261007000000_cloud_subscriptions.sql` | Paid backup: `cloud_subscriptions`, `has_cloud_access()` / `cloud_access()`, uploads only with access (reads stay open), complimentary access for every existing user |
 | `20261016000000_shared_ledgers.sql` | Shared ledgers: `ledgers` and `ledger_members`, `ledger_id` on every synced table with keys `(ledger_id, id)`, row-level security by membership (writing needs the owner or editor role and the owner's cloud access), `user_id` as who last wrote a row, `own_ledger()`, a ledger for every existing user |
 | `20261017000000_ledger_invites.sql` | Invites: `ledger_invites` (single-use codes, stored hashed), and the functions the app shares ledgers with: `create_invite`, `invite_details`, `accept_invite`, `list_ledgers`, `list_members`, `remove_member`, `rename_ledger`, `ledger_access` |
+| `20261018000000_sync_control.sql` | The switch that stops sync from the server: `service_control` (`sync_paused`, `min_version_code`, `message`) and `sync_control()`, which the app reads before every sync (see [Stopping sync](#stopping-sync)) |
+| `20261018000001_sync_error_reports.sql` | `sync_error_reports`: unexpected sync failures the app sends in, without ledger data; users can only add their own, 50 a day (see [Sync error reports](#sync-error-reports)) |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -220,9 +224,64 @@ The same goes for `20261006000002_transaction_lines_and_edit_times.sql` (older b
 `modified_at` or `lines`) and `20261016000000_shared_ledgers.sql` (older builds upsert with
 `on_conflict=user_id,id` and don't send `ledger_id`): their uploads fail.
 
+## Stopping sync
+
+If a release turns out to damage synced data, or the backend needs maintenance, stop sync from the
+SQL editor instead of waiting for a fixed build to pass review. Every app reads the switch before
+each sync and before signing in; changes wait on the devices and upload once sync runs again.
+
+```sql
+-- Every app: sync stops, and the app says it's paused for maintenance.
+update public.service_control set sync_paused = true, message = null;
+
+-- Only builds older than versionCode 15 (e.g. one with a sync bug): they ask the user to update.
+update public.service_control set min_version_code = 15,
+  message = 'This version has a problem with cloud sync. Update DoubleEntry to keep syncing; your changes are safe on this device.';
+
+-- Back to normal.
+update public.service_control set sync_paused = false, min_version_code = 0, message = null;
+```
+
+`message` replaces the app's own text for either case. When the switch can't be read (offline,
+or a project without the migration), sync isn't stopped.
+
+## Sync error reports
+
+The app sends unexpected sync failures to `sync_error_reports`: the kind of error, its technical
+message with row content removed, where in the code it happened, the app version and how many
+changes were waiting. No ledger data, and nothing for expected states (offline, an ended session,
+no subscription). Each failure is sent at most every 6 hours per device, and the server keeps at
+most 50 a day per user and deletes reports after 90 days (a `pg_cron` job). Check
+`queries/sync_errors.sql` after every release.
+
+## Testing
+
+GitHub Actions runs all of these on every pull request; this is how to run them locally.
+
+| What | Where | Run with |
+|---|---|---|
+| Security rules: what a user can't do with their own token (read others' ledgers, grant themselves access, promote themselves, …), and guards for new tables and functions | `tests/security_test.sql` | `supabase test db` |
+| The app's sync code against the real stack: conflicts, paging, invites, Realtime, account deletion. The same tests run against the app's in-memory fake, which keeps the fake honest | `app/src/test/.../sync/SupabaseContractTest.kt` | see below |
+| Migrations re-run over existing data, and new migrations applied over the previous schema's data | `fixtures/sample_ledgers.sql`, `fixtures/upgrade_check.sql` | see `.github/workflows/supabase.yml` |
+| Subscription rules of the Edge Functions | `functions/_shared/subscriptions_test.ts` | `deno test` in `functions/` |
+
+Contract tests against a local stack:
+
+```bash
+supabase start
+eval "$(supabase status -o env | grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY)=')"
+SUPABASE_TEST_URL=$API_URL SUPABASE_TEST_ANON_KEY=$ANON_KEY SUPABASE_TEST_SERVICE_KEY=$SERVICE_ROLE_KEY \
+  ./gradlew testDebugUnitTest --tests '*SupabaseContractTest*'
+```
+
+Without the variables only the fake half runs. **When a migration changes the schema, update
+`fixtures/sample_ledgers.sql` in the same pull request** so it fits the new schema (cover new
+tables and columns): the next change's upgrade check starts from it.
+
 ## Queries
 
 - **`queries/health_check.sql`.** Row counts, unbalanced transactions, orphaned lines, duplicate account numbers.
+- **`queries/sync_errors.sql`.** Recent sync error reports by kind and app version.
 - **`queries/trial_balance.sql`.** Balance of every account of a user's ledger as of a date.
 - **`queries/purge_tombstones.sql`.** Removes old soft-deleted rows. Read the warning in the file first.
 - **`queries/drop_transaction_entries.sql`.** Drops the old lines table once every device runs a current build.

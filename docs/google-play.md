@@ -95,6 +95,8 @@ not a personal one.
    paste it as the release notes.
 3. Tag and push, e.g. `git tag v2.0.1 && git push origin v2.0.1`, then promote the release in the
    Play Console from internal testing onwards.
+4. For releases that touch cloud sync, the schema or billing, go through
+   [`release-checklist.md`](release-checklist.md): device test, staged rollout, error reports.
 
 ## Paid cloud backup
 
@@ -170,9 +172,9 @@ server enforces this is in [`supabase/README.md`](../supabase/README.md#accounts
 | Section | New answer |
 |---|---|
 | App access | Cloud backup needs an account. Reviewers can sign in with any Google account, but would then have to buy. Instead, create an email account for them in the Supabase dashboard (*Authentication → Add user*), give it complimentary access (SQL in `supabase/README.md`), and tell them to use *Sign in with email* |
-| Data safety → collection | **Yes**, the app collects data. *Personal info → Email address* and *Name* (from the Google account; account management, required for cloud backup). *Financial info → Other financial info* (the ledger, for app functionality, optional: only with cloud backup). *Financial info → Purchase history* (subscription status, app functionality). None of it is shared with third parties or used for ads or analytics |
+| Data safety → collection | **Yes**, the app collects data. *Personal info → Email address* and *Name* (from the Google account; account management, required for cloud backup). *Financial info → Other financial info* (the ledger, for app functionality, optional: only with cloud backup). *Financial info → Purchase history* (subscription status, app functionality). *App info and performance → Diagnostics* (sync error reports: kind of error, app version, no ledger content; linked to the account; analytics, to find and fix sync problems). None of it is shared with third parties or used for ads |
 | Data safety → security | Encrypted in transit: yes (HTTPS). Users can request deletion: yes |
 | Data deletion | In the app: *Cloud backup & sync → Delete account*. Play also requires a web link where people can ask for deletion without the app, e.g. a section of `PRIVACY.md` explaining how to request it (an issue or the contact email) |
-| Privacy policy | Update `PRIVACY.md`: what is stored in the cloud (email, ledger, subscription status), where (Supabase, and the region of the project), how long (until the account is deleted), and that payments are handled by Google Play |
+| Privacy policy | Update `PRIVACY.md`: what is stored in the cloud (email, ledger, subscription status, and sync error reports without ledger content), where (Supabase, and the region of the project), how long (until the account is deleted; error reports at most 90 days), and that payments are handled by Google Play |
 | Store listing | Mention the subscription in the full description: free app, optional paid cloud backup, prices in the listing come from Google Play |
 

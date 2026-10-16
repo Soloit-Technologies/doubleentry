@@ -9,6 +9,7 @@
 // 409 {"error": "other_account"} when the purchase belongs to another DoubleEntry account.
 
 import { fetchSubscription, InvalidPurchaseError, ownerOfToken, storeSubscription, toRow } from "../_shared/play.ts";
+import { ownedByAnotherAccount } from "../_shared/subscriptions.ts";
 import { callerId, json } from "../_shared/supabase.ts";
 
 Deno.serve(async (request) => {
@@ -23,9 +24,7 @@ Deno.serve(async (request) => {
     const purchase = await fetchSubscription(purchaseToken);
     // The app sets the obfuscated account id to the Supabase user id when it starts a purchase.
     const buyer = purchase.externalAccountIdentifiers?.obfuscatedExternalAccountId;
-    if (buyer && buyer !== userId) return json(409, { error: "other_account" });
-    const owner = await ownerOfToken(purchaseToken);
-    if (owner && owner !== userId) return json(409, { error: "other_account" });
+    if (ownedByAnotherAccount(userId, buyer, await ownerOfToken(purchaseToken))) return json(409, { error: "other_account" });
 
     const row = toRow(purchase, purchaseToken);
     await storeSubscription(userId, row);

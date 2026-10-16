@@ -168,9 +168,14 @@ Amounts are stored as `Long` cents everywhere; dates as ISO `yyyy-MM-dd`. All de
 - `.github/workflows/android.yml` runs the unit tests and builds a debug APK on every push and pull request.
 - `.github/workflows/release.yml` builds the signed Play bundle when a `v*` tag is pushed and can upload it
   to the internal testing track. Setup is in [`docs/google-play.md`](docs/google-play.md).
-- `.github/workflows/supabase.yml` validates the migrations on a throwaway Supabase stack, previews
-  them on pull requests and applies them to your project on push. Setup is in
+- `.github/workflows/supabase.yml` validates the migrations on a throwaway Supabase stack (security
+  tests, re-runs and an upgrade over existing data), tests the Edge Functions, previews the migrations
+  on pull requests and applies them to your project on push. Setup is in
   [`supabase/README.md`](supabase/README.md#deploy-from-github).
+- `.github/workflows/sync-contract.yml` runs the sync contract tests against a real local Supabase
+  stack, the same tests the Android workflow runs against the in-memory fake
+  ([Testing](supabase/README.md#testing)). Before releasing sync changes, see
+  [`docs/release-checklist.md`](docs/release-checklist.md).
 
 ## License
 
