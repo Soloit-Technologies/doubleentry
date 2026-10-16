@@ -42,6 +42,7 @@ class AppContainer(private val context: Context, val appScope: CoroutineScope) {
         anonKey = BuildConfig.SUPABASE_ANON_KEY,
         featureEnabled = BuildConfig.CLOUD_SYNC_FEATURE,
         googleClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID,
+        appVersionCode = BuildConfig.VERSION_CODE,
     )
 
     val preferences = AppPreferences(context)

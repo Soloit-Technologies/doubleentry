@@ -9,9 +9,8 @@
 // A non-2xx response makes Pub/Sub retry later.
 
 import { fetchSubscription, InvalidPurchaseError, ownerOfToken, storeSubscription, toRow } from "../_shared/play.ts";
+import { notifiedUser } from "../_shared/subscriptions.ts";
 import { json } from "../_shared/supabase.ts";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface DeveloperNotification {
   subscriptionNotification?: { purchaseToken: string; notificationType: number };
@@ -32,9 +31,7 @@ Deno.serve(async (request) => {
 
   try {
     const purchase = await fetchSubscription(purchaseToken);
-    // A token the app has verified before, else the account the app tagged the purchase with.
-    const buyer = purchase.externalAccountIdentifiers?.obfuscatedExternalAccountId;
-    const userId = await ownerOfToken(purchaseToken) ?? (buyer && UUID.test(buyer) ? buyer : null);
+    const userId = notifiedUser(await ownerOfToken(purchaseToken), purchase.externalAccountIdentifiers?.obfuscatedExternalAccountId);
     if (!userId) return json(200, { ignored: "unknown account" });
     await storeSubscription(userId, toRow(purchase, purchaseToken));
     return json(200, { stored: true });

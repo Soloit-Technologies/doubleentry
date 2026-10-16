@@ -1,8 +1,9 @@
 name: Supabase
 
-# Validates every migration on a throwaway local Supabase stack, previews the changes
-# against the real project on pull requests and applies them (and deploys the Edge Functions)
-# on push to the main branch. The functions' secrets are set once by hand, see supabase/README.md.
+# Validates every migration on a throwaway local Supabase stack (security tests, re-runs, and an
+# upgrade over existing data), tests the Edge Functions, previews the changes against the real
+# project on pull requests and applies them (and deploys the Edge Functions) on push to the main
+# branch. The functions' secrets are set once by hand, see supabase/README.md.
 #
 # Deploying needs (Settings → Secrets and variables → Actions):
 #   variable SUPABASE_PROJECT_ID     the project ref, e.g. abcdefghijklmnopqrst
@@ -28,15 +29,78 @@ jobs:
           version: latest
       - name: Apply all migrations to a fresh database
         run: supabase start -x studio,imgproxy,vector,logflare,mailpit,edge-runtime,storage-api,postgres-meta,supavisor
-      - name: Migrations are re-runnable
+      - name: Security tests (pgTAP, supabase/tests)
+        run: supabase test db
+      - name: Migrations are re-runnable and leave existing data alone
+        env:
+          DB: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: |
+          psql "$DB" -v ON_ERROR_STOP=1 -q -f supabase/fixtures/sample_ledgers.sql
+          psql "$DB" -v ON_ERROR_STOP=1 -q -v phase=before -f supabase/fixtures/upgrade_check.sql
           for f in supabase/migrations/*.sql; do
-            psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -v ON_ERROR_STOP=1 -q -f "$f"
+            psql "$DB" -v ON_ERROR_STOP=1 -q -f "$f"
           done
+          psql "$DB" -v ON_ERROR_STOP=1 -q -v phase=after -f supabase/fixtures/upgrade_check.sql
       - run: supabase stop --no-backup
 
+  # This change's new migrations, applied to a database that holds data in the schema before
+  # them: the base commit's migrations with its supabase/fixtures/sample_ledgers.sql. That is
+  # what `db push` does to the real project. Skipped when the base has no sample data yet.
+  upgrade:
+    runs-on: ubuntu-latest
+    env:
+      DB: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Find the schema before this change
+        id: base
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BASE" ] && git cat-file -e "$BASE:supabase/fixtures/sample_ledgers.sql" 2>/dev/null; then
+            echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          else
+            echo "The base commit ($BASE) has no sample data; nothing to upgrade from."
+          fi
+      - uses: supabase/setup-cli@v3
+        if: steps.base.outputs.sha
+        with:
+          version: latest
+      - name: Start the old schema with its sample data
+        if: steps.base.outputs.sha
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "${{ steps.base.outputs.sha }}"
+          cd "$RUNNER_TEMP/base"
+          supabase start -x studio,imgproxy,vector,logflare,mailpit,edge-runtime,storage-api,postgres-meta,supavisor
+          psql "$DB" -v ON_ERROR_STOP=1 -q -f supabase/fixtures/sample_ledgers.sql
+      - name: Apply the new migrations and check the data
+        if: steps.base.outputs.sha
+        run: |
+          psql "$DB" -v ON_ERROR_STOP=1 -q -v phase=before -f supabase/fixtures/upgrade_check.sql
+          supabase migration up --local
+          psql "$DB" -v ON_ERROR_STOP=1 -q -v phase=after -f supabase/fixtures/upgrade_check.sql
+          supabase test db
+      - if: steps.base.outputs.sha
+        run: supabase stop --no-backup
+
+  functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Edge Function tests
+        working-directory: supabase/functions
+        run: deno test
+      - name: Edge Functions type-check
+        working-directory: supabase/functions
+        run: deno check play-verify/index.ts play-notifications/index.ts delete-account/index.ts
+
   deploy:
-    needs: validate
+    needs: [validate, upgrade, functions]
     if: vars.SUPABASE_PROJECT_ID != ''
     runs-on: ubuntu-latest
     env:

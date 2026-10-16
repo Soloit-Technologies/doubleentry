@@ -54,6 +54,8 @@ data class SyncStatus(
     val ledgers: List<LedgerInfo> = emptyList(),
     /** The id of the ledger open on this device; null while signed out or before it's known. */
     val ledgerId: String? = null,
+    /** The server has stopped sync (for every app, or for this build); changes wait on this device. */
+    val serviceBlock: ServiceBlock? = null,
 ) {
     /** Feature flag on and Supabase configured: signing in is possible. */
     val available: Boolean get() = featureEnabled && configured
@@ -77,6 +79,7 @@ data class SyncStatus(
     val attention: SyncAttention?
         get() = when {
             !available || !isSignedIn -> null
+            serviceBlock != null -> if (serviceBlock.updateRequired) SyncAttention.UpdateRequired else SyncAttention.ServicePaused
             needsSignIn -> SyncAttention.SignInAgain
             lostLedgerAccess -> SyncAttention.LostAccess
             notBackedUp && pendingChanges > 0 -> SyncAttention.NotBackedUp
@@ -87,7 +90,24 @@ data class SyncStatus(
         }
 }
 
-enum class SyncAttention { SignInAgain, LostAccess, NotBackedUp, Failing, Offline, Paused, Replaced }
+enum class SyncAttention { UpdateRequired, ServicePaused, SignInAgain, LostAccess, NotBackedUp, Failing, Offline, Paused, Replaced }
+
+/** Why the server stopped sync ([SyncControl]): [message] is written for the user. */
+data class ServiceBlock(val updateRequired: Boolean, val message: String) {
+    companion object {
+        fun of(control: SyncControl, appVersionCode: Int): ServiceBlock? = when {
+            appVersionCode < control.minVersionCode -> ServiceBlock(
+                updateRequired = true,
+                control.message ?: "Update DoubleEntry to keep syncing. Until then, changes stay on this device.",
+            )
+            control.paused -> ServiceBlock(
+                updateRequired = false,
+                control.message ?: "Cloud sync is paused for maintenance. Changes stay on this device and upload when it's back.",
+            )
+            else -> null
+        }
+    }
+}
 
 /** A decision signing in needs from the user before anything syncs. */
 sealed interface SignInQuestion {
@@ -168,6 +188,9 @@ class SyncManager(
 
     @Volatile private var pendingSignIn: PendingSignIn? = null
 
+    /** When each error was last reported, so a failure repeating every cycle is sent once in a while. */
+    private val reported = mutableMapOf<String, Long>()
+
     init {
         // Installs that signed in before the data owner was tracked.
         if (prefs.userId != null && prefs.dataOwnerId == null) {
@@ -225,6 +248,7 @@ class SyncManager(
         return gate.withLock {
             setSyncing(true)
             try {
+                if (serviceBlocked()) return@withLock false
                 ensureLedger()
                 if (lostAccess) return@withLock false
                 // A ledger waiting to replace the cloud's mustn't be merged with it by a pull.
@@ -250,6 +274,7 @@ class SyncManager(
         gate.withLock {
             setSyncing(true)
             try {
+                if (serviceBlocked()) return@withLock
                 ensureLedger()
                 val upload = refreshAccess()
                 if (lostAccess) {
@@ -321,6 +346,9 @@ class SyncManager(
         if (userId.isNullOrBlank() || accessToken.isNullOrBlank()) {
             throw SyncException("We couldn't sign you in. Please try again.")
         }
+        // Signing in may wipe this device to download the cloud's ledger, which mustn't happen
+        // while sync can't run.
+        if (serviceBlocked()) throw SyncException(_status.value.serviceBlock!!.message)
         val current = prefs.userId
         if (current != null) {
             // Renewing an expired session: the data on this device already belongs to the account.
@@ -615,6 +643,22 @@ class SyncManager(
         if (!email.isNullOrBlank()) prefs.userEmail = email
     }
 
+    /**
+     * Asks the server whether sync may run, and shows why not. When the server can't be asked,
+     * the last answer stands: offline, sync fails anyway, and otherwise it shouldn't depend on this.
+     */
+    private suspend fun serviceBlocked(): Boolean {
+        val block = try {
+            ServiceBlock.of(api.syncControl(), config.appVersionCode)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return _status.value.serviceBlock != null
+        }
+        _status.update { it.copy(serviceBlock = block) }
+        return block != null
+    }
+
     /** Looks up the account's ledger on devices that signed in before ledgers existed. */
     private suspend fun ensureLedger() {
         if (prefs.ledgerId == null) prefs.ledgerId = authorized { api.ownLedger(it) }
@@ -632,6 +676,28 @@ class SyncManager(
         _status.update {
             it.copy(lastError = SupabaseApi.userMessage(e), offline = e is OfflineException, needsSignIn = e is SessionExpiredException)
         }
+        report(e)
+    }
+
+    /** Sends an unexpected failure to the project ([SyncErrorReport]), in the background and at most every 6 hours. */
+    private fun report(e: Exception) {
+        if (!SyncErrorReport.isReportable(e) || prefs.userId == null) return
+        val report = SyncErrorReport.of(e, config.appVersionCode, _status.value.pendingChanges)
+        val now = System.currentTimeMillis()
+        synchronized(reported) {
+            val key = report.kind + report.detail
+            if (reported[key]?.let { now - it < REPORT_INTERVAL_MILLIS } == true) return
+            reported[key] = now
+        }
+        scope.launch {
+            try {
+                authorized { api.reportSyncError(report, it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.i(TAG, "Couldn't report the sync failure", e)
+            }
+        }
     }
 
     private fun succeeded() = _status.update { it.copy(lastError = null, offline = false, needsSignIn = false) }
@@ -645,7 +711,7 @@ class SyncManager(
     private fun setSyncing(value: Boolean) = _status.update { it.copy(isSyncing = value) }
 
     private fun publish() = _status.update {
-        val base = snapshot().copy(isSyncing = it.isSyncing, pendingChanges = it.pendingChanges)
+        val base = snapshot().copy(isSyncing = it.isSyncing, pendingChanges = it.pendingChanges, serviceBlock = it.serviceBlock)
         if (prefs.userId == null) base else base.copy(lastError = it.lastError, offline = it.offline, needsSignIn = it.needsSignIn)
     }
 
@@ -668,5 +734,6 @@ class SyncManager(
 
     private companion object {
         const val TAG = "SyncManager"
+        const val REPORT_INTERVAL_MILLIS = 6 * 3600_000L
     }
 }

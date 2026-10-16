@@ -77,6 +77,17 @@ data class CloudAccess(
     val expiresAtMillis: Long? get() = expiresAt?.let { runCatching { parseTimestamp(it) / 1000 }.getOrNull() }
 }
 
+/**
+ * One row of `rpc/sync_control`: the operator's switch for stopping sync in every app ([paused]),
+ * or in builds older than [minVersionCode]. [message] replaces the app's own explanation.
+ */
+@Serializable
+data class SyncControl(
+    val paused: Boolean = false,
+    @SerialName("min_version_code") val minVersionCode: Int = 0,
+    val message: String? = null,
+)
+
 /** One row of `rpc/list_ledgers`: a ledger the signed-in user is a member of. */
 @Serializable
 data class LedgerInfo(
@@ -208,6 +219,19 @@ class SupabaseApi(
     }
 
     /**
+     * `POST /rest/v1/rpc/sync_control`, signed in or not: whether the server has stopped sync. A
+     * project without the function never stops it.
+     */
+    suspend fun syncControl(): SyncControl {
+        val text = try {
+            execute(postJson("rest/v1/rpc/sync_control", "{}", config.anonKey), Operation.Sync)
+        } catch (e: NotFoundException) {
+            return SyncControl()
+        }
+        return json.decodeFromString(ListSerializer(SyncControl.serializer()), text).firstOrNull() ?: SyncControl()
+    }
+
+    /**
      * `POST /rest/v1/rpc/own_ledger`: the id of the signed-in user's own ledger, which the server
      * makes the first time it's asked for.
      */
@@ -262,6 +286,18 @@ class SupabaseApi(
     suspend fun verifyPurchase(purchaseToken: String, accessToken: String) {
         val body = buildJsonObject { put("purchaseToken", purchaseToken) }.toString()
         execute(postJson("functions/v1/play-verify", body, accessToken), Operation.Purchase)
+    }
+
+    /** `POST /rest/v1/sync_error_reports`: files [report] under the signed-in user. */
+    suspend fun reportSyncError(report: SyncErrorReport, accessToken: String) {
+        val request = Request.Builder()
+            .url("${config.baseUrl}/rest/v1/sync_error_reports")
+            .header("apikey", config.anonKey)
+            .header("Authorization", "Bearer $accessToken")
+            .header("Prefer", "return=minimal")
+            .post(json.encodeToString(SyncErrorReport.serializer(), report).toRequestBody(jsonMedia))
+            .build()
+        execute(request, Operation.Sync)
     }
 
     /** `POST /functions/v1/delete-account`: deletes the account and everything it stored in the cloud. */

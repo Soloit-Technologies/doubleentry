@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.soloit.doubleentry.sync.ServiceBlock
 import com.soloit.doubleentry.sync.SignInChoice
 import com.soloit.doubleentry.sync.SignInQuestion
 import com.soloit.doubleentry.ui.LocalAppContainer
@@ -170,6 +172,8 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
                 if (status.lostLedgerAccess) {
                     LostAccessCard(onRemove = { status.ledgerId?.let { id -> scope.launch { container.sessions.removeFromDevice(id) } } })
                 }
+
+                status.serviceBlock?.let { ServiceBlockCard(it, packageName = context.packageName) }
 
                 BackupPlanCard(status.access, container.billing)
 
@@ -478,5 +482,26 @@ private fun NotConfiguredCard() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** The server has stopped sync: why, and for an outdated build, the way to the update. */
+@Composable
+private fun ServiceBlockCard(block: ServiceBlock, packageName: String) {
+    val uri = LocalUriHandler.current
+    SectionCard(contentPadding = PaddingValues(20.dp), containerColor = MaterialTheme.colorScheme.errorContainer) {
+        Text(
+            if (block.updateRequired) "Update required" else "Sync is paused",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(block.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+        if (block.updateRequired) {
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = { uri.openUri("https://play.google.com/store/apps/details?id=$packageName") }, modifier = Modifier.fillMaxWidth()) {
+                Text("Update in Google Play")
+            }
+        }
     }
 }

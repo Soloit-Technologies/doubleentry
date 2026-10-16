@@ -75,7 +75,7 @@ class CloudBilling(context: Context, private val sync: SyncManager, private val 
     val state: StateFlow<BillingState> = _state.asStateFlow()
 
     private val connectLock = Mutex()
-    private val purchaseLock = Mutex()
+    private val confirmation = PurchaseConfirmation(sync::verifyPurchase, ::acknowledge, _state)
 
     /** Google Play's page where the user changes or cancels the subscription. */
     val manageUrl: String get() = "https://play.google.com/store/account/subscriptions?sku=$PRODUCT_ID&package=$packageName"
@@ -130,41 +130,26 @@ class CloudBilling(context: Context, private val sync: SyncManager, private val 
         if (userAsked && purchases.isEmpty()) {
             _state.update { it.copy(message = "No cloud backup subscription was found for the Google account on this device.") }
         }
-        purchases.forEach { handle(it) }
+        purchases.forEach { confirmation.handle(it) }
     }
 
     fun clearMessage() = _state.update { it.copy(message = null) }
 
     override fun onPurchasesUpdated(result: BillingResult, purchases: MutableList<Purchase>?) {
         when (result.responseCode) {
-            BillingClient.BillingResponseCode.OK -> scope.launch { purchases.orEmpty().forEach { handle(it) } }
+            BillingClient.BillingResponseCode.OK -> scope.launch { purchases.orEmpty().forEach { confirmation.handle(it) } }
             BillingClient.BillingResponseCode.USER_CANCELED -> Unit
             BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> scope.launch { restore(everything = true, userAsked = true) }
             else -> _state.update { it.copy(message = messageFor(result)) }
         }
     }
 
-    private suspend fun handle(purchase: Purchase) = purchaseLock.withLock {
-        if (PRODUCT_ID !in purchase.products) return@withLock
-        when (purchase.purchaseState) {
-            Purchase.PurchaseState.PENDING -> _state.update { it.copy(pending = true) }
-            Purchase.PurchaseState.PURCHASED -> {
-                _state.update { it.copy(confirming = true, pending = false) }
-                try {
-                    sync.verifyPurchase(purchase.purchaseToken)
-                    if (!purchase.isAcknowledged) {
-                        client.acknowledgePurchase(AcknowledgePurchaseParams.newBuilder().setPurchaseToken(purchase.purchaseToken).build())
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "Purchase not confirmed", e)
-                    _state.update { it.copy(message = SupabaseApi.userMessage(e)) }
-                } finally {
-                    _state.update { it.copy(confirming = false) }
-                }
-            }
-        }
+    /** Acknowledges a purchase with Google; one that fails is acknowledged when the app next opens ([restore]). */
+    private suspend fun acknowledge(purchaseToken: String): Boolean {
+        val result = client.acknowledgePurchase(AcknowledgePurchaseParams.newBuilder().setPurchaseToken(purchaseToken).build())
+        val ok = result.responseCode == BillingClient.BillingResponseCode.OK
+        if (!ok) Log.w(TAG, "Purchase not acknowledged: ${result.responseCode} ${result.debugMessage}")
+        return ok
     }
 
     private suspend fun connect(): Boolean = connectLock.withLock {
@@ -213,5 +198,43 @@ class CloudBilling(context: Context, private val sync: SyncManager, private val 
         /** The subscription product in the Play Console (Monetize → Subscriptions); its base plans are the [CloudPlan]s. */
         const val PRODUCT_ID = "cloud_backup"
         private const val TAG = "CloudBilling"
+    }
+}
+
+/**
+ * Confirms a purchase with the server ([verify]) and only then acknowledges it with Google
+ * ([acknowledge]): Google refunds a purchase left unacknowledged for three days, so one the server
+ * never recorded isn't charged. Purchases of other products are ignored.
+ */
+internal class PurchaseConfirmation(
+    private val verify: suspend (purchaseToken: String) -> Unit,
+    private val acknowledge: suspend (purchaseToken: String) -> Boolean,
+    private val state: MutableStateFlow<BillingState>,
+) {
+    private val lock = Mutex()
+
+    suspend fun handle(purchase: Purchase) = lock.withLock {
+        if (CloudBilling.PRODUCT_ID !in purchase.products) return@withLock
+        when (purchase.purchaseState) {
+            Purchase.PurchaseState.PENDING -> state.update { it.copy(pending = true) }
+            Purchase.PurchaseState.PURCHASED -> {
+                state.update { it.copy(confirming = true, pending = false) }
+                try {
+                    verify(purchase.purchaseToken)
+                    if (!purchase.isAcknowledged) acknowledge(purchase.purchaseToken)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Purchase not confirmed", e)
+                    state.update { it.copy(message = SupabaseApi.userMessage(e)) }
+                } finally {
+                    state.update { it.copy(confirming = false) }
+                }
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "CloudBilling"
     }
 }

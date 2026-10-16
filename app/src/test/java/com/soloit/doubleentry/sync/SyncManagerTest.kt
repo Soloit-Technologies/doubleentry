@@ -41,10 +41,10 @@ class SyncManagerTest {
         override fun clear() = values.clear()
     }
 
-    private inner class Device(name: String) {
+    private inner class Device(name: String, version: Int = 13) {
         val t = TestLedger(name)
         val prefs = SyncPreferences(t.context, MemoryTokens())
-        private val config = SupabaseConfig("https://project.supabase.co", "anon", true)
+        private val config = SupabaseConfig("https://project.supabase.co", "anon", true, appVersionCode = version)
         private val api = SupabaseApi(config, server.client)
         val sync = SyncManager(config, prefs, api, SyncEngine(t.db, api, prefs), scope, t.db.syncStatus().pendingChanges())
 
@@ -403,5 +403,75 @@ class SyncManagerTest {
 
         b.sync.signOut()
         assertTrue(!b.sync.status.value.signedInWithGoogle)
+    }
+
+    @Test
+    fun pausingSyncOnTheServerStopsItEverywhereAndKeepsTheChanges() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Synced")
+        a.sync.signIn("me@example.com", "pw")
+        server.syncPaused = true
+        val accounts = a.t.ledger.getAccounts()
+        a.t.post(day, "Waiting", accounts.single { it.number == 5010 }, accounts.single { it.number == 1910 }, 1_00)
+
+        val requestsBefore = server.requests.size
+        a.sync.syncNow()
+        assertEquals(listOf("POST /rest/v1/rpc/sync_control"), server.requests.drop(requestsBefore))
+        assertEquals(SyncAttention.ServicePaused, a.sync.status.value.attention)
+        assertEquals(setOf("Synced"), cloudTitles())
+
+        server.syncPaused = false
+        assertTrue(a.sync.syncNow())
+        assertNull(a.sync.status.value.attention)
+        assertEquals(setOf("Synced", "Waiting"), cloudTitles())
+    }
+
+    @Test
+    fun anOutdatedBuildStopsSyncingAndAsksForTheUpdate() = runBlocking<Unit> {
+        val old = Device("old", version = 13)
+        old.ledgerWithOneTransaction("Synced")
+        old.sync.signIn("me@example.com", "pw")
+        server.minVersionCode = 14
+        server.serviceMessage = "This version can damage synced data. Update to keep syncing."
+
+        old.sync.syncNow()
+        val block = old.sync.status.value.serviceBlock!!
+        assertTrue(block.updateRequired)
+        assertEquals("This version can damage synced data. Update to keep syncing.", block.message)
+        assertEquals(SyncAttention.UpdateRequired, old.sync.status.value.attention)
+
+        val updated = Device("updated", version = 14)
+        assertNull(updated.sync.signIn("me@example.com", "pw"))
+        assertEquals(setOf("Synced"), updated.titles())
+        assertNull(updated.sync.status.value.serviceBlock)
+    }
+
+    @Test
+    fun signingInWhileSyncIsStoppedChangesNothing() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Cloud")
+        a.sync.signIn("me@example.com", "pw")
+        server.syncPaused = true
+
+        // This device would be wiped to download the cloud's ledger: refused before anything happens.
+        val b = Device("b")
+        b.ledgerWithOneTransaction("Device")
+        val refused = runCatching { b.sync.signIn("me@example.com", "pw") }.exceptionOrNull()
+        assertTrue(refused is SyncException)
+        assertNull(b.prefs.userId)
+        assertEquals(setOf("Device"), b.titles())
+    }
+
+    @Test
+    fun syncRunsWhenTheSwitchCantBeRead() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Synced")
+        a.sync.signIn("me@example.com", "pw")
+        server.fail(FakePostgrest.Failure.Unavailable, times = Int.MAX_VALUE) { it.url.encodedPath.endsWith("/sync_control") }
+        val accounts = a.t.ledger.getAccounts()
+        a.t.post(day, "Still syncs", accounts.single { it.number == 5010 }, accounts.single { it.number == 1910 }, 1_00)
+
+        assertTrue(a.sync.syncNow())
+        assertEquals(setOf("Synced", "Still syncs"), cloudTitles())
     }
 }

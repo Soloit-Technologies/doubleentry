@@ -4,30 +4,11 @@
 // the app in Play Console → Users and permissions).
 
 import { admin } from "./supabase.ts";
+import { replacesStored, type SubscriptionPurchase, type SubscriptionRow } from "./subscriptions.ts";
+
+export { toRow } from "./subscriptions.ts";
 
 const PACKAGE_NAME = Deno.env.get("PLAY_PACKAGE_NAME") ?? "com.soloit.doubleentry";
-
-/** The parts of a SubscriptionPurchaseV2 this backend reads. */
-export interface SubscriptionPurchase {
-  subscriptionState?: string;
-  lineItems?: {
-    productId?: string;
-    expiryTime?: string;
-    autoRenewingPlan?: { autoRenewEnabled?: boolean };
-    offerDetails?: { basePlanId?: string; offerId?: string };
-  }[];
-  externalAccountIdentifiers?: { obfuscatedExternalAccountId?: string };
-}
-
-export interface SubscriptionRow {
-  source: "google_play";
-  product_id: string | null;
-  base_plan_id: string | null;
-  purchase_token: string;
-  state: string;
-  expires_at: string;
-  auto_renewing: boolean;
-}
 
 /** Google said the token is unknown or malformed (as opposed to Google being unreachable). */
 export class InvalidPurchaseError extends Error {}
@@ -88,35 +69,7 @@ export async function fetchSubscription(purchaseToken: string): Promise<Subscrip
   return await response.json() as SubscriptionPurchase;
 }
 
-/** States in which the subscriber keeps access until the line item's expiry time. */
-const ENTITLED = new Set(["active", "in_grace_period", "canceled"]);
-
-export function toRow(purchase: SubscriptionPurchase, purchaseToken: string): SubscriptionRow {
-  const item = purchase.lineItems?.[0];
-  const state = (purchase.subscriptionState ?? "SUBSCRIPTION_STATE_UNSPECIFIED").replace("SUBSCRIPTION_STATE_", "").toLowerCase();
-  const now = Date.now();
-  const expiry = item?.expiryTime ? Date.parse(item.expiryTime) : now;
-  let expiresAt: number;
-  if (!ENTITLED.has(state)) expiresAt = Math.min(expiry, now);
-  // Keep a lapsed card from cutting off uploads mid-grace if the expiry hasn't moved yet.
-  else if (state === "in_grace_period") expiresAt = Math.max(expiry, now + 24 * 3600 * 1000);
-  else expiresAt = expiry;
-  return {
-    source: "google_play",
-    product_id: item?.productId ?? null,
-    base_plan_id: item?.offerDetails?.basePlanId ?? null,
-    purchase_token: purchaseToken,
-    state,
-    expires_at: new Date(expiresAt).toISOString(),
-    auto_renewing: item?.autoRenewingPlan?.autoRenewEnabled ?? false,
-  };
-}
-
-/**
- * Stores [row] as [userId]'s subscription. Complimentary access without an end is never
- * replaced, and a different purchase only replaces the stored one when it lasts at least as long
- * (an old, expired purchase restored on a new phone doesn't cut a current one short).
- */
+/** Stores [row] as [userId]'s subscription, unless the stored one wins ([replacesStored]). */
 export async function storeSubscription(userId: string, row: SubscriptionRow): Promise<void> {
   const { data: existing, error } = await admin
     .from("cloud_subscriptions")
@@ -124,11 +77,7 @@ export async function storeSubscription(userId: string, row: SubscriptionRow): P
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
-  if (existing) {
-    if (existing.source === "complimentary" && existing.expires_at === null) return;
-    const samePurchase = existing.purchase_token === row.purchase_token;
-    if (!samePurchase && existing.expires_at && Date.parse(existing.expires_at) > Date.parse(row.expires_at)) return;
-  }
+  if (existing && !replacesStored(existing, row)) return;
   const { error: upsertError } = await admin.from("cloud_subscriptions").upsert({ user_id: userId, ...row }, { onConflict: "user_id" });
   if (upsertError) throw upsertError;
 }
