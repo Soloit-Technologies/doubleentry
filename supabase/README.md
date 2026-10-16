@@ -22,6 +22,7 @@ supabase/
 | `20261006000001_align_hand_made_schema.sql` | Brings the dashboard-made tables in line: drops the catch-all policies and duplicate indexes, adds the value checks, defaults and settings cascade, keeps setting keys unique per user |
 | `20261006000002_transaction_lines_and_edit_times.sql` | Moves transaction lines into `transactions.lines` (jsonb), adds `modified_at` to every table, and a trigger that refuses an update older than the stored row |
 | `20261007000000_cloud_subscriptions.sql` | Paid backup: `cloud_subscriptions`, `has_cloud_access()` / `cloud_access()`, uploads only with access (reads stay open), complimentary access for every existing user |
+| `20261016000000_shared_ledgers.sql` | Shared ledgers: `ledgers` and `ledger_members`, `ledger_id` on every synced table with keys `(ledger_id, id)`, row-level security by membership (writing needs the owner or editor role and the owner's cloud access), `user_id` as who last wrote a row, `own_ledger()`, a ledger for every existing user |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -31,13 +32,15 @@ by hand in the dashboard.
 
 All HTTP calls are in `app/src/main/java/com/soloit/doubleentry/sync/`:
 
-- **`SupabaseApi.kt`.** Sign-in and token refresh (`/auth/v1/token`), upsert
-  (`POST /rest/v1/<table>?on_conflict=user_id,id`), incremental pull
-  (`GET /rest/v1/<table>?updated_at=gte.<watermark>&order=updated_at.asc,id.asc`, continuing each page after
-  the last row with `or=(updated_at.gt.<t>,and(updated_at.eq.<t>,id.gt.<id>))`), reading refused rows by id
-  (`id=in.(…)`) and the bulk soft-delete behind *Delete all* and *Import*
-  (`PATCH /rest/v1/<table>?deleted_at=is.null&modified_at=lt.<time>`).
-- **`RealtimeClient.kt`.** Subscribes to `postgres_changes` on the five synced tables.
+- **`SupabaseApi.kt`.** Sign-in and token refresh (`/auth/v1/token`), the account's ledger
+  (`POST /rest/v1/rpc/own_ledger`), upsert (`POST /rest/v1/<table>?on_conflict=ledger_id,id`), incremental pull
+  (`GET /rest/v1/<table>?ledger_id=eq.<ledger>&updated_at=gte.<watermark>&order=updated_at.asc,id.asc`, continuing
+  each page after the last row with `or=(updated_at.gt.<t>,and(updated_at.eq.<t>,id.gt.<id>))`), reading refused rows
+  by id (`id=in.(…)`) and the bulk soft-delete behind *Delete all* and *Import*
+  (`PATCH /rest/v1/<table>?ledger_id=eq.<ledger>&deleted_at=is.null&modified_at=lt.<time>`). Every read and bulk
+  update names its ledger: row-level security allows all the user's ledgers.
+- **`RealtimeClient.kt`.** Subscribes to `postgres_changes` on the five synced tables, filtered to the ledger
+  (`ledger_id=eq.<ledger>`).
 - **`SyncRows.kt`.** The JSON shape of each table. Keep it in step with the migrations.
 
 Sync rules the schema relies on:
@@ -51,12 +54,16 @@ Sync rules the schema relies on:
   so a transaction and its lines are always written, pulled and resolved together.
   `transaction_entries` is no longer used (see `queries/drop_transaction_entries.sql`).
 - **`deleted_at`** is a tombstone. Rows are never hard-deleted by the app, so no delete policy exists.
-- **Uploads need cloud access.** Insert and update policies also require `has_cloud_access()`: a
-  `cloud_subscriptions` row whose `expires_at` is null or in the future. Without it PostgREST answers
-  403 (`42501`); the app then keeps changes on the device. Select policies don't check it, so an
-  account whose subscription ended can still restore its ledger on a new phone.
-- **`user_id`** must equal `auth.uid()` for every read and write (RLS), and is part of every primary
-  and foreign key: ids only need to be unique per user.
+- **Rows belong to ledgers.** `ledger_id` is part of every primary and foreign key: ids only need to be
+  unique per ledger. Reading needs membership of the ledger (`ledger_members`); writing needs the
+  owner or editor role.
+- **Uploads need the owner's cloud access.** Insert and update policies require the ledger's owner to
+  have a `cloud_subscriptions` row whose `expires_at` is null or in the future, so the owner's
+  subscription covers every member. Without it PostgREST answers 403 (`42501`); the app then keeps
+  changes on the device. Select policies don't check it, so a ledger whose subscription ended can
+  still be restored on a new phone.
+- **`user_id`** is who last wrote the row, stamped by a trigger from `auth.uid()` (clients don't send
+  it). It becomes null when that user deletes their account; the row stays in the ledger.
 - **PostgREST `max_rows`** must be at least 1000; the app pages 1000 rows at a time.
 
 ## First-time setup against your existing project
@@ -159,7 +166,7 @@ the service role:
 |---|---|---|
 | `play-verify` | the app, after a purchase and when it finds a purchase the server may not know | Reads the purchase from the Google Play Developer API, checks it was bought for this account (`obfuscatedExternalAccountId` = user id) and stores it. The app acknowledges the purchase only after this succeeds |
 | `play-notifications` | Google Play Real-time Developer Notifications (Pub/Sub push) | Re-reads the subscription on every renewal, cancellation, hold, expiry or refund and updates `expires_at` |
-| `delete-account` | the app (*Cloud backup & sync → Delete account*) | Deletes the user; their rows go with it (`on delete cascade`) |
+| `delete-account` | the app (*Cloud backup & sync → Delete account*) | Deletes the user; the ledgers they own go with it (`on delete cascade`), their edits in other ledgers stay |
 
 Secrets (*Edge Functions → Secrets*, or `supabase secrets set NAME=value`):
 
@@ -174,22 +181,34 @@ Deploy with `supabase functions deploy` (the GitHub workflow does this on push t
 send a Supabase token; it checks the secret instead. The Play Console side is in
 [`docs/google-play.md`](../docs/google-play.md#paid-cloud-backup).
 
-## Users
+## Users and ledgers
 
-Several users share one project. Some ids are derived only from content (default-plan accounts from the account number,
-settings rows from the key, depreciation and recurring postings from the asset/rule and month), so
-every user has rows with the same ids. That is why each table is keyed by `(user_id, id)` and every
-reference includes `user_id`: one user can never collide with, or point at, another user's rows.
-It also lets the app copy a ledger to another account with its ids unchanged.
+Several users share one project, and a ledger can have several members:
+
+- **`ledgers`**: one row per ledger. `owner_id` is the user whose subscription pays for uploads;
+  the ledger is deleted with its owner.
+- **`ledger_members`**: `(ledger_id, user_id, role)` with role `owner`, `editor` or `viewer`. The
+  owner is always a member (a trigger adds them), and each ledger has exactly one.
+- **`own_ledger()`** returns the signed-in user's own ledger, the oldest they own, and creates it the
+  first time. The app syncs that ledger. The migration gave every existing user one, holding the
+  rows they had.
+
+Some ids are derived only from content (default-plan accounts from the account number, settings
+rows from the key, depreciation and recurring postings from the asset/rule and month), so every
+ledger has rows with the same ids. That is why each table is keyed by `(ledger_id, id)` and every
+reference includes `ledger_id`: one ledger can never collide with, or point at, another's rows.
+It also lets the app copy a ledger to another account with its ids unchanged. For members it means
+that two phones posting the same recurring transaction converge on one row.
 
 Builds of the app from before `20261006000000_per_user_row_ids.sql` upsert with `on_conflict=id`,
 which the server rejects after that migration; update the app on every device when deploying it.
-The same goes for `20261006000002_transaction_lines_and_edit_times.sql`: older builds don't send
-`modified_at` or `lines`, so their uploads fail.
+The same goes for `20261006000002_transaction_lines_and_edit_times.sql` (older builds don't send
+`modified_at` or `lines`) and `20261016000000_shared_ledgers.sql` (older builds upsert with
+`on_conflict=user_id,id` and don't send `ledger_id`): their uploads fail.
 
 ## Queries
 
 - **`queries/health_check.sql`.** Row counts, unbalanced transactions, orphaned lines, duplicate account numbers.
-- **`queries/trial_balance.sql`.** Balance of every account as of a date.
+- **`queries/trial_balance.sql`.** Balance of every account of a user's ledger as of a date.
 - **`queries/purge_tombstones.sql`.** Removes old soft-deleted rows. Read the warning in the file first.
 - **`queries/drop_transaction_entries.sql`.** Drops the old lines table once every device runs a current build.

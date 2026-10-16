@@ -26,13 +26,15 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * Minimal Supabase Realtime (Phoenix channels) client. It subscribes to `postgres_changes` on
- * every synced table and calls [onChange] for each event, so another device's edits arrive
- * within seconds. RLS limits events to the signed-in user's rows.
+ * every synced table of the [ledgerId] this device syncs and calls [onChange] for each event, so
+ * edits from other devices and members arrive within seconds. RLS limits events to ledgers the
+ * signed-in user is a member of.
  */
 class RealtimeClient(
     private val config: SupabaseConfig,
     private val http: OkHttpClient,
     private val tokens: AccessTokenProvider,
+    private val ledgerId: () -> String?,
     private val onChange: () -> Unit,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -65,7 +67,7 @@ class RealtimeClient(
             Request.Builder().url(url).build(),
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    webSocket.send(joinMessage(initialToken))
+                    webSocket.send(joinMessage(initialToken, ledgerId()))
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -124,7 +126,7 @@ class RealtimeClient(
         }
     }
 
-    private fun joinMessage(token: String): String = message(TOPIC, "phx_join") {
+    private fun joinMessage(token: String, ledger: String?): String = message(TOPIC, "phx_join") {
         putJsonObject("config") {
             putJsonObject("broadcast") { put("ack", false); put("self", false) }
             putJsonObject("presence") { put("key", "") }
@@ -134,6 +136,7 @@ class RealtimeClient(
                         put("event", "*")
                         put("schema", "public")
                         put("table", table.remoteName)
+                        if (ledger != null) put("filter", "ledger_id=eq.$ledger")
                     }
                 }
             }

@@ -6,6 +6,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.Call
@@ -158,6 +159,16 @@ class SupabaseApi(
         return rows.firstOrNull()?.let { json.decodeFromJsonElement(CloudAccess.serializer(), it) } ?: CloudAccess()
     }
 
+    /**
+     * `POST /rest/v1/rpc/own_ledger`: the id of the signed-in user's own ledger, which the server
+     * makes the first time it's asked for.
+     */
+    suspend fun ownLedger(accessToken: String): String {
+        val text = execute(postJson("rest/v1/rpc/own_ledger", "{}", accessToken), Operation.Sync)
+        return (json.parseToJsonElement(text) as? JsonPrimitive)?.takeIf { it.isString }?.content
+            ?: throw SyncException(friendlyMessage(Operation.Sync, 200))
+    }
+
     /** `POST /functions/v1/play-verify`: the server checks a Google Play purchase with Google and records it. */
     suspend fun verifyPurchase(purchaseToken: String, accessToken: String) {
         val body = buildJsonObject { put("purchaseToken", purchaseToken) }.toString()
@@ -188,14 +199,14 @@ class SupabaseApi(
 
     /**
      * Upserts rows by primary key and returns the rows the server stored:
-     * `POST /rest/v1/{table}?on_conflict=user_id,id` with `Prefer: resolution=merge-duplicates,return=representation`.
-     * Ids are unique per user only (content-derived ids repeat across users). A row is left out of
+     * `POST /rest/v1/{table}?on_conflict=ledger_id,id` with `Prefer: resolution=merge-duplicates,return=representation`.
+     * Ids are unique per ledger only (content-derived ids repeat across ledgers). A row is left out of
      * the response when the server already holds a newer edit of it (its `modified_at` is later);
      * the server keeps that edit.
      */
     suspend fun upsert(table: SyncTable, rows: JsonArray, accessToken: String): JsonArray {
         val request = Request.Builder()
-            .url("${config.baseUrl}/rest/v1/${table.remoteName}?on_conflict=user_id,id")
+            .url("${config.baseUrl}/rest/v1/${table.remoteName}?on_conflict=ledger_id,id")
             .header("apikey", config.anonKey)
             .header("Authorization", "Bearer $accessToken")
             .header("Prefer", "resolution=merge-duplicates,return=representation")
@@ -208,17 +219,18 @@ class SupabaseApi(
     data class PageCursor(val updatedAt: String, val id: String)
 
     /**
-     * Reads one page of rows that reached the server at or after [since], in that order:
-     * `GET /rest/v1/{table}?select=*&order=updated_at.asc,id.asc&limit=…&updated_at=gte.{since}`, and
+     * Reads one page of [ledgerId]'s rows that reached the server at or after [since], in that order:
+     * `GET /rest/v1/{table}?select=*&ledger_id=eq.{ledgerId}&order=updated_at.asc,id.asc&limit=…&updated_at=gte.{since}`, and
      * for the next pages `&or=(updated_at.gt.{t},and(updated_at.eq.{t},id.gt.{id}))` after the last row read.
      *
      * Continuing after a row (rather than skipping an offset) matters because a row changed while a
      * pull is paging moves to the end: with an offset, the rows behind it would shift into pages
      * already read and be skipped. The id breaks ties between rows a bulk upsert stamped alike.
      */
-    suspend fun select(table: SyncTable, since: String?, after: PageCursor?, limit: Int, accessToken: String): JsonArray {
+    suspend fun select(table: SyncTable, ledgerId: String, since: String?, after: PageCursor?, limit: Int, accessToken: String): JsonArray {
         val url = "${config.baseUrl}/rest/v1/${table.remoteName}".toHttpUrl().newBuilder()
             .addQueryParameter("select", "*")
+            .addQueryParameter("ledger_id", "eq.$ledgerId")
             .addQueryParameter("order", "updated_at.asc,id.asc")
             .addQueryParameter("limit", limit.toString())
             .apply { if (since != null) addQueryParameter("updated_at", "gte.$since") }
@@ -230,10 +242,11 @@ class SupabaseApi(
         return get(url.toString(), accessToken)
     }
 
-    /** Reads the rows with [ids]: `GET /rest/v1/{table}?select=*&id=in.(…)`. */
-    suspend fun selectByIds(table: SyncTable, ids: List<String>, accessToken: String): JsonArray {
+    /** Reads [ledgerId]'s rows with [ids]: `GET /rest/v1/{table}?select=*&ledger_id=eq.{ledgerId}&id=in.(…)`. */
+    suspend fun selectByIds(table: SyncTable, ledgerId: String, ids: List<String>, accessToken: String): JsonArray {
         val url = "${config.baseUrl}/rest/v1/${table.remoteName}".toHttpUrl().newBuilder()
             .addQueryParameter("select", "*")
+            .addQueryParameter("ledger_id", "eq.$ledgerId")
             .addQueryParameter("id", "in.(${ids.joinToString(",")})")
             .build()
         return get(url.toString(), accessToken)
@@ -249,10 +262,11 @@ class SupabaseApi(
         return json.parseToJsonElement(execute(request, Operation.Sync)) as JsonArray
     }
 
-    /** True when [table] holds at least one live row: `GET /rest/v1/{table}?select=id&deleted_at=is.null&limit=1`. */
-    suspend fun hasLiveRows(table: SyncTable, accessToken: String): Boolean {
+    /** True when [ledgerId] has at least one live row in [table]: `GET /rest/v1/{table}?select=id&ledger_id=eq.{ledgerId}&deleted_at=is.null&limit=1`. */
+    suspend fun hasLiveRows(table: SyncTable, ledgerId: String, accessToken: String): Boolean {
         val url = "${config.baseUrl}/rest/v1/${table.remoteName}".toHttpUrl().newBuilder()
             .addQueryParameter("select", "id")
+            .addQueryParameter("ledger_id", "eq.$ledgerId")
             .addQueryParameter("deleted_at", "is.null")
             .addQueryParameter("limit", "1")
             .build()
@@ -260,12 +274,14 @@ class SupabaseApi(
     }
 
     /**
-     * Deletes, as of [at] (ISO-8601), every live row last edited before then, including rows this
-     * device has never pulled. Row-level security limits it to the user's own rows:
-     * `PATCH /rest/v1/{table}?deleted_at=is.null&modified_at=lt.{at}` with `{"deleted_at": at, "modified_at": at}`.
+     * Deletes, as of [at] (ISO-8601), every live row of [ledgerId] last edited before then, including
+     * rows this device has never pulled. The filter matters: row-level security would allow every
+     * ledger the user may write to:
+     * `PATCH /rest/v1/{table}?ledger_id=eq.{ledgerId}&deleted_at=is.null&modified_at=lt.{at}` with `{"deleted_at": at, "modified_at": at}`.
      */
-    suspend fun tombstoneBefore(table: SyncTable, at: String, accessToken: String) {
+    suspend fun tombstoneBefore(table: SyncTable, ledgerId: String, at: String, accessToken: String) {
         val url = "${config.baseUrl}/rest/v1/${table.remoteName}".toHttpUrl().newBuilder()
+            .addQueryParameter("ledger_id", "eq.$ledgerId")
             .addQueryParameter("deleted_at", "is.null")
             .addQueryParameter("modified_at", "lt.$at")
             .build()
@@ -312,7 +328,7 @@ class SupabaseApi(
     /** GoTrue's machine-readable `error_code`, e.g. `weak_password`. */
     private fun errorCode(body: String): String? = runCatching {
         (json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject)?.get("error_code")
-            ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+            ?.let { (it as? JsonPrimitive)?.content }
     }.getOrNull()
 
     companion object {

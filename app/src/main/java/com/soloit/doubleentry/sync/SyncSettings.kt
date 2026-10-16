@@ -40,7 +40,7 @@ enum class SyncTable(val remoteName: String) {
 
 private val accessJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
-/** Device-local sync state: account, token expiry and per-table pull watermarks. */
+/** Device-local sync state: account, the ledger it syncs, token expiry and per-table pull watermarks. */
 class SyncPreferences(context: Context, private val tokens: TokenStore = SecureTokenStore(context)) {
     private val prefs = context.getSharedPreferences("supabase_sync", Context.MODE_PRIVATE)
 
@@ -55,6 +55,11 @@ class SyncPreferences(context: Context, private val tokens: TokenStore = SecureT
     var userEmail: String?
         get() = prefs.getString("userEmail", null)
         set(value) = prefs.edit { putString("userEmail", value) }
+
+    /** The cloud ledger this device's database syncs with: for now always the signed-in account's own. */
+    var ledgerId: String?
+        get() = prefs.getString("ledgerId", null)
+        set(value) = prefs.edit { putString("ledgerId", value) }
 
     /** The signed-in account uses Sign in with Google (no password), so renewing a session asks Google. */
     var signedInWithGoogle: Boolean
@@ -137,6 +142,7 @@ class SyncPreferences(context: Context, private val tokens: TokenStore = SecureT
         prefs.edit {
             remove("userId")
             remove("userEmail")
+            remove("ledgerId")
             remove("signedInWithGoogle")
             remove("expiresAt")
             remove("lastSyncAt")

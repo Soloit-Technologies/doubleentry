@@ -121,13 +121,20 @@ class SyncManager(
     private val gate = Mutex()
     private val refreshLock = Mutex()
     private val requests = Channel<Unit>(Channel.CONFLATED)
-    private val realtime = RealtimeClient(config, api.http, this) { requestSync() }
+    private val realtime = RealtimeClient(config, api.http, this, ledgerId = { prefs.ledgerId }) { requestSync() }
 
     @Volatile private var inForeground = false
     private var foregroundJob: Job? = null
 
     /** An authenticated session waiting for the answer to a [SignInQuestion]; nothing is stored yet. */
-    private class PendingSignIn(val token: AuthTokenResponse, val email: String, val google: Boolean, val sameOwner: Boolean, val cloudHasData: Boolean)
+    private class PendingSignIn(
+        val token: AuthTokenResponse,
+        val email: String,
+        val google: Boolean,
+        val ledgerId: String,
+        val sameOwner: Boolean,
+        val cloudHasData: Boolean,
+    )
 
     @Volatile private var pendingSignIn: PendingSignIn? = null
 
@@ -169,6 +176,7 @@ class SyncManager(
         return gate.withLock {
             setSyncing(true)
             try {
+                ensureLedger()
                 // A ledger waiting to replace the cloud's mustn't be merged with it by a pull.
                 if (prefs.cloudWipeBeforeMicros != null && !canUpload) return@withLock false
                 applyPendingCloudWipe()
@@ -192,6 +200,7 @@ class SyncManager(
         gate.withLock {
             setSyncing(true)
             try {
+                ensureLedger()
                 val upload = refreshAccess()
                 // Without a subscription a ledger waiting to replace the cloud's waits whole: a
                 // pull would merge the two.
@@ -273,8 +282,9 @@ class SyncManager(
         val local = engine.localSummary()
         val owner = prefs.dataOwnerId
         val sameOwner = owner == userId
-        val cloudHasData = engine.cloudHasData { accessToken }
-        val pending = PendingSignIn(token, address, google, sameOwner, cloudHasData)
+        val ledgerId = api.ownLedger(accessToken)
+        val cloudHasData = engine.cloudHasData({ accessToken }, ledgerId)
+        val pending = PendingSignIn(token, address, google, ledgerId, sameOwner, cloudHasData)
         val question = when {
             // Includes deletions made while signed out: uploading them deletes data on every device.
             sameOwner -> if (local.unsyncedChanges > 0) {
@@ -323,7 +333,7 @@ class SyncManager(
                 pending.sameOwner -> Unit
                 else -> {
                     // A ledger from another account, or one that never synced: send everything, since
-                    // rows already synced elsewhere are clean. Ids are per user on the server, so the
+                    // rows already synced elsewhere are clean. Ids are per ledger on the server, so the
                     // other account's copy is untouched.
                     engine.markAllForUpload()
                     // This ledger replaces the account's, so the account's rows are deleted first.
@@ -332,6 +342,7 @@ class SyncManager(
                 }
             }
             storeTokens(pending.token, pending.email)
+            prefs.ledgerId = pending.ledgerId
             prefs.signedInWithGoogle = pending.google
             prefs.dataOwnerId = prefs.userId
             prefs.dataOwnerEmail = pending.email
@@ -510,6 +521,11 @@ class SyncManager(
         prefs.accessTokenExpiresAtMillis = if (token.expiresIn > 0) System.currentTimeMillis() + token.expiresIn * 1000 else null
         token.user?.id?.takeIf { it.isNotBlank() }?.let { prefs.userId = it }
         if (!email.isNullOrBlank()) prefs.userEmail = email
+    }
+
+    /** Looks up the account's ledger on devices that signed in before ledgers existed. */
+    private suspend fun ensureLedger() {
+        if (prefs.ledgerId == null) prefs.ledgerId = authorized { api.ownLedger(it) }
     }
 
     /** Runs a pending [replaceCloudLedger]: deletes the old cloud rows and uploads this device's, before any pull. */

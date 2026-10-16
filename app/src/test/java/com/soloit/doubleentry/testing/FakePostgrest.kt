@@ -25,12 +25,14 @@ import java.time.ZoneOffset
 /**
  * In-memory stand-in for the Supabase endpoints the sync engine uses: password sign-in, `GET`
  * with `updated_at=gte.`, the `or=(…)` page cursor, `id=in.(…)` and `deleted_at=is.null`, ordered by
- * (updated_at, id) with a limit; `POST ?on_conflict=user_id,id` upserts that merge by
- * (user_id, id) like the primary key; and `PATCH`es filtered by `modified_at=lt.`. Like the
- * server triggers, a write older than the stored row (by `modified_at`) is refused, and every
- * other write stamps `updated_at`, each strictly later. A token from [signIn] sees only its
- * user's rows (like row-level security); the plain token "token" sees everything. Uploads need
- * cloud access ([withoutAccess] lists users who have none), read with `rpc/cloud_access`.
+ * (updated_at, id) with a limit; `POST ?on_conflict=ledger_id,id` upserts that merge by
+ * (ledger_id, id) like the primary key; and `PATCH`es filtered by `modified_at=lt.`. Every `GET`
+ * and `PATCH` must name its ledger (`ledger_id=eq.`). Like the server triggers, a write older than
+ * the stored row (by `modified_at`) is refused, and every other write stamps `updated_at`, each
+ * strictly later, and `user_id` with the writer. A token from [signIn] reaches only the ledgers
+ * its user is a member of (like row-level security): their own ([ledgerIdFor], returned by
+ * `rpc/own_ledger`) and any added to [members]; the plain token "token" reaches everything.
+ * Uploads need cloud access ([withoutAccess] lists users who have none), read with `rpc/cloud_access`.
  */
 class FakePostgrest {
     private val tables = mutableMapOf<String, MutableMap<String, JsonObject>>()
@@ -38,6 +40,9 @@ class FakePostgrest {
 
     /** Users without a backup subscription: their uploads are refused like row-level security does. */
     val withoutAccess = mutableSetOf<String>()
+
+    /** Ledgers users were added to, besides their own, by user id. */
+    val members = mutableMapOf<String, MutableSet<String>>()
 
     /** Number of upserted rows, per table. */
     val writes = mutableMapOf<String, Int>()
@@ -47,9 +52,9 @@ class FakePostgrest {
 
     fun rows(table: String): List<JsonObject> = tables[table].orEmpty().values.toList()
 
-    fun liveRows(table: String, userId: String? = null): List<JsonObject> =
+    fun liveRows(table: String, ledgerId: String? = null): List<JsonObject> =
         rows(table).filter { it["deleted_at"] is JsonNull || it["deleted_at"] == null }
-            .filter { userId == null || it["user_id"]?.jsonPrimitive?.content == userId }
+            .filter { ledgerId == null || it["ledger_id"]?.jsonPrimitive?.content == ledgerId }
 
     /** Stores [row] as is, `updated_at` included — e.g. a slow upload that commits an old stamp late. */
     @Synchronized
@@ -63,6 +68,11 @@ class FakePostgrest {
      */
     fun userIdFor(email: String) = "user-" + email.substringBefore('@')
 
+    /** The own ledger of the account with [email]. */
+    fun ledgerIdFor(email: String) = "ledger-" + email.substringBefore('@')
+
+    private fun ledgersOf(user: String) = setOf("ledger-" + user.removePrefix("user-")) + members[user].orEmpty()
+
     val client: OkHttpClient = OkHttpClient.Builder().addInterceptor(Interceptor { chain -> handle(chain) }).build()
 
     @Synchronized
@@ -71,6 +81,9 @@ class FakePostgrest {
         if ("auth" in request.url.pathSegments) return respond(request, 200, signIn(request))
         val user = request.header("Authorization")?.removePrefix("Bearer ")?.takeIf { it.startsWith("t-") }?.removePrefix("t-")
         val allowed = user == null || user !in withoutAccess
+        if (request.url.pathSegments.last() == "own_ledger") {
+            return respond(request, 200, JsonPrimitive(checkNotNull(user) { "own_ledger needs a signed-in user" }.let { "ledger-" + it.removePrefix("user-") }))
+        }
         if ("rpc" in request.url.pathSegments) {
             return respond(request, 200, JsonArray(listOf(buildJsonObject { put("active", allowed); put("source", if (allowed) "complimentary" else null) })))
         }
@@ -79,8 +92,12 @@ class FakePostgrest {
         }
         val table = request.url.pathSegments.last()
         val rows = tables.getOrPut(table) { linkedMapOf() }
-        val visible = rows.values.filter { user == null || it["user_id"]?.jsonPrimitive?.content == user }
+        val reachable = user?.let(::ledgersOf)
+        fun ledger(row: JsonObject) = row["ledger_id"]?.jsonPrimitive?.content
+        val visible = rows.values.filter { reachable == null || ledger(it) in reachable }
         val url = request.url
+        val ledgerFilter = url.queryParameter("ledger_id")?.removePrefix("eq.")
+        if (request.method != "POST") checkNotNull(ledgerFilter) { "Reads and bulk updates name their ledger" }
         val onlyLive = url.queryParameter("deleted_at") == "is.null"
         val updatedSince = url.queryParameter("updated_at")?.let { parseTimestamp(it.removePrefix("gte.")) }
         val modifiedBefore = url.queryParameter("modified_at")?.let { parseTimestamp(it.removePrefix("lt.")) }
@@ -92,6 +109,7 @@ class FakePostgrest {
             parseTimestamp(gt) to id
         }
         fun matches(row: JsonObject): Boolean {
+            if (ledgerFilter != null && ledger(row) != ledgerFilter) return false
             if (onlyLive && row["deleted_at"].let { it != null && it !is JsonNull }) return false
             if (updatedSince != null && micros(row) < updatedSince) return false
             if (modifiedBefore != null && modified(row) >= modifiedBefore) return false
@@ -115,15 +133,20 @@ class FakePostgrest {
             }
             "POST" -> {
                 val sent = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonArray
+                if (reachable != null && sent.any { ledger(it.jsonObject) !in reachable }) {
+                    return respond(request, 403, buildJsonObject { put("code", "42501"); put("message", "new row violates row-level security policy") })
+                }
                 JsonArray(
                     sent.mapNotNull { element ->
                         val row = element.jsonObject
-                        check(request.url.queryParameter("on_conflict") == "user_id,id") { "Upserts must target the (user_id, id) key" }
+                        check(request.url.queryParameter("on_conflict") == "ledger_id,id") { "Upserts must target the (ledger_id, id) key" }
                         check("modified_at" in row && "updated_at" !in row) { "Uploads carry modified_at; updated_at is the server's" }
                         val existing = rows[key(row)]
                         // The keep_newer_edit trigger: an older edit is left out of the response.
                         if (existing != null && modified(row) < modified(existing)) return@mapNotNull null
-                        val stored = JsonObject(existing.orEmpty() + row + ("updated_at" to JsonPrimitive(stamp(tick()))))
+                        val stored = JsonObject(
+                            existing.orEmpty() + row + ("updated_at" to JsonPrimitive(stamp(tick()))) + ("user_id" to (user?.let(::JsonPrimitive) ?: JsonNull)),
+                        )
                         rows[key(row)] = stored
                         writes[table] = (writes[table] ?: 0) + 1
                         stored
@@ -171,8 +194,8 @@ class FakePostgrest {
         return clock
     }
 
-    /** The primary key: ids are unique per user only. */
-    private fun key(row: JsonObject) = row["user_id"]?.jsonPrimitive?.content + "/" + row.getValue("id").jsonPrimitive.content
+    /** The primary key: ids are unique per ledger only. */
+    private fun key(row: JsonObject) = row["ledger_id"]?.jsonPrimitive?.content + "/" + row.getValue("id").jsonPrimitive.content
 
     private fun micros(row: JsonObject): Long = parseTimestamp(row.getValue("updated_at").jsonPrimitive.content)
 

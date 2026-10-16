@@ -43,7 +43,7 @@ class SyncManagerTest {
 
     private inner class Device(name: String) {
         val t = TestLedger(name)
-        private val prefs = SyncPreferences(t.context, MemoryTokens())
+        val prefs = SyncPreferences(t.context, MemoryTokens())
         private val config = SupabaseConfig("https://project.supabase.co", "anon", true)
         private val api = SupabaseApi(config, server.client)
         val sync = SyncManager(config, prefs, api, SyncEngine(t.db, api, prefs), scope, t.db.syncStatus().pendingChanges())
@@ -67,8 +67,8 @@ class SyncManagerTest {
         devices.forEach { it.t.close() }
     }
 
-    private fun cloudTitles(user: String = server.userIdFor("me@example.com")): Set<String> =
-        server.liveRows("transactions", user).map { it.getValue("title").jsonPrimitive.content }.toSet()
+    private fun cloudTitles(ledger: String = server.ledgerIdFor("me@example.com")): Set<String> =
+        server.liveRows("transactions", ledger).map { it.getValue("title").jsonPrimitive.content }.toSet()
 
     @Test
     fun aFreshDeviceDownloadsWithoutAsking() = runBlocking<Unit> {
@@ -86,7 +86,7 @@ class SyncManagerTest {
         a.ledgerWithOneTransaction("Mine")
         assertNull(a.sync.signIn("me@example.com", "pw"))
         assertEquals(setOf("Mine"), cloudTitles())
-        assertEquals(2, server.liveRows("accounts", server.userIdFor("me@example.com")).size)
+        assertEquals(2, server.liveRows("accounts", server.ledgerIdFor("me@example.com")).size)
     }
 
     @Test
@@ -102,7 +102,7 @@ class SyncManagerTest {
 
         assertEquals(emptySet<String>(), a.titles())
         assertEquals(emptySet<String>(), cloudTitles())
-        assertEquals(setOf("Old account"), cloudTitles(server.userIdFor("old@example.com")))
+        assertEquals(setOf("Old account"), cloudTitles(server.ledgerIdFor("old@example.com")))
     }
 
     @Test
@@ -119,12 +119,12 @@ class SyncManagerTest {
 
         // The same row ids now exist in both accounts, independently.
         assertEquals(setOf("Shared history"), cloudTitles())
-        assertEquals(setOf("Shared history"), cloudTitles(server.userIdFor("old@example.com")))
+        assertEquals(setOf("Shared history"), cloudTitles(server.ledgerIdFor("old@example.com")))
         val id = a.t.ledger.getTransactions().single().id
         a.t.ledger.deleteTransaction(id)
         a.sync.syncNow()
         assertEquals(emptySet<String>(), cloudTitles())
-        assertEquals(setOf("Shared history"), cloudTitles(server.userIdFor("old@example.com")))
+        assertEquals(setOf("Shared history"), cloudTitles(server.ledgerIdFor("old@example.com")))
     }
 
     @Test
@@ -133,13 +133,13 @@ class SyncManagerTest {
         val b = Device("b")
         val planSize = a.t.ledger.seedDefaultPlan()
         b.t.ledger.seedDefaultPlan()
-        // Default-plan ids are the same for everyone; per-user keys keep them apart.
+        // Default-plan ids are the same for everyone; per-ledger keys keep them apart.
         assertNull(a.sync.signIn("a@example.com", "pw"))
         assertNull(b.sync.signIn("b@example.com", "pw"))
         assertNull(a.sync.status.value.lastError)
         assertNull(b.sync.status.value.lastError)
-        assertEquals(planSize, server.liveRows("accounts", server.userIdFor("a@example.com")).size)
-        assertEquals(planSize, server.liveRows("accounts", server.userIdFor("b@example.com")).size)
+        assertEquals(planSize, server.liveRows("accounts", server.ledgerIdFor("a@example.com")).size)
+        assertEquals(planSize, server.liveRows("accounts", server.ledgerIdFor("b@example.com")).size)
 
         val bank = a.t.ledger.getAccounts().first()
         a.t.ledger.updateAccount(bank.id, bank.number, "Renamed by A", bank.type)
@@ -176,7 +176,7 @@ class SyncManagerTest {
         b.sync.completeSignIn(SignInChoice.UseThisDevice)
 
         assertEquals(setOf("Device ledger"), cloudTitles())
-        assertEquals(2, server.liveRows("accounts", server.userIdFor("me@example.com")).size)
+        assertEquals(2, server.liveRows("accounts", server.ledgerIdFor("me@example.com")).size)
         a.sync.syncNow()
         assertEquals(setOf("Device ledger"), a.titles())
         assertEquals(2, a.t.ledger.getAccounts().size)
@@ -228,7 +228,7 @@ class SyncManagerTest {
         assertTrue(a.sync.signIn("me@example.com", "pw") is SignInQuestion.ChangesWhileSignedOut)
         a.sync.completeSignIn(SignInChoice.UseThisDevice)
         assertEquals(emptySet<String>(), cloudTitles())
-        assertEquals(0, server.liveRows("accounts", server.userIdFor("me@example.com")).size)
+        assertEquals(0, server.liveRows("accounts", server.ledgerIdFor("me@example.com")).size)
     }
 
     @Test
@@ -297,6 +297,21 @@ class SyncManagerTest {
     }
 
     @Test
+    fun aDeviceSignedInBeforeLedgersFindsItsLedgerOnTheNextSync() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Before")
+        a.sync.signIn("me@example.com", "pw")
+        // An install from before ledgers: signed in, without a ledger.
+        a.prefs.ledgerId = null
+        val accounts = a.t.ledger.getAccounts()
+        a.t.post(day, "After", accounts.single { it.number == 5010 }, accounts.single { it.number == 1910 }, 1_00)
+
+        assertTrue(a.sync.syncNow())
+        assertEquals(server.ledgerIdFor("me@example.com"), a.prefs.ledgerId)
+        assertEquals(setOf("Before", "After"), cloudTitles())
+    }
+
+    @Test
     fun aRowCommittedLateWithAnOldStampIsStillPulled() = runBlocking<Unit> {
         val a = Device("a")
         a.ledgerWithOneTransaction("First")
@@ -311,7 +326,7 @@ class SyncManagerTest {
             JsonObject(
                 mapOf(
                     "id" to JsonPrimitive("00000000-0000-4000-8000-000000000001"),
-                    "user_id" to JsonPrimitive(server.userIdFor("me@example.com")),
+                    "ledger_id" to JsonPrimitive(server.ledgerIdFor("me@example.com")),
                     "date" to JsonPrimitive(day.toString()),
                     "title" to JsonPrimitive("Late"),
                     "description" to JsonPrimitive(""),

@@ -64,8 +64,8 @@ class SyncEngine(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
     private val tables: List<Table<*, *>> = listOf(
-        Table(SyncTable.Accounts, AccountRow.serializer(), db.accounts(), AccountRow::toEntity) { rows, userId ->
-            rows.map { AccountRow.from(it, userId) }
+        Table(SyncTable.Accounts, AccountRow.serializer(), db.accounts(), AccountRow::toEntity) { rows, ledgerId ->
+            rows.map { AccountRow.from(it, ledgerId) }
         },
         Table(
             SyncTable.Transactions, TransactionRow.serializer(), db.transactions(), TransactionRow::toEntity,
@@ -74,15 +74,15 @@ class SyncEngine(
                 db.entries().deleteOf(rows.map { it.id })
                 db.entries().upsertAll(rows.flatMap { it.lineEntities() })
             },
-        ) { rows, userId ->
+        ) { rows, ledgerId ->
             val lines = db.entries().allOf(rows.map { it.id }).groupBy { it.transactionId }
-            rows.map { TransactionRow.from(it, lines[it.id].orEmpty(), userId) }
+            rows.map { TransactionRow.from(it, lines[it.id].orEmpty(), ledgerId) }
         },
-        Table(SyncTable.Assets, AssetRow.serializer(), db.assets(), AssetRow::toEntity) { rows, userId ->
-            rows.map { AssetRow.from(it, userId) }
+        Table(SyncTable.Assets, AssetRow.serializer(), db.assets(), AssetRow::toEntity) { rows, ledgerId ->
+            rows.map { AssetRow.from(it, ledgerId) }
         },
-        Table(SyncTable.Invoices, InvoiceRow.serializer(), db.invoices(), InvoiceRow::toEntity) { rows, userId ->
-            rows.map { InvoiceRow.from(it, userId) }
+        Table(SyncTable.Invoices, InvoiceRow.serializer(), db.invoices(), InvoiceRow::toEntity) { rows, ledgerId ->
+            rows.map { InvoiceRow.from(it, ledgerId) }
         },
         Table(
             SyncTable.Settings, UserSettingRow.serializer(), db.settings(), UserSettingRow::toEntity,
@@ -91,8 +91,8 @@ class SyncEngine(
                 rows.forEach { db.settings().deleteOtherWithKey(it.key, it.id) }
                 db.settings().upsertAll(rows.map { it.toEntity() })
             },
-        ) { rows, userId ->
-            rows.map { UserSettingRow.from(it, userId) }
+        ) { rows, ledgerId ->
+            rows.map { UserSettingRow.from(it, ledgerId) }
         },
     )
 
@@ -101,11 +101,12 @@ class SyncEngine(
      * every table next time (applying a row twice changes nothing).
      */
     suspend fun pullAll(auth: AccessTokenProvider): PullResult {
+        val ledgerId = ledgerId()
         val watermarks = mutableMapOf<SyncTable, String>()
         var changed = false
         var replaced = 0
         for (table in tables) {
-            val result = table.pull(auth)
+            val result = table.pull(auth, ledgerId)
             if (result.applied > 0) changed = true
             replaced += result.replacedLocal
             result.watermark?.let { watermarks[table.remote] = it }
@@ -116,11 +117,11 @@ class SyncEngine(
 
     /** Pushes dirty rows parent → child and clears their dirty flag. */
     suspend fun pushAll(auth: AccessTokenProvider): PushResult {
-        val userId = prefs.userId ?: throw SyncException("Please sign in again to sync.")
+        val ledgerId = ledgerId()
         var uploaded = 0
         var replaced = 0
         for (table in tables) {
-            val result = table.push(auth, userId)
+            val result = table.push(auth, ledgerId)
             uploaded += result.uploaded
             replaced += result.replacedLocalChanges
         }
@@ -137,9 +138,10 @@ class SyncEngine(
         )
     }
 
-    /** True when the signed-in account already holds accounts or transactions. */
-    suspend fun cloudHasData(auth: AccessTokenProvider): Boolean =
-        authorized(auth) { token -> api.hasLiveRows(SyncTable.Accounts, token) || api.hasLiveRows(SyncTable.Transactions, token) }
+    /** True when the cloud copy of [ledgerId] already holds accounts or transactions. */
+    suspend fun cloudHasData(auth: AccessTokenProvider, ledgerId: String): Boolean = authorized(auth) { token ->
+        api.hasLiveRows(SyncTable.Accounts, ledgerId, token) || api.hasLiveRows(SyncTable.Transactions, ledgerId, token)
+    }
 
     /** Queues every live local row for upload (rows synced with another account aren't dirty). */
     suspend fun markAllForUpload() = db.withTransaction {
@@ -172,11 +174,15 @@ class SyncEngine(
             }
         }
         val at = formatTimestamp(atMicros)
+        val ledgerId = ledgerId()
         for (table in tables.reversed()) {
-            authorized(auth) { token -> api.tombstoneBefore(table.remote, at, token) }
+            authorized(auth) { token -> api.tombstoneBefore(table.remote, ledgerId, at, token) }
         }
         return pushAll(auth)
     }
+
+    /** The cloud ledger this device's database syncs with. */
+    private fun ledgerId(): String = prefs.ledgerId ?: throw SyncException("Please sign in again to sync.")
 
     private class TablePull(val applied: Int, val watermark: String?, val replacedLocal: Int)
 
@@ -191,9 +197,9 @@ class SyncEngine(
         /** Stores server rows that won. */
         private val write: suspend (List<R>) -> Unit = { rows -> dao.upsertAll(rows.map(toEntity)) },
         /** The server rows for local rows. */
-        private val toRows: suspend (List<E>, userId: String) -> List<R>,
+        private val toRows: suspend (List<E>, ledgerId: String) -> List<R>,
     ) {
-        suspend fun pull(auth: AccessTokenProvider): TablePull {
+        suspend fun pull(auth: AccessTokenProvider, ledgerId: String): TablePull {
             val watermark = prefs.watermark(remote)
             // Re-read a window before the watermark: the server stamps `updated_at` when a write
             // starts, so a slow upload can commit rows older than a watermark already passed.
@@ -202,7 +208,7 @@ class SyncEngine(
             val rows = mutableListOf<R>()
             var after: SupabaseApi.PageCursor? = null
             while (true) {
-                val page = decode(authorized(auth) { token -> api.select(remote, since, after, PAGE_SIZE, token) })
+                val page = decode(authorized(auth) { token -> api.select(remote, ledgerId, since, after, PAGE_SIZE, token) })
                 rows += page
                 if (page.size < PAGE_SIZE) break
                 val last = page.last()
@@ -217,11 +223,11 @@ class SyncEngine(
             return TablePull(result.applied, formatTimestamp(maxOf(newest, previous)), result.replacedLocal)
         }
 
-        suspend fun push(auth: AccessTokenProvider, userId: String): PushResult {
+        suspend fun push(auth: AccessTokenProvider, ledgerId: String): PushResult {
             val dirty = dao.dirty()
             var replaced = 0
             for (chunk in dirty.chunked(CHUNK)) {
-                val rows = toRows(chunk, userId)
+                val rows = toRows(chunk, ledgerId)
                 val sent = JsonArray(rows.map { json.encodeToJsonElement(serializer, it) })
                 val response = authorized(auth) { token -> api.upsert(remote, sent, token) }
                 val stored = response.mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.content }.toSet()
@@ -232,7 +238,7 @@ class SyncEngine(
                 // this cycle's pull, and the server kept it. Take it now.
                 val refused = chunk.map { it.id }.filter { it !in stored }
                 for (ids in refused.chunked(ID_CHUNK)) {
-                    replaced += apply(decode(authorized(auth) { token -> api.selectByIds(remote, ids, token) })).replacedLocal
+                    replaced += apply(decode(authorized(auth) { token -> api.selectByIds(remote, ledgerId, ids, token) })).replacedLocal
                 }
             }
             return PushResult(dirty.size, replaced)

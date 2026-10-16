@@ -16,6 +16,7 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 
 // JSON shapes of the PostgREST tables. Column names and types must match supabase/migrations.
+// Rows are keyed by (ledger_id, id); the server stamps user_id (who last wrote the row) itself.
 
 /** Parses a Postgres `timestamptz` (e.g. `2026-10-01T12:34:56.123456+00:00`) to epoch micros. */
 fun parseTimestamp(value: String): Long = OffsetDateTime.parse(value).toInstant().toMicros()
@@ -49,7 +50,7 @@ private fun String?.deletedFlag(): String? = this?.let { "deleted" }
 @Serializable
 data class AccountRow(
     override val id: String,
-    @SerialName("user_id") val userId: String = "",
+    @SerialName("ledger_id") val ledgerId: String = "",
     val number: Int,
     val name: String,
     val type: Int,
@@ -59,11 +60,11 @@ data class AccountRow(
 ) : SyncRow {
     fun toEntity() = AccountEntity(id, number, name, type, modifiedAtMicros, deletedAt?.let(::parseTimestamp), isDirty = false)
 
-    override fun content() = copy(userId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
+    override fun content() = copy(ledgerId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
 
     companion object {
-        fun from(e: AccountEntity, userId: String) = AccountRow(
-            e.id, userId, e.number, e.name, e.type, modifiedAt = formatTimestamp(e.updatedAt), deletedAt = e.deletedAt?.let(::formatTimestamp),
+        fun from(e: AccountEntity, ledgerId: String) = AccountRow(
+            e.id, ledgerId, e.number, e.name, e.type, modifiedAt = formatTimestamp(e.updatedAt), deletedAt = e.deletedAt?.let(::formatTimestamp),
         )
     }
 }
@@ -87,7 +88,7 @@ data class LineRow(
 @Serializable
 data class TransactionRow(
     override val id: String,
-    @SerialName("user_id") val userId: String = "",
+    @SerialName("ledger_id") val ledgerId: String = "",
     val date: String,
     val title: String,
     val description: String? = null,
@@ -104,7 +105,7 @@ data class TransactionRow(
 
     /** Line ids and order don't matter: the same posting made on two devices is the same content. */
     override fun content() = copy(
-        userId = "",
+        ledgerId = "",
         description = description.orEmpty(),
         lines = lines.map { it.copy(id = "") }.sortedWith(compareBy({ it.entryType }, { it.accountId }, { it.amount })),
         modifiedAt = "",
@@ -113,8 +114,8 @@ data class TransactionRow(
     )
 
     companion object {
-        fun from(e: TransactionEntity, lines: List<EntryEntity>, userId: String) = TransactionRow(
-            e.id, userId, e.date.toString(), e.title, e.description, lines.map(LineRow::from),
+        fun from(e: TransactionEntity, lines: List<EntryEntity>, ledgerId: String) = TransactionRow(
+            e.id, ledgerId, e.date.toString(), e.title, e.description, lines.map(LineRow::from),
             modifiedAt = formatTimestamp(e.updatedAt), deletedAt = e.deletedAt?.let(::formatTimestamp),
         )
     }
@@ -123,7 +124,7 @@ data class TransactionRow(
 @Serializable
 data class AssetRow(
     override val id: String,
-    @SerialName("user_id") val userId: String = "",
+    @SerialName("ledger_id") val ledgerId: String = "",
     val name: String,
     @Serializable(with = DecimalCentsSerializer::class) val cost: Long,
     @SerialName("activation_date") val activationDate: String,
@@ -152,12 +153,12 @@ data class AssetRow(
         isDirty = false,
     )
 
-    override fun content() = copy(userId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
+    override fun content() = copy(ledgerId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
 
     companion object {
-        fun from(e: AssetEntity, userId: String) = AssetRow(
+        fun from(e: AssetEntity, ledgerId: String) = AssetRow(
             id = e.id,
-            userId = userId,
+            ledgerId = ledgerId,
             name = e.name,
             cost = e.costCents,
             activationDate = e.activationDate.toString(),
@@ -175,7 +176,7 @@ data class AssetRow(
 @Serializable
 data class InvoiceRow(
     override val id: String,
-    @SerialName("user_id") val userId: String = "",
+    @SerialName("ledger_id") val ledgerId: String = "",
     @Serializable(with = DecimalCentsSerializer::class)
     @SerialName("amount_due") val amountDue: Long,
     @SerialName("invoice_date") val invoiceDate: String,
@@ -208,12 +209,12 @@ data class InvoiceRow(
         isDirty = false,
     )
 
-    override fun content() = copy(userId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
+    override fun content() = copy(ledgerId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
 
     companion object {
-        fun from(e: InvoiceEntity, userId: String) = InvoiceRow(
+        fun from(e: InvoiceEntity, ledgerId: String) = InvoiceRow(
             id = e.id,
-            userId = userId,
+            ledgerId = ledgerId,
             amountDue = e.amountDueCents,
             invoiceDate = e.invoiceDate.toString(),
             dueDate = e.dueDate.toString(),
@@ -233,7 +234,7 @@ data class InvoiceRow(
 @Serializable
 data class UserSettingRow(
     override val id: String,
-    @SerialName("user_id") val userId: String = "",
+    @SerialName("ledger_id") val ledgerId: String = "",
     val key: String,
     val value: String,
     @SerialName("modified_at") override val modifiedAt: String,
@@ -242,10 +243,10 @@ data class UserSettingRow(
 ) : SyncRow {
     fun toEntity() = UserSettingEntity(id, key, value, modifiedAtMicros, deletedAt?.let(::parseTimestamp), isDirty = false)
 
-    override fun content() = copy(userId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
+    override fun content() = copy(ledgerId = "", modifiedAt = "", updatedAt = null, deletedAt = deletedAt.deletedFlag())
 
     companion object {
-        fun from(e: UserSettingEntity, userId: String) =
-            UserSettingRow(e.id, userId, e.key, e.value, modifiedAt = formatTimestamp(e.updatedAt), deletedAt = e.deletedAt?.let(::formatTimestamp))
+        fun from(e: UserSettingEntity, ledgerId: String) =
+            UserSettingRow(e.id, ledgerId, e.key, e.value, modifiedAt = formatTimestamp(e.updatedAt), deletedAt = e.deletedAt?.let(::formatTimestamp))
     }
 }

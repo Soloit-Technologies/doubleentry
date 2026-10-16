@@ -1,5 +1,6 @@
 package com.soloit.doubleentry.sync
 
+import com.soloit.doubleentry.data.local.nowMicros
 import com.soloit.doubleentry.domain.Account
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.DraftLine
@@ -29,15 +30,21 @@ import java.time.LocalDate
 @RunWith(RobolectricTestRunner::class)
 class SyncEngineTest {
     private val server = FakePostgrest()
+    private val devices = mutableListOf<Device>()
     private val a = Device("a")
     private val b = Device("b")
     private val day = LocalDate.of(2026, 9, 15)
 
-    private inner class Device(name: String) {
+    /** A device syncing [ledger]; signed in as [user] (row-level security applies) or with the plain token. */
+    private inner class Device(name: String, user: String? = null, ledger: String = "ledger-1") {
         val t = TestLedger(name)
-        private val prefs = SyncPreferences(t.context).apply { userId = "user-1" }
+        private val prefs = SyncPreferences(t.context).apply { userId = user ?: "user-1"; ledgerId = ledger }
         private val engine = SyncEngine(t.db, SupabaseApi(SupabaseConfig("https://project.supabase.co", "anon", true), server.client), prefs)
-        private val auth = AccessTokenProvider { "token" }
+        private val auth = AccessTokenProvider { user?.let { "t-$it" } ?: "token" }
+
+        init {
+            devices += this
+        }
 
         /** One cycle as SyncManager runs it: pull, then push. Returns what the pull reported. */
         suspend fun sync(): PullResult = engine.pullAll(auth).also { engine.pushAll(auth) }
@@ -48,12 +55,13 @@ class SyncEngineTest {
         suspend fun pending(): Int = t.db.syncStatus().pendingChanges().first()
 
         suspend fun account(number: Int): Account = t.ledger.getAccounts().single { it.number == number }
+
+        suspend fun replaceCloudLedger(atMicros: Long) = engine.replaceCloudLedger(atMicros, auth)
     }
 
     @After
     fun tearDown() {
-        a.t.close()
-        b.t.close()
+        devices.forEach { it.t.close() }
     }
 
     private fun draft(title: String, amount: Long, food: Account, bank: Account) =
@@ -198,13 +206,44 @@ class SyncEngineTest {
     }
 
     @Test
+    fun membersOfALedgerSyncItWithoutTouchingTheirOtherLedgers() = runBlocking<Unit> {
+        server.members["user-ben"] = mutableSetOf("ledger-anna")
+        val anna = Device("anna", user = "user-anna", ledger = "ledger-anna")
+        val ben = Device("ben", user = "user-ben", ledger = "ledger-anna")
+        val bensOwn = Device("ben-own", user = "user-ben", ledger = "ledger-ben")
+        bensOwn.t.account(1910, "Ben's bank", AccountType.Asset)
+        bensOwn.sync()
+
+        val bank = anna.t.account(1910, "Bank", AccountType.Asset)
+        val food = anna.t.account(5010, "Food", AccountType.Expense)
+        val id = anna.t.post(day, "Groceries", food, bank, 100_00)
+        anna.sync()
+        ben.sync()
+        ben.t.ledger.updateTransaction(id, draft("Groceries and wine", 150_00, ben.account(5010), ben.account(1910)))
+        ben.sync()
+        anna.sync()
+        assertEquals("Groceries and wine", anna.t.ledger.getTransaction(id)!!.title)
+        // Same account numbers in both of Ben's ledgers, kept apart.
+        assertEquals(listOf("Ben's bank"), bensOwn.t.ledger.getAccounts().map { it.name })
+
+        // Replacing the shared ledger deletes only its rows, though Ben may write to both.
+        val before = nowMicros()
+        ben.t.ledger.deleteAllData()
+        ben.replaceCloudLedger(before)
+        assertEquals(0, server.liveRows("accounts", "ledger-anna").size)
+        assertEquals(1, server.liveRows("accounts", "ledger-ben").size)
+        anna.sync()
+        assertEquals(emptyList<Account>(), anna.t.ledger.getAccounts())
+    }
+
+    @Test
     fun rowsChangedWhileAPullIsPagingAreNotSkipped() = runBlocking<Unit> {
         // More than one page of settings rows, stamped one microsecond apart.
         val base = parseTimestamp("2026-09-01T00:00:00Z")
         fun setting(i: Int, updatedAt: Long) = JsonObject(
             mapOf(
                 "id" to JsonPrimitive("00000000-0000-4000-8000-%012d".format(i)),
-                "user_id" to JsonPrimitive("user-1"),
+                "ledger_id" to JsonPrimitive("ledger-1"),
                 "key" to JsonPrimitive("Test.$i"),
                 "value" to JsonPrimitive("v"),
                 "modified_at" to JsonPrimitive(formatTimestamp(base + i)),
