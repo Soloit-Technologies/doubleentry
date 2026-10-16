@@ -70,7 +70,11 @@ class SyncFailureTest {
 
         suspend fun post(title: String, amount: Long = 1_00): String {
             val accounts = t.ledger.getAccounts()
-            return t.post(day, title, accounts.single { it.number == 5010 }, accounts.single { it.number == 1910 }, amount)
+            val id = t.post(day, title, accounts.single { it.number == 5010 }, accounts.single { it.number == 1910 }, amount)
+            // The status learns the pending count asynchronously; attention and error reports read it from there.
+            val count = pending()
+            withTimeout(5_000) { sync.status.first { it.pendingChanges == count } }
+            return id
         }
 
         suspend fun titles(): List<String> = t.ledger.getTransactions().map { it.title }.sorted()
@@ -257,8 +261,9 @@ class SyncFailureTest {
         // Delete all: the old cloud rows are deleted, then the upload of what A kept is cut off.
         val before = nowMicros()
         a.t.ledger.deleteAllData()
-        a.sync.replaceCloudLedger(before)
+        // Before the request: replaceCloudLedger starts a sync in the background too.
         server.fail(Failure.Dropped, times = Int.MAX_VALUE, matches = { it.method == "POST" })
+        a.sync.replaceCloudLedger(before)
         assertFalse(a.sync.syncNow())
 
         // B syncs in between (Realtime tells it about the deletions right away) and sees them.
