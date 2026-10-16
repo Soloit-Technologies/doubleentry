@@ -154,6 +154,30 @@ class ReportsTest {
         assertEquals(listOf("acct:6010", "acct:8910"), result.series[1].accounts.map { it.key })
         assertEquals(1_000L, result.series[1].accounts[1].total)
         assertEquals(listOf(10_000L, 11_000L, 3_000L), result.total.monthly)
+        assertEquals(null, result.totalExcludingTax)
+    }
+
+    @Test
+    fun costTrendsTotalExcludingTax() {
+        val months = CostTrendCalculator.months(YearMonth.of(2026, 1), YearMonth.of(2026, 3))
+        val result = CostTrendCalculator.compute(accounts, months, trendMovements, emptyList(), useGroups = false, taxPrefixes = listOf("89"))
+        assertEquals(listOf(10_000L, 11_000L, 3_000L), result.total.monthly)
+        assertEquals(listOf(10_000L, 10_000L, 3_000L), result.totalExcludingTax?.monthly)
+        assertEquals(listOf(CostTrendCalculator.TOTAL_KEY, CostTrendCalculator.TOTAL_EXCLUDING_TAX_KEY), result.overall.map { it.key })
+        assertEquals(null, result.cashOperatingExpenses)
+    }
+
+    @Test
+    fun costTrendsCashOperatingExpenses() {
+        val months = CostTrendCalculator.months(YearMonth.of(2026, 1), YearMonth.of(2026, 3))
+        val result = CostTrendCalculator.compute(
+            accounts, months, trendMovements, emptyList(), useGroups = false, taxPrefixes = listOf("89"), depreciationPrefixes = listOf("50"),
+        )
+        assertEquals(listOf(0L, 0L, 3_000L), result.cashOperatingExpenses?.monthly)
+        assertEquals(
+            listOf(CostTrendCalculator.TOTAL_KEY, CostTrendCalculator.TOTAL_EXCLUDING_TAX_KEY, CostTrendCalculator.CASH_OPERATING_KEY),
+            result.overall.map { it.key },
+        )
     }
 
     @Test
