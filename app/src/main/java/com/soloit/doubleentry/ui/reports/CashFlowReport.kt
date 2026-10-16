@@ -21,9 +21,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -33,17 +36,23 @@ import com.soloit.doubleentry.data.LedgerRepository
 import com.soloit.doubleentry.data.SettingsRepository
 import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.reports.CashFlowCalculator
+import com.soloit.doubleentry.domain.monthAbbreviation
+import com.soloit.doubleentry.domain.reports.CashFlowPoint
 import com.soloit.doubleentry.domain.reports.CashFlowReport
+import com.soloit.doubleentry.domain.shortLabel
+import com.soloit.doubleentry.domain.yearMonth
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AmountTone
 import com.soloit.doubleentry.ui.components.CardDivider
 import com.soloit.doubleentry.ui.components.EmptyState
 import com.soloit.doubleentry.ui.components.ExpandableGroup
+import com.soloit.doubleentry.ui.components.FlowBarChart
 import com.soloit.doubleentry.ui.components.LoadingState
 import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SectionHeader
 import com.soloit.doubleentry.ui.components.StatTile
+import com.soloit.doubleentry.ui.components.TrendLineChart
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,6 +61,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import java.time.format.DateTimeFormatter
 
 data class CashFlowUiState(val period: ReportPeriod = ReportPeriod(), val report: CashFlowReport? = null)
 
@@ -66,6 +76,7 @@ class CashFlowViewModel(ledger: LedgerRepository, settings: SettingsRepository) 
                 endingBalances = ledger.getBalances(p.to),
                 transactions = ledger.getTransactions(p.from, p.to),
                 groups = s.cashGroups,
+                period = p.from..p.to,
             )
             CashFlowUiState(p, report)
         }
@@ -105,6 +116,9 @@ fun CashFlowReportPage(onOpenSettings: () -> Unit) {
                 StatTile("Inflows", report.totalInflows, Modifier.weight(1f), Icons.Rounded.SouthWest, finance.positive, AmountTone.Positive)
                 StatTile("Outflows", report.totalOutflows, Modifier.weight(1f), Icons.Rounded.NorthEast, finance.negative, AmountTone.Negative)
             }
+        }
+        if (report.timeline.isNotEmpty()) {
+            item(key = "timeline") { CashTimelineCard(report) }
         }
         item { SectionHeader("Cash groups") }
         if (report.groups.isEmpty()) {
@@ -155,5 +169,57 @@ fun CashFlowReportPage(onOpenSettings: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun CashTimelineCard(report: CashFlowReport) {
+    val finance = AppTheme.finance
+    val timeline = report.timeline
+    var selected by remember(timeline) { mutableStateOf(timeline.lastIndex) }
+    val point = timeline[selected.coerceIn(0, timeline.lastIndex)]
+    val labels = remember(timeline) {
+        if (report.dailyTimeline) timeline.map { it.start.dayOfMonth.toString() } else timeline.map { it.start.yearMonth.monthAbbreviation() }
+    }
+
+    SectionCard(contentPadding = PaddingValues(16.dp)) {
+        Text(point.label(report.dailyTimeline), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            TimelineFigure("Cash", point.balance, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+            TimelineFigure("In", point.inflow, finance.positive, Modifier.weight(1f))
+            TimelineFigure("Out", point.outflow, finance.negative, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(12.dp))
+        TrendLineChart(
+            values = timeline.map { it.balance },
+            labels = labels,
+            color = MaterialTheme.colorScheme.primary,
+            selectedIndex = selected,
+            onSelect = { selected = it },
+        )
+        Spacer(Modifier.height(4.dp))
+        FlowBarChart(
+            inflows = timeline.map { it.inflow },
+            outflows = timeline.map { it.outflow },
+            labels = labels,
+            inColor = finance.positive,
+            outColor = finance.negative,
+            selectedIndex = selected,
+            onSelect = { selected = it },
+        )
+    }
+}
+
+private val dayLabel = DateTimeFormatter.ofPattern("EEE d MMM")
+
+private fun CashFlowPoint.label(daily: Boolean): String =
+    if (daily) start.format(dayLabel) else start.yearMonth.shortLabel()
+
+@Composable
+private fun TimelineFigure(label: String, cents: Long, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
+        MoneyText(cents, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
     }
 }
