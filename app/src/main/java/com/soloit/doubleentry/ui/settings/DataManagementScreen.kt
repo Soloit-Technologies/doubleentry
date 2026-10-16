@@ -111,6 +111,7 @@ class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun import(resolver: ContentResolver, uri: Uri) = run("Import") {
+        if (c.sync.status.value.sharedLedger) return@run SHARED_LEDGER
         val before = nowMicros()
         resolver.openInputStream(uri)?.use { c.backup.import(it) } ?: error("Could not open the selected file.")
         // Also replaces cloud rows this device never pulled (added on another device meanwhile).
@@ -124,6 +125,7 @@ class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun deleteAll() = run("Delete all data") {
+        if (c.sync.status.value.sharedLedger) return@run SHARED_LEDGER
         val before = nowMicros()
         c.ledger.deleteAllData()
         c.sync.replaceCloudLedger(before)
@@ -136,16 +138,19 @@ class DataManagementViewModel(private val c: AppContainer) : ViewModel() {
      */
     fun factoryReset(evenIfUnsynced: Boolean = false) = run("Reset device") {
         if (!evenIfUnsynced) {
-            val left = c.sync.uploadBeforeReset()
+            val left = c.sessions.uploadBeforeReset()
             if (left > 0) {
                 resetWouldLose.value = left
                 return@run null
             }
         }
-        c.sync.resetDevice()
+        c.sessions.resetDevice()
         "All data on this device has been cleared. Sign in again to download your data from the cloud."
     }
 }
+
+/** Replacing a whole ledger would do it for everyone in it, so it's left to the owner. */
+private const val SHARED_LEDGER = "This ledger is shared with you, so only its owner can replace or delete all of it."
 
 private enum class Confirm { Import, DeleteFirst, DeleteSecond, Repair, Reset }
 

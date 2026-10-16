@@ -32,7 +32,9 @@ import java.time.ZoneOffset
  * strictly later, and `user_id` with the writer. A token from [signIn] reaches only the ledgers
  * its user is a member of (like row-level security): their own ([ledgerIdFor], returned by
  * `rpc/own_ledger`) and any added to [members]; the plain token "token" reaches everything.
- * Uploads need cloud access ([withoutAccess] lists users who have none), read with `rpc/cloud_access`.
+ * Uploads need the ledger owner's cloud access ([withoutAccess] lists users who have none), read
+ * with `rpc/cloud_access` and `rpc/ledger_access`. The sharing functions (invites, members,
+ * renaming) work like the migration's, with the same refusals.
  */
 class FakePostgrest {
     private val tables = mutableMapOf<String, MutableMap<String, JsonObject>>()
@@ -41,8 +43,16 @@ class FakePostgrest {
     /** Users without a backup subscription: their uploads are refused like row-level security does. */
     val withoutAccess = mutableSetOf<String>()
 
-    /** Ledgers users were added to, besides their own, by user id. */
+    /** Ledgers users were added to, besides their own, by user id; they're editors there. */
     val members = mutableMapOf<String, MutableSet<String>>()
+
+    /** Ledger names; unnamed ledgers are "My ledger". */
+    val ledgerNames = mutableMapOf<String, String>()
+
+    /** Open invites: code to ledger. */
+    private val invites = mutableMapOf<String, String>()
+    private val usedInvites = mutableSetOf<String>()
+    private val emails = mutableMapOf<String, String>()
 
     /** Number of upserted rows, per table. */
     val writes = mutableMapOf<String, Int>()
@@ -71,7 +81,21 @@ class FakePostgrest {
     /** The own ledger of the account with [email]. */
     fun ledgerIdFor(email: String) = "ledger-" + email.substringBefore('@')
 
-    private fun ledgersOf(user: String) = setOf("ledger-" + user.removePrefix("user-")) + members[user].orEmpty()
+    private fun ownLedger(user: String) = "ledger-" + user.removePrefix("user-")
+
+    private fun ownerOf(ledger: String) = "user-" + ledger.removePrefix("ledger-")
+
+    private fun ledgersOf(user: String) = setOf(ownLedger(user)) + members[user].orEmpty()
+
+    private fun membersOf(ledger: String) = listOf(ownerOf(ledger)) + members.filterValues { ledger in it }.keys.sorted()
+
+    private fun roleOf(user: String, ledger: String) = when {
+        ownLedger(user) == ledger -> "owner"
+        ledger in members[user].orEmpty() -> "editor"
+        else -> null
+    }
+
+    private fun emailOf(user: String) = emails[user] ?: (user.removePrefix("user-") + "@example.com")
 
     val client: OkHttpClient = OkHttpClient.Builder().addInterceptor(Interceptor { chain -> handle(chain) }).build()
 
@@ -80,15 +104,13 @@ class FakePostgrest {
         val request = chain.request()
         if ("auth" in request.url.pathSegments) return respond(request, 200, signIn(request))
         val user = request.header("Authorization")?.removePrefix("Bearer ")?.takeIf { it.startsWith("t-") }?.removePrefix("t-")
-        val allowed = user == null || user !in withoutAccess
-        if (request.url.pathSegments.last() == "own_ledger") {
-            return respond(request, 200, JsonPrimitive(checkNotNull(user) { "own_ledger needs a signed-in user" }.let { "ledger-" + it.removePrefix("user-") }))
-        }
-        if ("rpc" in request.url.pathSegments) {
-            return respond(request, 200, JsonArray(listOf(buildJsonObject { put("active", allowed); put("source", if (allowed) "complimentary" else null) })))
-        }
-        if (!allowed && request.method != "GET") {
-            return respond(request, 403, buildJsonObject { put("code", "42501"); put("message", "new row violates row-level security policy") })
+        if ("rpc" in request.url.pathSegments) return rpc(request, request.url.pathSegments.last(), user)
+        if (request.url.encodedPath == "/functions/v1/delete-account") {
+            // The account goes with its ledger; its memberships of other ledgers end.
+            val me = checkNotNull(user) { "delete-account needs a signed-in user" }
+            tables.values.forEach { rows -> rows.values.removeAll { it["ledger_id"]?.jsonPrimitive?.content == ownLedger(me) } }
+            members.remove(me)
+            return respond(request, 200, buildJsonObject { put("deleted", true) })
         }
         val table = request.url.pathSegments.last()
         val rows = tables.getOrPut(table) { linkedMapOf() }
@@ -98,6 +120,8 @@ class FakePostgrest {
         val url = request.url
         val ledgerFilter = url.queryParameter("ledger_id")?.removePrefix("eq.")
         if (request.method != "POST") checkNotNull(ledgerFilter) { "Reads and bulk updates name their ledger" }
+        // Writing needs the owner's subscription, whoever writes.
+        if (user != null && request.method != "GET" && ledgerFilter != null && ownerOf(ledgerFilter) in withoutAccess) return refused(request)
         val onlyLive = url.queryParameter("deleted_at") == "is.null"
         val updatedSince = url.queryParameter("updated_at")?.let { parseTimestamp(it.removePrefix("gte.")) }
         val modifiedBefore = url.queryParameter("modified_at")?.let { parseTimestamp(it.removePrefix("lt.")) }
@@ -133,8 +157,8 @@ class FakePostgrest {
             }
             "POST" -> {
                 val sent = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonArray
-                if (reachable != null && sent.any { ledger(it.jsonObject) !in reachable }) {
-                    return respond(request, 403, buildJsonObject { put("code", "42501"); put("message", "new row violates row-level security policy") })
+                if (reachable != null && sent.any { ledger(it.jsonObject).let { l -> l !in reachable || ownerOf(l!!) in withoutAccess } }) {
+                    return refused(request)
                 }
                 JsonArray(
                     sent.mapNotNull { element ->
@@ -168,10 +192,102 @@ class FakePostgrest {
         return respond(request, if (request.method == "POST") 201 else 200, body)
     }
 
+    private fun refused(request: okhttp3.Request) =
+        respond(request, 403, buildJsonObject { put("code", "42501"); put("message", "new row violates row-level security policy") })
+
+    /** Raises like the migration's functions do: P0001 with a machine-readable message. */
+    private fun raise(request: okhttp3.Request, message: String) =
+        respond(request, 400, buildJsonObject { put("code", "P0001"); put("message", message) })
+
+    private fun rpc(request: okhttp3.Request, name: String, user: String?): Response {
+        val args = request.body?.let { Json.parseToJsonElement(Buffer().also(it::writeTo).readUtf8()).jsonObject } ?: JsonObject(emptyMap())
+        fun arg(key: String) = args.getValue(key).jsonPrimitive.content
+        val me = user ?: "user-anonymous"
+        fun ledgerRow(ledger: String, role: String) = buildJsonObject {
+            put("id", ledger)
+            put("name", ledgerNames[ledger] ?: "My ledger")
+            put("role", role)
+            put("owner_email", emailOf(ownerOf(ledger)))
+            put("member_count", membersOf(ledger).size)
+        }
+        return when (name) {
+            "own_ledger" -> respond(request, 200, JsonPrimitive(ownLedger(checkNotNull(user) { "own_ledger needs a signed-in user" })))
+            "cloud_access" -> {
+                val allowed = user == null || user !in withoutAccess
+                respond(request, 200, JsonArray(listOf(buildJsonObject { put("active", allowed); put("source", if (allowed) "complimentary" else null) })))
+            }
+            "ledger_access" -> {
+                val ledger = arg("ledger")
+                val role = roleOf(me, ledger)
+                respond(request, 200, JsonArray(listOf(buildJsonObject {
+                    put("role", role)
+                    put("writable", role != null && ownerOf(ledger) !in withoutAccess)
+                    put("owner_email", role?.let { emailOf(ownerOf(ledger)) })
+                })))
+            }
+            "list_ledgers" -> respond(request, 200, JsonArray(ledgersOf(me).sorted().map { ledgerRow(it, roleOf(me, it)!!) }))
+            "list_members" -> {
+                val ledger = arg("ledger")
+                if (roleOf(me, ledger) == null) return raise(request, "not_member")
+                respond(request, 200, JsonArray(membersOf(ledger).map { member ->
+                    buildJsonObject { put("user_id", member); put("email", emailOf(member)); put("role", roleOf(member, ledger)) }
+                }))
+            }
+            "create_invite" -> {
+                val ledger = arg("ledger")
+                if (roleOf(me, ledger) != "owner") return raise(request, "not_owner")
+                val code = "CODE-%04d".format(invites.size + usedInvites.size + 1)
+                invites[code] = ledger
+                respond(request, 200, JsonArray(listOf(buildJsonObject { put("code", code); put("expires_at", stamp(nowMicros() + 7 * 86_400_000_000L)) })))
+            }
+            "invite_details", "accept_invite" -> {
+                val code = arg("code").uppercase()
+                if (code in usedInvites) return raise(request, "invite_used")
+                val ledger = invites[code] ?: return raise(request, "invite_not_found")
+                val member = roleOf(me, ledger) != null
+                if (name == "invite_details") {
+                    respond(request, 200, JsonArray(listOf(buildJsonObject {
+                        put("ledger_id", ledger)
+                        put("ledger_name", ledgerNames[ledger] ?: "My ledger")
+                        put("owner_email", emailOf(ownerOf(ledger)))
+                        put("role", "editor")
+                        put("already_member", member)
+                    })))
+                } else {
+                    if (!member) {
+                        invites.remove(code)
+                        usedInvites += code
+                        members.getOrPut(me) { mutableSetOf() } += ledger
+                    }
+                    respond(request, 200, JsonPrimitive(ledger))
+                }
+            }
+            "remove_member" -> {
+                val ledger = arg("ledger")
+                val member = arg("member")
+                if (member == me) {
+                    if (roleOf(me, ledger) == "owner") return raise(request, "owner_cannot_leave")
+                } else if (roleOf(me, ledger) != "owner") {
+                    return raise(request, "not_owner")
+                }
+                members[member]?.remove(ledger)
+                respond(request, 200, JsonNull)
+            }
+            "rename_ledger" -> {
+                val ledger = arg("ledger")
+                if (roleOf(me, ledger) != "owner") return raise(request, "not_owner")
+                ledgerNames[ledger] = arg("name")
+                respond(request, 200, JsonNull)
+            }
+            else -> error("Unexpected rpc/$name")
+        }
+    }
+
     private fun signIn(request: okhttp3.Request): JsonObject {
         val sent = Json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonObject
         val email = (sent["email"] ?: sent.getValue("id_token")).jsonPrimitive.content
         val id = userIdFor(email)
+        emails[id] = email
         return buildJsonObject {
             put("access_token", "t-$id")
             put("refresh_token", "r-$id")

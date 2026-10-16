@@ -2,8 +2,10 @@ package com.soloit.doubleentry.sync
 
 import com.soloit.doubleentry.data.local.ServerClock
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -75,6 +77,52 @@ data class CloudAccess(
     val expiresAtMillis: Long? get() = expiresAt?.let { runCatching { parseTimestamp(it) / 1000 }.getOrNull() }
 }
 
+/** One row of `rpc/list_ledgers`: a ledger the signed-in user is a member of. */
+@Serializable
+data class LedgerInfo(
+    val id: String,
+    val name: String,
+    /** `owner`, `editor` or `viewer`. */
+    val role: String,
+    @SerialName("owner_email") val ownerEmail: String? = null,
+    @SerialName("member_count") val memberCount: Int = 1,
+) {
+    val isOwner: Boolean get() = role == "owner"
+}
+
+/** One row of `rpc/list_members`. */
+@Serializable
+data class LedgerMember(
+    @SerialName("user_id") val userId: String,
+    val email: String? = null,
+    val role: String,
+)
+
+/** One row of `rpc/ledger_access`: [role] is null when the user isn't a member (any more). */
+@Serializable
+data class LedgerAccess(
+    val role: String? = null,
+    /** May upload now: owner or editor, and the owner's backup subscription is active. */
+    val writable: Boolean = false,
+    @SerialName("owner_email") val ownerEmail: String? = null,
+)
+
+/** A code from `rpc/create_invite`, to send to the person invited. */
+@Serializable
+data class Invite(val code: String, @SerialName("expires_at") val expiresAt: String) {
+    val expiresAtMillis: Long? get() = runCatching { parseTimestamp(expiresAt) / 1000 }.getOrNull()
+}
+
+/** One row of `rpc/invite_details`: what an invite code leads to. */
+@Serializable
+data class InviteDetails(
+    @SerialName("ledger_id") val ledgerId: String,
+    @SerialName("ledger_name") val ledgerName: String,
+    @SerialName("owner_email") val ownerEmail: String? = null,
+    val role: String,
+    @SerialName("already_member") val alreadyMember: Boolean = false,
+)
+
 /**
  * Thin client for Supabase Auth (GoTrue) and the PostgREST data API. Every request the app sends
  * to Supabase lives in this file; the tables, policies and triggers it relies on are defined in
@@ -94,7 +142,7 @@ class SupabaseApi(
     private val json = Json { ignoreUnknownKeys = true }
     private val jsonMedia = "application/json".toMediaType()
 
-    enum class Operation { SignIn, GoogleSignIn, Session, Sync, Password, Code, Account, Purchase }
+    enum class Operation { SignIn, GoogleSignIn, Session, Sync, Password, Code, Account, Purchase, Ledger }
 
     /** `POST /auth/v1/token?grant_type=password` */
     suspend fun signIn(email: String, password: String): AuthTokenResponse {
@@ -167,6 +215,47 @@ class SupabaseApi(
         val text = execute(postJson("rest/v1/rpc/own_ledger", "{}", accessToken), Operation.Sync)
         return (json.parseToJsonElement(text) as? JsonPrimitive)?.takeIf { it.isString }?.content
             ?: throw SyncException(friendlyMessage(Operation.Sync, 200))
+    }
+
+    /** `POST /rest/v1/rpc/list_ledgers`: the ledgers the signed-in user is a member of, oldest first. */
+    suspend fun listLedgers(accessToken: String): List<LedgerInfo> = rpcRows("list_ledgers", "{}", LedgerInfo.serializer(), accessToken)
+
+    /** `POST /rest/v1/rpc/list_members`: who is in [ledgerId], the owner first. */
+    suspend fun listMembers(ledgerId: String, accessToken: String): List<LedgerMember> =
+        rpcRows("list_members", buildJsonObject { put("ledger", ledgerId) }.toString(), LedgerMember.serializer(), accessToken)
+
+    /** `POST /rest/v1/rpc/ledger_access`: the signed-in user's role in [ledgerId] and whether they may upload to it. */
+    suspend fun ledgerAccess(ledgerId: String, accessToken: String): LedgerAccess =
+        rpcRows("ledger_access", buildJsonObject { put("ledger", ledgerId) }.toString(), LedgerAccess.serializer(), accessToken).firstOrNull()
+            ?: LedgerAccess()
+
+    /** `POST /rest/v1/rpc/create_invite`: a single-use code that makes its holder a member of [ledgerId] (owner only). */
+    suspend fun createInvite(ledgerId: String, role: String, accessToken: String): Invite =
+        rpcRows("create_invite", buildJsonObject { put("ledger", ledgerId); put("role", role) }.toString(), Invite.serializer(), accessToken).single()
+
+    /** `POST /rest/v1/rpc/invite_details`: what [code] is an invite to; fails when it can't be used. */
+    suspend fun inviteDetails(code: String, accessToken: String): InviteDetails =
+        rpcRows("invite_details", buildJsonObject { put("code", code) }.toString(), InviteDetails.serializer(), accessToken).single()
+
+    /** `POST /rest/v1/rpc/accept_invite`: joins the ledger [code] is for and returns its id. */
+    suspend fun acceptInvite(code: String, accessToken: String): String {
+        val text = execute(postJson("rest/v1/rpc/accept_invite", buildJsonObject { put("code", code) }.toString(), accessToken), Operation.Ledger)
+        return (json.parseToJsonElement(text) as JsonPrimitive).content
+    }
+
+    /** `POST /rest/v1/rpc/remove_member`: the owner removes [userId] from [ledgerId], or a member removes themselves. */
+    suspend fun removeMember(ledgerId: String, userId: String, accessToken: String) {
+        execute(postJson("rest/v1/rpc/remove_member", buildJsonObject { put("ledger", ledgerId); put("member", userId) }.toString(), accessToken), Operation.Ledger)
+    }
+
+    /** `POST /rest/v1/rpc/rename_ledger` (owner only). */
+    suspend fun renameLedger(ledgerId: String, name: String, accessToken: String) {
+        execute(postJson("rest/v1/rpc/rename_ledger", buildJsonObject { put("ledger", ledgerId); put("name", name) }.toString(), accessToken), Operation.Ledger)
+    }
+
+    private suspend fun <T> rpcRows(name: String, body: String, serializer: KSerializer<T>, accessToken: String): List<T> {
+        val text = execute(postJson("rest/v1/rpc/$name", body, accessToken), Operation.Ledger)
+        return json.decodeFromString(ListSerializer(serializer), text)
     }
 
     /** `POST /functions/v1/play-verify`: the server checks a Google Play purchase with Google and records it. */
@@ -325,14 +414,18 @@ class SupabaseApi(
         }
     }
 
-    /** GoTrue's machine-readable `error_code`, e.g. `weak_password`. */
+    /**
+     * The machine-readable reason for a failure: GoTrue's `error_code` (e.g. `weak_password`); for
+     * PostgREST, the message our functions raise (P0001, e.g. `invite_used`), else the SQL state.
+     */
     private fun errorCode(body: String): String? = runCatching {
-        (json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject)?.get("error_code")
-            ?.let { (it as? JsonPrimitive)?.content }
+        val error = json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject ?: return@runCatching null
+        fun field(name: String) = (error[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        field("error_code") ?: if (field("code") == "P0001") field("message") else field("code")
     }.getOrNull()
 
     companion object {
-        private val AUTHORIZED = setOf(Operation.Sync, Operation.Account, Operation.Purchase)
+        private val AUTHORIZED = setOf(Operation.Sync, Operation.Account, Operation.Purchase, Operation.Ledger)
 
         fun friendlyMessage(op: Operation, status: Int, errorCode: String? = null): String = when {
             errorCode == "weak_password" -> "Choose a longer password: at least 8 characters."
@@ -341,6 +434,13 @@ class SupabaseApi(
             errorCode == "over_email_send_rate_limit" -> "Too many emails were sent just now. Please wait a minute and try again."
             errorCode == "signup_disabled" -> "New accounts can't be created right now."
             errorCode == "provider_disabled" -> "Sign in with Google isn't set up for this cloud service yet."
+            errorCode == "invite_not_found" -> "That code isn't right. Check it and try again."
+            errorCode == "invite_used" -> "That code has already been used. Ask for a new one."
+            errorCode == "invite_expired" -> "That code has expired. Ask for a new one."
+            errorCode == "not_owner" -> "Only the ledger's owner can do that."
+            errorCode == "owner_cannot_leave" -> "You own this ledger, so you can't leave it."
+            errorCode == "not_member" -> "You're no longer a member of that ledger."
+            errorCode == "23514" && op == Operation.Ledger -> "Choose a name of 1 to 100 characters."
             status >= 500 -> "The cloud service is temporarily unavailable. Please try again in a few minutes."
             status == 408 || status == 429 -> "The cloud service is busy right now. Please wait a moment and try again."
             op == Operation.SignIn -> "We couldn't sign you in. Please check your email and password, then try again."
@@ -350,6 +450,7 @@ class SupabaseApi(
             op == Operation.Account -> "We couldn't delete your account right now. Please try again later."
             op == Operation.Purchase -> "We couldn't confirm your purchase yet. It will be checked again the next time the app opens."
             op == Operation.Session -> "Your session has expired. Please sign in again."
+            op == Operation.Ledger -> "We couldn't reach your shared ledgers right now. Please try again later."
             else -> "We couldn't sync your data right now. Please try again later."
         }
 

@@ -23,6 +23,7 @@ supabase/
 | `20261006000002_transaction_lines_and_edit_times.sql` | Moves transaction lines into `transactions.lines` (jsonb), adds `modified_at` to every table, and a trigger that refuses an update older than the stored row |
 | `20261007000000_cloud_subscriptions.sql` | Paid backup: `cloud_subscriptions`, `has_cloud_access()` / `cloud_access()`, uploads only with access (reads stay open), complimentary access for every existing user |
 | `20261016000000_shared_ledgers.sql` | Shared ledgers: `ledgers` and `ledger_members`, `ledger_id` on every synced table with keys `(ledger_id, id)`, row-level security by membership (writing needs the owner or editor role and the owner's cloud access), `user_id` as who last wrote a row, `own_ledger()`, a ledger for every existing user |
+| `20261017000000_ledger_invites.sql` | Invites: `ledger_invites` (single-use codes, stored hashed), and the functions the app shares ledgers with: `create_invite`, `invite_details`, `accept_invite`, `list_ledgers`, `list_members`, `remove_member`, `rename_ledger`, `ledger_access` |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -190,8 +191,21 @@ Several users share one project, and a ledger can have several members:
 - **`ledger_members`**: `(ledger_id, user_id, role)` with role `owner`, `editor` or `viewer`. The
   owner is always a member (a trigger adds them), and each ledger has exactly one.
 - **`own_ledger()`** returns the signed-in user's own ledger, the oldest they own, and creates it the
-  first time. The app syncs that ledger. The migration gave every existing user one, holding the
-  rows they had.
+  first time. It lives in the device's main database. The migration gave every existing user one,
+  holding the rows they had.
+- **Invites.** The owner calls `create_invite(ledger, role)` and sends the code it returns
+  (`XXXX-XXXX-XXXX-XXXX`, Crockford base 32: case, dashes, `O`/`I`/`L` don't matter). It works once,
+  for 7 days; only its SHA-256 is stored. The person invited sees what it's for with
+  `invite_details(code)` and joins with `accept_invite(code)`. The app sends editor invites.
+- **Members.** `list_ledgers()` and `list_members(ledger)` list them; `remove_member(ledger, user)`
+  lets the owner remove anyone else and a member leave (the owner can't); `rename_ledger` is the
+  owner's. `ledger_access(ledger)` tells the app its role and whether it may upload now, which is
+  how a device notices it was removed. The app keeps a shared ledger in a database of its own,
+  removed again when the user leaves it, is removed, or signs out.
+
+Refusals raise `P0001` with a machine-readable message (`invite_not_found`, `invite_used`,
+`invite_expired`, `not_owner`, `owner_cannot_leave`, `not_member`), which PostgREST returns as HTTP
+400; the app turns them into sentences.
 
 Some ids are derived only from content (default-plan accounts from the account number, settings
 rows from the key, depreciation and recurring postings from the asset/rule and month), so every
