@@ -163,3 +163,89 @@ private fun niceScale(min: Long, rawMax: Long): Triple<Long, Long, Long> {
     val axisMax = -Math.floorDiv(-max, tick) * tick
     return Triple(axisMin, if (axisMax == axisMin) axisMin + tick else axisMax, tick)
 }
+
+/**
+ * Diverging bars: [inflows] rise above the zero line and [outflows] hang below it. Columns line up
+ * with a [TrendLineChart] over the same number of points, so the two can be stacked and share a
+ * selection.
+ */
+@Composable
+fun FlowBarChart(
+    inflows: List<Long>,
+    outflows: List<Long>,
+    labels: List<String>,
+    inColor: Color,
+    outColor: Color,
+    selectedIndex: Int?,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val measurer = rememberTextMeasurer()
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(color = labelColor)
+    val count = min(inflows.size, outflows.size)
+
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(inflows, outflows) {
+        progress.snapTo(0f)
+        progress.animateTo(1f, tween(600))
+    }
+
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(150.dp)
+            .pointerInput(count) {
+                detectTapGestures { offset ->
+                    if (count == 0) return@detectTapGestures
+                    val left = 44.dp.toPx()
+                    val right = size.width - 12.dp.toPx()
+                    val step = if (count > 1) (right - left) / (count - 1) else 0f
+                    val index = if (step == 0f) 0 else ((offset.x - left) / step).let { Math.round(it) }.coerceIn(0, count - 1)
+                    onSelect(index)
+                }
+            },
+    ) {
+        if (count == 0) return@Canvas
+        val left = 44.dp.toPx()
+        val right = size.width - 12.dp.toPx()
+        val top = 8.dp.toPx()
+        val bottom = size.height - 24.dp.toPx()
+
+        val (axisMin, axisMax, tick) = niceScale(-outflows.take(count).max().coerceAtLeast(0), inflows.take(count).max().coerceAtLeast(0))
+        fun y(v: Long) = bottom - (v - axisMin).toFloat() / (axisMax - axisMin).toFloat() * (bottom - top)
+        val step = if (count > 1) (right - left) / (count - 1) else 0f
+        fun x(i: Int) = if (count == 1) (left + right) / 2 else left + i * step
+
+        var gridValue = axisMin
+        while (gridValue <= axisMax) {
+            val gy = y(gridValue)
+            drawLine(gridColor, Offset(left, gy), Offset(right, gy), strokeWidth = 1f, pathEffect = if (gridValue == 0L) null else PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
+            val text = measurer.measure(Money.formatCompact(gridValue), labelStyle)
+            drawText(text, topLeft = Offset(left - text.size.width - 8.dp.toPx(), gy - text.size.height / 2))
+            gridValue += tick
+        }
+
+        val labelEvery = max(1, ceil(count / 6.0).toInt())
+        labels.take(count).forEachIndexed { i, label ->
+            if (i % labelEvery != 0 && i != count - 1) return@forEachIndexed
+            val text = measurer.measure(label, labelStyle)
+            val lx = (x(i) - text.size.width / 2).coerceIn(left - 8.dp.toPx(), size.width - text.size.width.toFloat())
+            drawText(text, topLeft = Offset(lx, bottom + 6.dp.toPx()))
+        }
+
+        // Bars grow out of the zero line; the selected column stays strong while the rest fade back.
+        val barWidth = if (count == 1) 24.dp.toPx() else min(step * 0.6f, 14.dp.toPx()).coerceAtLeast(2f)
+        val zero = y(0)
+        val radius = CornerRadius(min(barWidth / 2, 3.dp.toPx()))
+        for (i in 0 until count) {
+            val alpha = if (selectedIndex == null || selectedIndex == i) 1f else 0.45f
+            val bx = x(i) - barWidth / 2
+            val up = (zero - y(inflows[i])) * progress.value
+            val down = (y(-outflows[i]) - zero) * progress.value
+            if (up > 0f) drawRoundRect(inColor.copy(alpha = alpha), topLeft = Offset(bx, zero - up), size = Size(barWidth, up), cornerRadius = radius)
+            if (down > 0f) drawRoundRect(outColor.copy(alpha = alpha), topLeft = Offset(bx, zero), size = Size(barWidth, down), cornerRadius = radius)
+        }
+    }
+}

@@ -112,6 +112,36 @@ class ReportsTest {
     }
 
     @Test
+    fun cashFlowTimelineRunsUpToTodayAndSwitchesToMonthsForLongPeriods() {
+        val groups = listOf(AccountGroup("Bank", listOf("1910", "1920")), AccountGroup("Cash", listOf("1010")))
+        val transactions = listOf(
+            tx("salary", Triple(checking, 30_000L, EntryType.Debit), Triple(salary, 30_000L, EntryType.Credit)),
+            tx("atm", Triple(cash, 1_000L, EntryType.Debit), Triple(checking, 1_000L, EntryType.Credit)),
+            tx("rent", Triple(rent, 10_000L, EntryType.Debit), Triple(checking, 10_000L, EntryType.Credit)),
+        )
+        fun report(from: LocalDate, to: LocalDate, today: LocalDate) = CashFlowCalculator.compute(
+            accounts, mapOf("chk" to 3_000L), emptyMap(), transactions, groups, from..to, today,
+        )
+
+        val march = report(LocalDate.of(2026, 3, 1), LocalDate.of(2026, 3, 31), today = LocalDate.of(2026, 3, 15))
+        assertTrue(march.dailyTimeline)
+        assertEquals(15, march.timeline.size)
+        val day10 = march.timeline[9]
+        assertEquals(LocalDate.of(2026, 3, 10), day10.start)
+        assertEquals(31_000L, day10.inflow) // moving money between groups counts on both sides
+        assertEquals(11_000L, day10.outflow)
+        assertEquals(3_000L, march.timeline[8].balance)
+        assertEquals(23_000L, march.timeline.last().balance)
+
+        val year = report(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31), today = LocalDate.of(2027, 1, 5))
+        assertTrue(!year.dailyTimeline)
+        assertEquals(12, year.timeline.size)
+        assertEquals(LocalDate.of(2026, 3, 31), year.timeline[2].end)
+        assertEquals(20_000L, year.timeline[2].netFlow)
+        assertEquals(23_000L, year.timeline.last().balance)
+    }
+
+    @Test
     fun costTrendsGroupsThenOther() {
         val months = CostTrendCalculator.months(YearMonth.of(2026, 3), YearMonth.of(2026, 1))
         assertEquals(listOf(YearMonth.of(2026, 1), YearMonth.of(2026, 2), YearMonth.of(2026, 3)), months)
@@ -124,6 +154,30 @@ class ReportsTest {
         assertEquals(listOf("acct:6010", "acct:8910"), result.series[1].accounts.map { it.key })
         assertEquals(1_000L, result.series[1].accounts[1].total)
         assertEquals(listOf(10_000L, 11_000L, 3_000L), result.total.monthly)
+        assertEquals(null, result.totalExcludingTax)
+    }
+
+    @Test
+    fun costTrendsTotalExcludingTax() {
+        val months = CostTrendCalculator.months(YearMonth.of(2026, 1), YearMonth.of(2026, 3))
+        val result = CostTrendCalculator.compute(accounts, months, trendMovements, emptyList(), useGroups = false, taxPrefixes = listOf("89"))
+        assertEquals(listOf(10_000L, 11_000L, 3_000L), result.total.monthly)
+        assertEquals(listOf(10_000L, 10_000L, 3_000L), result.totalExcludingTax?.monthly)
+        assertEquals(listOf(CostTrendCalculator.TOTAL_KEY, CostTrendCalculator.TOTAL_EXCLUDING_TAX_KEY), result.overall.map { it.key })
+        assertEquals(null, result.cashOperatingExpenses)
+    }
+
+    @Test
+    fun costTrendsCashOperatingExpenses() {
+        val months = CostTrendCalculator.months(YearMonth.of(2026, 1), YearMonth.of(2026, 3))
+        val result = CostTrendCalculator.compute(
+            accounts, months, trendMovements, emptyList(), useGroups = false, taxPrefixes = listOf("89"), depreciationPrefixes = listOf("50"),
+        )
+        assertEquals(listOf(0L, 0L, 3_000L), result.cashOperatingExpenses?.monthly)
+        assertEquals(
+            listOf(CostTrendCalculator.TOTAL_KEY, CostTrendCalculator.TOTAL_EXCLUDING_TAX_KEY, CostTrendCalculator.CASH_OPERATING_KEY),
+            result.overall.map { it.key },
+        )
     }
 
     @Test

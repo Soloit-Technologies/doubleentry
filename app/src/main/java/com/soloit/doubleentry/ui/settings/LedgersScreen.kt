@@ -422,7 +422,7 @@ private fun RenameDialog(current: String, onRename: (String) -> Unit, onDismiss:
 private fun InviteDialog(invite: Invite, ledgerName: String, ownerBacksUp: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val expires = invite.expiresAtMillis?.let { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) }
-    val message = "Join my ledger “$ledgerName” in Double Entry.\n\n" +
+    val message = "Join my ledger “$ledgerName” in DoubleEntry.\n\n" +
         "In the app, open Settings → Cloud backup & sync → Ledgers & sharing → Join a shared ledger, and enter this code:\n\n" +
         "${invite.code}\n\n" +
         "The code works once" + (expires?.let { " and expires on $it" } ?: "") + "."

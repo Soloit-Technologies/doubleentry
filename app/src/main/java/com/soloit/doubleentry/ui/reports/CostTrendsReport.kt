@@ -114,14 +114,14 @@ class CostTrendsViewModel(ledger: LedgerRepository, settings: SettingsRepository
     private val result = combine(query, settings.incomeStatement, ledger.changes) { q, s, _ -> q to s }.mapLatest { (q, s) ->
         val (start, end) = q.months
         val months = CostTrendCalculator.months(start, end)
-        CostTrendCalculator.compute(ledger.getAccounts(), months, ledger.getMonthlyMovements(months.first(), months.last()), s.expenseGroups, q.grouping == TrendGrouping.Groups)
+        CostTrendCalculator.compute(ledger.getAccounts(), months, ledger.getMonthlyMovements(months.first(), months.last()), s.expenseGroups, q.grouping == TrendGrouping.Groups, s.taxPrefixes, s.depreciationPrefixes)
     }
 
     val state: StateFlow<CostTrendsUiState> = combine(query, result, selectedKey, selectedMonth, expanded) { q, r, key, month, open ->
         val base = CostTrendsUiState(query = q, result = r, expanded = open)
         // A selected account inside a group is charted in its group's colour; with nothing picked, the overall trend shows.
         val parent = r.series.firstOrNull { it.key == key || it.accounts.any { a -> a.key == key } }
-        val series = parent?.let { p -> p.accounts.firstOrNull { it.key == key } ?: p } ?: r.total
+        val series = parent?.let { p -> p.accounts.firstOrNull { it.key == key } ?: p } ?: r.overall.firstOrNull { it.key == key } ?: r.total
         base.copy(
             selected = series,
             selectedIndex = r.series.indexOf(parent ?: series).coerceAtLeast(0),
@@ -181,9 +181,9 @@ fun CostTrendsReportPage(onOpenSettings: () -> Unit) {
                     )
                 }
                 item {
-                    val color = if (series.key == CostTrendCalculator.TOTAL_KEY) MaterialTheme.colorScheme.primary else palette[state.selectedIndex % palette.size]
+                    val color = if (series in result.overall) MaterialTheme.colorScheme.primary else palette[state.selectedIndex % palette.size]
                     SectionCard(contentPadding = PaddingValues(16.dp)) {
-                        SeriesPicker(result.total, result.series, series, vm::select)
+                        SeriesPicker(result.overall, result.series, series, vm::select)
                         Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             Figure("Total", series.total, Modifier.weight(1f))
@@ -230,7 +230,7 @@ fun CostTrendsReportPage(onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun SeriesPicker(total: CostSeries, all: List<CostSeries>, selected: CostSeries, onSelect: (CostSeries) -> Unit) {
+private fun SeriesPicker(overall: List<CostSeries>, all: List<CostSeries>, selected: CostSeries, onSelect: (CostSeries) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         AssistChip(
@@ -239,7 +239,7 @@ private fun SeriesPicker(total: CostSeries, all: List<CostSeries>, selected: Cos
             trailingIcon = { Icon(Icons.Rounded.ArrowDropDown, null) },
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            (listOf(total) + all.sortedBy { it.name.lowercase() }).forEach { s ->
+            (overall + all.sortedBy { it.name.lowercase() }).forEach { s ->
                 DropdownMenuItem(
                     text = { Text(s.name) },
                     trailingIcon = { MoneyText(s.total, style = MaterialTheme.typography.bodySmall) },

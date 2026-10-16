@@ -259,10 +259,10 @@ fun IncomeStatementSettingsScreen(onBack: () -> Unit) {
         SectionHeader("Special accounts")
         SectionCard(contentPadding = PaddingValues(12.dp)) {
             PrefixField(depreciation, { vm.depreciation.value = it }, "Depreciation accounts", expenseAccounts)
-            Hint("Excluded from \"expenses before depreciation\", EBDA and EBITDA.")
+            Hint("Excluded from \"expenses before depreciation\", EBDA, EBITDA and cash operating expenses, also in cost trends.")
             Spacer(Modifier.padding(top = 8.dp))
             PrefixField(tax, { vm.tax.value = it }, "Tax accounts", expenseAccounts)
-            Hint("Excluded from EBT and EBITDA, and used for \"revenue net of income tax\".")
+            Hint("Excluded from EBT, EBITDA, cash operating expenses and the cost trends total excluding tax, and used for \"revenue net of income tax\".")
             Spacer(Modifier.padding(top = 8.dp))
             PrefixField(deferred, { vm.deferred.value = it }, "Deferred (non-spendable) asset accounts", accounts.filter { it.type == AccountType.Asset })
             Hint("For example locked pension savings. Revenue paid straight into these accounts is subtracted to show your spendable net income.")
