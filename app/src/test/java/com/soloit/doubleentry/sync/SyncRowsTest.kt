@@ -30,9 +30,9 @@ class SyncRowsTest {
     fun transactionRowCarriesItsLinesWithExactDecimals() {
         val header = TransactionEntity("t1", LocalDate.of(2026, 1, 1), "Rent", "", parseTimestamp("2026-01-01T00:00:00+00:00"))
         val line = EntryEntity("e1", "t1", "a1", 123_405, 1)
-        val obj = json.encodeToJsonElement(TransactionRow.serializer(), TransactionRow.from(header, listOf(line), "u1")).jsonObject
+        val obj = json.encodeToJsonElement(TransactionRow.serializer(), TransactionRow.from(header, listOf(line), "l1")).jsonObject
         // updated_at is stamped by the server and never sent; modified_at is the edit time.
-        assertEquals(setOf("id", "user_id", "date", "title", "description", "lines", "modified_at", "deleted_at"), obj.keys)
+        assertEquals(setOf("id", "ledger_id", "date", "title", "description", "lines", "modified_at", "deleted_at"), obj.keys)
         assertEquals("2026-01-01T00:00:00Z", obj["modified_at"]!!.jsonPrimitive.content)
         val sentLine = obj["lines"]!!.jsonArray.single().jsonObject
         assertEquals(setOf("id", "account_id", "amount", "entry_type"), sentLine.keys)
@@ -44,7 +44,7 @@ class SyncRowsTest {
     @Test
     fun readsServerRowsIntoCleanEntities() {
         val server = """
-            {"id":"t1","user_id":"u1","date":"2026-02-28","title":"Rent","description":null,
+            {"id":"t1","ledger_id":"l1","user_id":"u1","date":"2026-02-28","title":"Rent","description":null,
              "lines":[{"id":"e","account_id":"a","amount":99.9,"entry_type":0}],
              "modified_at":"2026-03-01T07:00:00.000001+00:00","updated_at":"2026-03-01T08:00:00+00:00",
              "deleted_at":"2026-03-02T08:00:00+00:00","extra":1}
@@ -63,8 +63,8 @@ class SyncRowsTest {
 
     @Test
     fun theSamePostingHasTheSameContentWhateverItsLineIdsAndStamps() {
-        val a = TransactionRow("t", "u1", "2026-01-01", "Rent", "", listOf(LineRow("x", "a1", 5, 0), LineRow("y", "a2", 5, 1)), "2026-01-01T00:00:00Z")
-        val b = a.copy(userId = "", description = null, lines = a.lines.reversed().map { it.copy(id = it.id + "2") }, modifiedAt = "2026-01-02T00:00:00Z", updatedAt = "2026-01-03T00:00:00Z")
+        val a = TransactionRow("t", "l1", "2026-01-01", "Rent", "", listOf(LineRow("x", "a1", 5, 0), LineRow("y", "a2", 5, 1)), "2026-01-01T00:00:00Z")
+        val b = a.copy(ledgerId = "", description = null, lines = a.lines.reversed().map { it.copy(id = it.id + "2") }, modifiedAt = "2026-01-02T00:00:00Z", updatedAt = "2026-01-03T00:00:00Z")
         assertEquals(a.content(), b.content())
         assertNotEquals(a.content(), a.copy(lines = listOf(LineRow("x", "a1", 6, 0), LineRow("y", "a2", 6, 1))).content())
         assertNotEquals(a.content(), a.copy(deletedAt = "2026-01-02T00:00:00Z").content())

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.PhonelinkSetup
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Visibility
@@ -72,10 +73,11 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun CloudSyncScreen(onBack: () -> Unit) {
+fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
     val container = LocalAppContainer.current
     val sync = container.sync
     val status by sync.status.collectAsStateWithLifecycle()
+    val sharedOnDevice by container.sessions.sharedOnDevice.collectAsStateWithLifecycle()
     // App-wide scope: a sign-in or sync keeps running if the user leaves this screen.
     val scope = container.appScope
     var password by remember { mutableStateOf("") }
@@ -146,8 +148,16 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                 AccountForms(sync, scope, sync.googleClientId, onQuestion = { question = it })
             } else {
                 Column {
-                    GroupedItem(0, 2) { SettingRow(Icons.Rounded.Cloud, "Signed in", status.signedInEmail) }
-                    GroupedItem(1, 2, onClick = { sync.setEnabled(!status.enabled) }) {
+                    GroupedItem(0, 3) { SettingRow(Icons.Rounded.Cloud, "Signed in", status.signedInEmail) }
+                    GroupedItem(1, 3, onClick = onOpenLedgers) {
+                        SettingRow(
+                            Icons.Rounded.Group,
+                            "Ledgers & sharing",
+                            status.ledger?.let { "Open: ${it.name}" } ?: "Share this ledger, or join someone else's",
+                            chevron = true,
+                        )
+                    }
+                    GroupedItem(2, 3, onClick = { sync.setEnabled(!status.enabled) }) {
                         SettingRow(
                             Icons.Rounded.Sync,
                             "Automatic sync",
@@ -155,6 +165,10 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                             trailing = { Switch(checked = status.enabled, onCheckedChange = sync::setEnabled) },
                         )
                     }
+                }
+
+                if (status.lostLedgerAccess) {
+                    LostAccessCard(onRemove = { status.ledgerId?.let { id -> scope.launch { container.sessions.removeFromDevice(id) } } })
                 }
 
                 BackupPlanCard(status.access, container.billing)
@@ -273,7 +287,7 @@ fun CloudSyncScreen(onBack: () -> Unit) {
                 error = null
                 scope.launch {
                     try {
-                        sync.deleteAccount()
+                        container.sessions.deleteAccount()
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -289,13 +303,20 @@ fun CloudSyncScreen(onBack: () -> Unit) {
         ConfirmDialog(
             title = "Sign out?",
             message = "Backup and sync will stop. The data stays on this device, and your cloud copy is kept." +
-                if (status.pendingChanges > 0) {
+                (if (status.pendingChanges > 0 && !status.sharedLedger) {
                     " ${changesText(status.pendingChanges)} haven't been uploaded yet; you'll be asked about them when you sign in again."
+                } else {
+                    ""
+                }) +
+                if (sharedOnDevice.isNotEmpty()) {
+                    "\n\nLedgers shared with you (${sharedOnDevice.joinToString { it.name }}) are removed from this device" +
+                        (if (status.sharedLedger && status.pendingChanges > 0) ", with ${changesText(status.pendingChanges)} not uploaded yet" else "") +
+                        ". They come back when you sign in again."
                 } else {
                     ""
                 },
             confirmLabel = "Sign out",
-            onConfirm = { confirmSignOut = false; scope.launch { sync.signOut() } },
+            onConfirm = { confirmSignOut = false; scope.launch { container.sessions.signOut() } },
             onDismiss = { confirmSignOut = false },
         )
     }

@@ -1,11 +1,12 @@
 -- =============================================================================
 -- Trial balance: balance of every live account as of a date, on its normal side
 -- (assets and expenses are debit-normal, everything else credit-normal).
--- Read-only. Adjust the email and date below.
+-- Read-only. Adjust the owner's email and the date below (the owner's oldest ledger is used).
 -- =============================================================================
 
 with params as (
-  select (select id from auth.users where email = 'you@example.com') as user_id,
+  select (select l.id from public.ledgers l join auth.users u on u.id = l.owner_id
+          where u.email = 'you@example.com' order by l.created_at, l.id limit 1) as ledger_id,
          date '2026-12-31' as as_of
 ),
 totals as (
@@ -16,7 +17,7 @@ totals as (
   cross join lateral jsonb_to_recordset(t.lines) as e(account_id uuid, amount numeric, entry_type smallint)
   cross join params p
   where t.deleted_at is null
-    and t.user_id = p.user_id and t.date <= p.as_of
+    and t.ledger_id = p.ledger_id and t.date <= p.as_of
   group by e.account_id
 )
 select a.number,
@@ -29,5 +30,5 @@ select a.number,
 from public.accounts a
 cross join params p
 left join totals t on t.account_id = a.id
-where a.deleted_at is null and a.user_id = p.user_id
+where a.deleted_at is null and a.ledger_id = p.ledger_id
 order by a.number;

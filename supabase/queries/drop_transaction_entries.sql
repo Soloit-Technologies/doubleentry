@@ -16,7 +16,7 @@ select count(*) as transactions_without_lines
 from public.transactions t
 where jsonb_array_length(t.lines) = 0
   and exists (select 1 from public.transaction_entries e
-              where e.user_id = t.user_id and e.transaction_id = t.id and e.deleted_at is null);
+              where e.ledger_id = t.ledger_id and e.transaction_id = t.id and e.deleted_at is null);
 
 drop table public.transaction_entries;
 

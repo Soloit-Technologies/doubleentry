@@ -49,8 +49,14 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         val TABLES = arrayOf("accounts", "transactions", "transaction_entries", "assets", "invoices", "user_settings")
 
-        fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "doubleentry.db")
+        /** The device's main database, which holds the account's own ledger (or the only one, without an account). */
+        const val MAIN = "doubleentry.db"
+
+        /** The database of a ledger shared with the account, [ledgerId]. */
+        fun sharedLedgerName(ledgerId: String) = "ledger-$ledgerId.db"
+
+        fun build(context: Context, name: String = MAIN): AppDatabase =
+            Room.databaseBuilder(context, AppDatabase::class.java, name)
                 .addMigrations(MIGRATION_1_2)
                 .build()
 

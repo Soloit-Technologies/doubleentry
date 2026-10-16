@@ -15,26 +15,26 @@ union all
 select 'user_settings', count(*) filter (where deleted_at is null), count(*) filter (where deleted_at is not null) from public.user_settings;
 
 -- Live transactions whose lines do not balance, or that have no lines (should return no rows).
-select t.user_id, t.id, t.date, t.title,
+select t.ledger_id, t.id, t.date, t.title,
        coalesce(sum(case when e.entry_type = 0 then e.amount else 0 end), 0) as debits,
        coalesce(sum(case when e.entry_type = 1 then e.amount else 0 end), 0) as credits
 from public.transactions t
 left join lateral jsonb_to_recordset(t.lines) as e(amount numeric, entry_type smallint) on true
 where t.deleted_at is null
-group by t.user_id, t.id, t.date, t.title
+group by t.ledger_id, t.id, t.date, t.title
 having count(e.amount) = 0 or sum(case when e.entry_type = 0 then e.amount else -e.amount end) <> 0
 order by t.date desc;
 
 -- Lines of live transactions that point at a deleted or missing account.
-select t.user_id, t.id as transaction_id, t.date, t.title, e.account_id, a.deleted_at as account_deleted_at
+select t.ledger_id, t.id as transaction_id, t.date, t.title, e.account_id, a.deleted_at as account_deleted_at
 from public.transactions t
 cross join lateral jsonb_to_recordset(t.lines) as e(account_id uuid)
-left join public.accounts a on a.user_id = t.user_id and a.id = e.account_id
+left join public.accounts a on a.ledger_id = t.ledger_id and a.id = e.account_id
 where t.deleted_at is null and (a.id is null or a.deleted_at is not null);
 
--- Live accounts sharing a number (the app expects numbers to be unique per user).
-select user_id, number, count(*) as copies, array_agg(name) as names
+-- Live accounts sharing a number (the app expects numbers to be unique per ledger).
+select ledger_id, number, count(*) as copies, array_agg(name) as names
 from public.accounts
 where deleted_at is null
-group by user_id, number
+group by ledger_id, number
 having count(*) > 1;

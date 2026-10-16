@@ -1,7 +1,8 @@
 // POST /functions/v1/delete-account  (signed-in user)
 //
-// Deletes the caller's account and, through `on delete cascade`, every row they own: the cloud
-// copy of the ledger and the subscription record. Google Play requires apps that create
+// Deletes the caller's account and, through `on delete cascade`, the ledgers they own with all
+// their rows, their memberships of other ledgers and the subscription record. Their edits in
+// other users' ledgers stay, with `user_id` set to null. Google Play requires apps that create
 // accounts to offer this in the app. A Play subscription is not cancelled by this; the app
 // tells the user to cancel it in Google Play first.
 

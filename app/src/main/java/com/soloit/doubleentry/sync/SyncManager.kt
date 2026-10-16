@@ -5,6 +5,7 @@ import com.soloit.doubleentry.data.SyncTrigger
 import com.soloit.doubleentry.data.local.nowMicros
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -44,20 +46,39 @@ data class SyncStatus(
     val access: CloudAccess? = null,
     /** The account signs in with Google, so an expired session is renewed through Google, not a password. */
     val signedInWithGoogle: Boolean = false,
+    /** The ledger open on this device is someone else's, shared with this account. */
+    val sharedLedger: Boolean = false,
+    /** For a [sharedLedger]: this account's role in it and whether it may upload; null until checked. */
+    val ledgerAccess: LedgerAccess? = null,
+    /** The account's ledgers as last listed by the server. */
+    val ledgers: List<LedgerInfo> = emptyList(),
+    /** The id of the ledger open on this device; null while signed out or before it's known. */
+    val ledgerId: String? = null,
 ) {
     /** Feature flag on and Supabase configured: signing in is possible. */
     val available: Boolean get() = featureEnabled && configured
     val isSignedIn: Boolean get() = signedInEmail != null
     val isActive: Boolean get() = available && enabled && isSignedIn
 
-    /** Signed in, but changes stay on this device: the account has no active backup subscription. */
-    val notBackedUp: Boolean get() = isSignedIn && access?.active == false
+    /**
+     * Signed in, but changes stay on this device: the account has no active backup subscription, or
+     * for a [sharedLedger], its owner hasn't.
+     */
+    val notBackedUp: Boolean
+        get() = isSignedIn && if (sharedLedger) ledgerAccess?.let { it.role != null && !it.writable } == true else access?.active == false
+
+    /** The account was removed from the [sharedLedger] open on this device (or the ledger was deleted). */
+    val lostLedgerAccess: Boolean get() = isSignedIn && sharedLedger && ledgerAccess != null && ledgerAccess.role == null
+
+    /** The open ledger as listed, when known. */
+    val ledger: LedgerInfo? get() = ledgers.firstOrNull { it.id == ledgerId }
 
     /** Something the user should know about even when they're not looking at the sync screen. */
     val attention: SyncAttention?
         get() = when {
             !available || !isSignedIn -> null
             needsSignIn -> SyncAttention.SignInAgain
+            lostLedgerAccess -> SyncAttention.LostAccess
             notBackedUp && pendingChanges > 0 -> SyncAttention.NotBackedUp
             !enabled && pendingChanges > 0 -> SyncAttention.Paused
             lastError != null && pendingChanges > 0 -> if (offline) SyncAttention.Offline else SyncAttention.Failing
@@ -66,7 +87,7 @@ data class SyncStatus(
         }
 }
 
-enum class SyncAttention { SignInAgain, NotBackedUp, Failing, Offline, Paused, Replaced }
+enum class SyncAttention { SignInAgain, LostAccess, NotBackedUp, Failing, Offline, Paused, Replaced }
 
 /** A decision signing in needs from the user before anything syncs. */
 sealed interface SignInQuestion {
@@ -104,16 +125,25 @@ enum class SignInChoice {
  * with a 15-minute polling fallback.
  *
  * Downloading works for every signed-in account; uploading needs an active backup subscription
- * ([CloudAccess]), which the server enforces and this class checks at the start of each cycle.
+ * ([CloudAccess]), which the server enforces and this class checks at the start of each cycle. For
+ * a ledger shared with the account, it's the owner's subscription that counts ([LedgerAccess]).
+ *
+ * It syncs the ledger open on this device; [use] switches to another ledger's database.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class SyncManager(
     private val config: SupabaseConfig,
-    private val prefs: SyncPreferences,
+    prefs: SyncPreferences,
     private val api: SupabaseApi,
-    private val engine: SyncEngine,
+    engine: SyncEngine,
     private val scope: CoroutineScope,
     pendingChanges: Flow<Int>,
 ) : SyncTrigger, AccessTokenProvider {
+    // The open ledger's state and database; swapped by [use] while holding [gate].
+    @Volatile private var prefs = prefs
+    @Volatile private var engine = engine
+    private val pendingChanges = MutableStateFlow(pendingChanges)
+
 
     private val _status = MutableStateFlow(snapshot())
     val status: StateFlow<SyncStatus> = _status.asStateFlow()
@@ -121,13 +151,20 @@ class SyncManager(
     private val gate = Mutex()
     private val refreshLock = Mutex()
     private val requests = Channel<Unit>(Channel.CONFLATED)
-    private val realtime = RealtimeClient(config, api.http, this) { requestSync() }
+    private val realtime = RealtimeClient(config, api.http, this, ledgerId = { prefs.ledgerId }) { requestSync() }
 
     @Volatile private var inForeground = false
     private var foregroundJob: Job? = null
 
     /** An authenticated session waiting for the answer to a [SignInQuestion]; nothing is stored yet. */
-    private class PendingSignIn(val token: AuthTokenResponse, val email: String, val google: Boolean, val sameOwner: Boolean, val cloudHasData: Boolean)
+    private class PendingSignIn(
+        val token: AuthTokenResponse,
+        val email: String,
+        val google: Boolean,
+        val ledgerId: String,
+        val sameOwner: Boolean,
+        val cloudHasData: Boolean,
+    )
 
     @Volatile private var pendingSignIn: PendingSignIn? = null
 
@@ -140,12 +177,31 @@ class SyncManager(
         }
         // Requests arriving while a sync runs are conflated into a single follow-up run.
         scope.launch { for (request in requests) runSync() }
-        scope.launch { pendingChanges.collect { count -> _status.update { it.copy(pendingChanges = count) } } }
+        scope.launch { this@SyncManager.pendingChanges.flatMapLatest { it }.collect { count -> _status.update { it.copy(pendingChanges = count) } } }
+    }
+
+    /**
+     * Syncs another ledger's database from now on: [prefs] is that ledger's state, [engine] syncs its
+     * database, and [pendingChanges] counts its unsynced changes. Realtime reconnects for it.
+     */
+    suspend fun use(prefs: SyncPreferences, engine: SyncEngine, pendingChanges: Flow<Int>) {
+        stopForegroundWork()
+        gate.withLock {
+            this.prefs = prefs
+            this.engine = engine
+            this.pendingChanges.value = pendingChanges
+        }
+        publish()
+        if (inForeground) startForegroundWork()
     }
 
     private val canSync: Boolean get() = config.isAvailable && prefs.enabled && prefs.userId != null
 
-    private val canUpload: Boolean get() = prefs.cloudAccess?.active == true
+    private val canUpload: Boolean
+        get() = if (prefs.ledgerSlot != null) prefs.ledgerAccess?.writable == true else prefs.cloudAccess?.active == true
+
+    /** Removed from the shared ledger open on this device: nothing of it can be read or written any more. */
+    private val lostAccess: Boolean get() = prefs.ledgerSlot != null && prefs.ledgerAccess?.let { it.role == null } == true
 
     /** OAuth web client id for Sign in with Google; empty when this build has none. */
     val googleClientId: String get() = config.googleClientId
@@ -169,6 +225,8 @@ class SyncManager(
         return gate.withLock {
             setSyncing(true)
             try {
+                ensureLedger()
+                if (lostAccess) return@withLock false
                 // A ledger waiting to replace the cloud's mustn't be merged with it by a pull.
                 if (prefs.cloudWipeBeforeMicros != null && !canUpload) return@withLock false
                 applyPendingCloudWipe()
@@ -192,7 +250,12 @@ class SyncManager(
         gate.withLock {
             setSyncing(true)
             try {
+                ensureLedger()
                 val upload = refreshAccess()
+                if (lostAccess) {
+                    succeeded()
+                    return@withLock
+                }
                 // Without a subscription a ledger waiting to replace the cloud's waits whole: a
                 // pull would merge the two.
                 if (!upload && prefs.cloudWipeBeforeMicros != null) {
@@ -273,8 +336,9 @@ class SyncManager(
         val local = engine.localSummary()
         val owner = prefs.dataOwnerId
         val sameOwner = owner == userId
-        val cloudHasData = engine.cloudHasData { accessToken }
-        val pending = PendingSignIn(token, address, google, sameOwner, cloudHasData)
+        val ledgerId = api.ownLedger(accessToken)
+        val cloudHasData = engine.cloudHasData({ accessToken }, ledgerId)
+        val pending = PendingSignIn(token, address, google, ledgerId, sameOwner, cloudHasData)
         val question = when {
             // Includes deletions made while signed out: uploading them deletes data on every device.
             sameOwner -> if (local.unsyncedChanges > 0) {
@@ -323,7 +387,7 @@ class SyncManager(
                 pending.sameOwner -> Unit
                 else -> {
                     // A ledger from another account, or one that never synced: send everything, since
-                    // rows already synced elsewhere are clean. Ids are per user on the server, so the
+                    // rows already synced elsewhere are clean. Ids are per ledger on the server, so the
                     // other account's copy is untouched.
                     engine.markAllForUpload()
                     // This ledger replaces the account's, so the account's rows are deleted first.
@@ -332,6 +396,7 @@ class SyncManager(
                 }
             }
             storeTokens(pending.token, pending.email)
+            prefs.ledgerId = pending.ledgerId
             prefs.signedInWithGoogle = pending.google
             prefs.dataOwnerId = prefs.userId
             prefs.dataOwnerEmail = pending.email
@@ -356,11 +421,20 @@ class SyncManager(
         requestSync()
     }
 
-    /** Reads the account's subscription again (after a purchase, or when the app returns). */
+    /**
+     * Reads the account's subscription again (after a purchase, or when the app returns), and for a
+     * shared ledger, the account's access to it. Returns whether this device may upload.
+     */
     suspend fun refreshAccess(): Boolean {
         if (prefs.userId == null || !config.isAvailable) return false
         try {
             storeAccess(authorized { api.cloudAccess(it) })
+            val slot = prefs.ledgerSlot
+            if (slot != null) {
+                val access = authorized { api.ledgerAccess(slot, it) }
+                prefs.ledgerAccess = access
+                _status.update { it.copy(ledgerAccess = access) }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -368,6 +442,35 @@ class SyncManager(
             Log.i(TAG, "Couldn't check cloud access", e)
         }
         return canUpload
+    }
+
+    /** Lists the account's ledgers again; the last list stays when the server can't be reached. */
+    suspend fun refreshLedgers(): List<LedgerInfo> {
+        if (prefs.userId == null || !config.isAvailable) return emptyList()
+        val ledgers = authorized { api.listLedgers(it) }
+        prefs.ledgers = ledgers
+        _status.update { it.copy(ledgers = ledgers) }
+        return ledgers
+    }
+
+    suspend fun members(ledgerId: String): List<LedgerMember> = authorized { api.listMembers(ledgerId, it) }
+
+    /** An editor invite to [ledgerId], for its owner to send. */
+    suspend fun createInvite(ledgerId: String, role: String = "editor"): Invite = authorized { api.createInvite(ledgerId, role, it) }
+
+    suspend fun inviteDetails(code: String): InviteDetails = authorized { api.inviteDetails(code.trim(), it) }
+
+    /** Joins the ledger [code] invites to and returns its id. */
+    suspend fun acceptInvite(code: String): String = authorized { api.acceptInvite(code.trim(), it) }.also { runCatching { refreshLedgers() } }
+
+    suspend fun removeMember(ledgerId: String, userId: String) {
+        authorized { api.removeMember(ledgerId, userId, it) }
+        runCatching { refreshLedgers() }
+    }
+
+    suspend fun renameLedger(ledgerId: String, name: String) {
+        authorized { api.renameLedger(ledgerId, name.trim(), it) }
+        runCatching { refreshLedgers() }
     }
 
     /**
@@ -512,6 +615,11 @@ class SyncManager(
         if (!email.isNullOrBlank()) prefs.userEmail = email
     }
 
+    /** Looks up the account's ledger on devices that signed in before ledgers existed. */
+    private suspend fun ensureLedger() {
+        if (prefs.ledgerId == null) prefs.ledgerId = authorized { api.ownLedger(it) }
+    }
+
     /** Runs a pending [replaceCloudLedger]: deletes the old cloud rows and uploads this device's, before any pull. */
     private suspend fun applyPendingCloudWipe() {
         val before = prefs.cloudWipeBeforeMicros ?: return
@@ -552,6 +660,10 @@ class SyncManager(
         dataOwnerEmail = prefs.dataOwnerId?.let { prefs.dataOwnerEmail },
         access = prefs.userId?.let { prefs.cloudAccess },
         signedInWithGoogle = prefs.userId != null && prefs.signedInWithGoogle,
+        sharedLedger = prefs.ledgerSlot != null,
+        ledgerAccess = prefs.ledgerAccess,
+        ledgers = prefs.userId?.let { prefs.ledgers }.orEmpty(),
+        ledgerId = prefs.userId?.let { prefs.ledgerId },
     )
 
     private companion object {

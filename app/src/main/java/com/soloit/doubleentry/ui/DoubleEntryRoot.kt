@@ -77,6 +77,7 @@ import com.soloit.doubleentry.ui.settings.CashflowSettingsScreen
 import com.soloit.doubleentry.ui.settings.CloudSyncScreen
 import com.soloit.doubleentry.ui.settings.DataManagementScreen
 import com.soloit.doubleentry.ui.settings.IncomeStatementSettingsScreen
+import com.soloit.doubleentry.ui.settings.LedgersScreen
 import com.soloit.doubleentry.ui.settings.SyncBanner
 import com.soloit.doubleentry.ui.settings.CostPeriodSettingsScreen
 import com.soloit.doubleentry.ui.settings.InvoiceSettingsScreen
@@ -116,6 +117,7 @@ data class TransactionEditorRoute(
 @Serializable data object AssetEditorRoute
 @Serializable data object SettingsRoute
 @Serializable data object CloudSyncRoute
+@Serializable data object LedgersRoute
 @Serializable data object DataManagementRoute
 @Serializable data object BalanceSheetSettingsRoute
 @Serializable data object IncomeStatementSettingsRoute
@@ -321,7 +323,8 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                         onRecurring = { nav.navigate(RecurringListRoute) },
                     )
                 }
-                composable<CloudSyncRoute> { CloudSyncScreen(onBack = back) }
+                composable<CloudSyncRoute> { CloudSyncScreen(onBack = back, onOpenLedgers = { nav.navigate(LedgersRoute) }) }
+                composable<LedgersRoute> { LedgersScreen(onBack = back) }
                 composable<DataManagementRoute> { DataManagementScreen(onBack = back) }
                 composable<BalanceSheetSettingsRoute> { BalanceSheetSettingsScreen(onBack = back) }
                 composable<IncomeStatementSettingsRoute> { IncomeStatementSettingsScreen(onBack = back) }
