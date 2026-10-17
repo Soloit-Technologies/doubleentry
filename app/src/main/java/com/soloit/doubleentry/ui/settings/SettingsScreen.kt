@@ -286,7 +286,7 @@ fun SettingsScreen(
 }
 
 /** Public repository for support: issues are the help channel, and it hosts the privacy policy. */
-private const val SUPPORT_URL = "https://github.com/Soloit-Technologies/doubleentry-app"
+private const val SUPPORT_URL = "https://github.com/Soloit-Technologies/doubleentry-android"
 private const val PRIVACY_POLICY_URL = "$SUPPORT_URL/blob/main/PRIVACY.md"
 
 /** The bug report form, with the fields of `.github/ISSUE_TEMPLATE/bug_report.yml` in that repository prefilled. */

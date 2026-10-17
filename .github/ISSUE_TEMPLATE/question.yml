@@ -1,0 +1,13 @@
+name: Ask a question
+description: How do I …? Why does the app …?
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: "**Issues are public.** Don't include your own financial data; use made-up examples."
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true

@@ -177,6 +177,13 @@ Amounts are stored as `Long` cents everywhere; dates as ISO `yyyy-MM-dd`. All de
   ([Testing](supabase/README.md#testing)). Before releasing sync changes, see
   [`docs/release-checklist.md`](docs/release-checklist.md).
 
+## Support
+
+Questions, bug reports and feature requests go to [issues](https://github.com/Soloit-Technologies/doubleentry-android/issues/new/choose)
+(*Settings → Support* in the app opens the same forms). Issues are public, so never post your own
+financial data. Report security problems privately, see [`SECURITY.md`](SECURITY.md). The privacy
+policy is [`PRIVACY.md`](PRIVACY.md); the user guide is at [doubleentry.eu](https://doubleentry.eu).
+
 ## License
 
 DoubleEntry is open source. Copyright © Soloit Technologies AB.

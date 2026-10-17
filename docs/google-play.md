@@ -9,7 +9,7 @@ What the repository already provides, and the one-time steps that happen in the 
 | Signed release bundle | `./gradlew bundleRelease` → `app/build/outputs/bundle/release/app-release.aab`, or push a `v*` tag ([`release.yml`](../.github/workflows/release.yml)) |
 | R8 mapping file (readable crash stack traces) | `app/build/outputs/mapping/release/mapping.txt`, uploaded with the bundle by the workflow |
 | Store listing text, icon, feature graphic | [`fastlane/metadata/android/en-US/`](../fastlane/metadata/android/en-US) |
-| Privacy policy and support | The public repository [Soloit-Technologies/doubleentry-app](https://github.com/Soloit-Technologies/doubleentry-app): `PRIVACY.md`, and issues as the support channel (*Settings → Support* links there) |
+| Privacy policy and support | This repository: [`PRIVACY.md`](../PRIVACY.md), and its issues as the support channel (*Settings → Support* links there, using the forms in [`.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE)) |
 
 Release builds leave out cloud sync and the Supabase settings (see README → *Build types*), so the
 Play app is offline-only and needs no login. Shipping paid cloud backup is described in
@@ -58,7 +58,7 @@ not a personal one.
 
 | Section | Answer |
 |---|---|
-| Privacy policy | `https://github.com/Soloit-Technologies/doubleentry-app/blob/main/PRIVACY.md` |
+| Privacy policy | `https://github.com/Soloit-Technologies/doubleentry-android/blob/main/PRIVACY.md` |
 | App access | All functionality is available without special access |
 | Ads | No ads |
 | Content rating | IARC questionnaire: category *Utility, productivity, communication or other*; answer *No* throughout. Expect *Everyone / PEGI 3* |
@@ -85,7 +85,7 @@ not a personal one.
 - **Phone screenshots:** at least 2, from a release build on a phone, e.g. Accounts, an account
   ledger, a new transaction, the income statement and the cost-trends chart. Put them in
   `images/phoneScreenshots/` if you want them versioned.
-- **Category:** Finance. **Website:** `https://github.com/Soloit-Technologies/doubleentry-app`.
+- **Category:** Finance. **Website:** `https://doubleentry.eu`.
   **Contact email:** required by Play and shown publicly, even with GitHub issues as the main
   support channel.
 
