@@ -49,6 +49,9 @@ class SyncEngineTest {
         /** One cycle as SyncManager runs it: pull, then push. Returns what the pull reported. */
         suspend fun sync(): PullResult = engine.pullAll(auth).also { engine.pushAll(auth) }
 
+        /** Only the download half of a cycle. */
+        suspend fun pull(): PullResult = engine.pullAll(auth)
+
         /** Only the upload half of a cycle. */
         suspend fun push(): PushResult = engine.pushAll(auth)
 
@@ -306,6 +309,32 @@ class SyncEngineTest {
         a.sync()
         assertEquals(1, b.sync().replacedLocalChanges)
         assertNull(b.t.ledger.getTransaction(id))
+    }
+
+    @Test
+    fun editsMadeOfflineBeforeALedgerWasReplacedAreDropped() = runBlocking<Unit> {
+        sharedLedger()
+        // B, offline, adds a transaction; then A replaces the ledger (as an import does).
+        b.t.post(day, "Offline on B", b.account(5010), b.account(1910), 5_00)
+        val before = nowMicros()
+        a.t.ledger.deleteAllData()
+        val cash = a.t.account(1930, "Cash", AccountType.Asset)
+        val rent = a.t.account(5020, "Rent", AccountType.Expense)
+        a.t.post(day, "Imported", rent, cash, 900_00)
+        a.replaceCloudLedger(before)
+
+        b.pull()
+        // The transaction referred to accounts the replaced ledger no longer has: it never comes back.
+        assertEquals(1, b.push().replacedLocalChanges)
+        assertEquals(listOf("Imported"), b.t.ledger.getTransactions().map { it.title })
+        assertEquals(0, b.pending())
+        assertEquals(listOf("Imported"), server.liveRows("transactions").map { it.getValue("title").jsonPrimitive.content })
+
+        // B's edits from after the replacement still upload.
+        b.t.post(day, "Later on B", b.account(5020), b.account(1930), 1_00)
+        b.sync()
+        a.sync()
+        assertEquals(listOf("Imported", "Later on B"), a.t.ledger.getTransactions().map { it.title }.sorted())
     }
 
     @Test

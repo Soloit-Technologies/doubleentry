@@ -262,7 +262,7 @@ class SyncFailureTest {
         val before = nowMicros()
         a.t.ledger.deleteAllData()
         // Before the request: replaceCloudLedger starts a sync in the background too.
-        server.fail(Failure.Dropped, times = Int.MAX_VALUE, matches = { it.method == "POST" })
+        server.fail(Failure.Dropped, times = Int.MAX_VALUE, matches = { it.method == "POST" && "rpc" !in it.url.pathSegments })
         a.sync.replaceCloudLedger(before)
         assertFalse(a.sync.syncNow())
 

@@ -399,6 +399,20 @@ class SupabaseApi(
     }
 
     /**
+     * `POST /rest/v1/rpc/mark_ledger_replaced`: from now on the server refuses rows of [ledgerId]
+     * edited before [at] (ISO-8601), such as an offline device's, which [tombstoneBefore] can't reach.
+     * A project without the function (from before it) only gets the tombstones.
+     */
+    suspend fun markLedgerReplaced(ledgerId: String, at: String, accessToken: String) {
+        val body = buildJsonObject { put("ledger", ledgerId); put("as_of", at) }.toString()
+        try {
+            execute(postJson("rest/v1/rpc/mark_ledger_replaced", body, accessToken), Operation.Sync)
+        } catch (e: NotFoundException) {
+            return
+        }
+    }
+
+    /**
      * Deletes, as of [at] (ISO-8601), every live row of [ledgerId] last edited before then, including
      * rows this device has never pulled. The filter matters: row-level security would allow every
      * ledger the user may write to:

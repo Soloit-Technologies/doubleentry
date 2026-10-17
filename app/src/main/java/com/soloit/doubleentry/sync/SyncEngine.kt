@@ -38,7 +38,8 @@ data class PushResult(
     val uploaded: Int,
     /**
      * Edits the server refused because another device's later edit of the same item reached it
-     * after this cycle's pull; the later edit replaced the local one.
+     * after this cycle's pull; the later edit replaced the local one. Also edits from before the
+     * ledger was replaced on another device, which are dropped.
      */
     val replacedLocalChanges: Int,
 )
@@ -161,7 +162,8 @@ class SyncEngine(
      * Makes this device's ledger replace the cloud's as of [atMicros]: every cloud row last edited
      * before then is deleted, children first, including rows this device never pulled. The rows
      * this device still holds from before then are restamped just after [atMicros] and uploaded,
-     * so they survive. Rows edited later, here or on another device, are newer and stay.
+     * so they survive. Rows edited later, here or on another device, are newer and stay. The server
+     * also refuses rows edited before then that arrive later (from a device that was offline).
      *
      * The restamp must be strictly later than the deletions: a device that syncs between the two
      * steps holds the deletion, and would keep it over a row stamped the same (an equal stamp is
@@ -180,6 +182,7 @@ class SyncEngine(
         }
         val at = formatTimestamp(atMicros)
         val ledgerId = ledgerId()
+        authorized(auth) { token -> api.markLedgerReplaced(ledgerId, at, token) }
         for (table in tables.reversed()) {
             authorized(auth) { token -> api.tombstoneBefore(table.remote, ledgerId, at, token) }
         }
@@ -241,9 +244,17 @@ class SyncEngine(
                 }
                 // Left out of the response: another device's later edit reached the server after
                 // this cycle's pull, and the server kept it. Take it now.
-                val refused = chunk.map { it.id }.filter { it !in stored }
-                for (ids in refused.chunked(ID_CHUNK)) {
-                    replaced += apply(decode(authorized(auth) { token -> api.selectByIds(remote, ledgerId, ids, token) })).replacedLocal
+                val refused = chunk.filter { it.id !in stored }
+                for (part in refused.chunked(ID_CHUNK)) {
+                    val current = decode(authorized(auth) { token -> api.selectByIds(remote, ledgerId, part.map { it.id }, token) })
+                    replaced += apply(current).replacedLocal
+                    // Not on the server at all: edited before the ledger was replaced elsewhere
+                    // (while this device was offline), so the replacement removed it. Here too.
+                    val found = current.map { it.id }.toSet()
+                    val dropped = part.filter { it.id !in found }
+                    if (dropped.isEmpty()) continue
+                    db.withTransaction { dropped.forEach { dao.discard(it.id, it.updatedAt) } }
+                    replaced += dropped.count { it.updatedAt > LedgerRepository.SEED_TIMESTAMP }
                 }
             }
             return PushResult(dirty.size, replaced)

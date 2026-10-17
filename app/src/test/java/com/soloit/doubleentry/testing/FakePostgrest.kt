@@ -28,8 +28,9 @@ import java.time.ZoneOffset
  * (updated_at, id) with a limit; `POST ?on_conflict=ledger_id,id` upserts that merge by
  * (ledger_id, id) like the primary key; and `PATCH`es filtered by `modified_at=lt.`. Every `GET`
  * and `PATCH` must name its ledger (`ledger_id=eq.`). Like the server triggers, a write older than
- * the stored row (by `modified_at`) is refused, and every other write stamps `updated_at`, each
- * strictly later, and `user_id` with the writer. A token from [signIn] reaches only the ledgers
+ * the stored row (by `modified_at`) is refused, as is one edited before its ledger was replaced
+ * (`rpc/mark_ledger_replaced`), and every other write stamps `updated_at`, each strictly later,
+ * and `user_id` with the writer. A token from [signIn] reaches only the ledgers
  * its user is a member of (like row-level security): their own ([ledgerIdFor], returned by
  * `rpc/own_ledger`) and any added to [members]; the plain token "token" reaches everything.
  * Uploads need the ledger owner's cloud access ([withoutAccess] lists users who have none), read
@@ -54,6 +55,9 @@ class FakePostgrest {
     var syncPaused = false
     var minVersionCode = 0
     var serviceMessage: String? = null
+
+    /** When each ledger was last replaced (`ledgers.replaced_at`), in microseconds. */
+    val replacedAt = mutableMapOf<String, Long>()
 
     /** Ledger names; unnamed ledgers are "My ledger". */
     val ledgerNames = mutableMapOf<String, String>()
@@ -275,6 +279,7 @@ class FakePostgrest {
                         val existing = rows[key(row)]
                         // The keep_newer_edit trigger: an older edit is left out of the response.
                         if (existing != null && modified(row) < modified(existing)) return@mapNotNull null
+                        if (beforeReplacement(row, existing)) return@mapNotNull null
                         val stored = JsonObject(
                             existing.orEmpty() + row + ("updated_at" to JsonPrimitive(stamp(tick()))) + ("user_id" to (user?.let(::JsonPrimitive) ?: JsonNull)),
                         )
@@ -289,7 +294,7 @@ class FakePostgrest {
                 val stamp = stamp(tick())
                 for (row in visible.filter(::matches)) {
                     val changed = JsonObject(row + changes)
-                    if (modified(changed) < modified(row)) continue
+                    if (modified(changed) < modified(row) || beforeReplacement(changed, row)) continue
                     rows[key(row)] = JsonObject(changed + ("updated_at" to JsonPrimitive(stamp)))
                 }
                 JsonArray(emptyList())
@@ -297,6 +302,12 @@ class FakePostgrest {
             else -> error("Unexpected ${request.method}")
         }
         return respond(request, if (request.method == "POST") 201 else 200, body)
+    }
+
+    /** The refuse_edits_before_replacement trigger: an edit (a new modified_at) older than its ledger's replacement. */
+    private fun beforeReplacement(row: JsonObject, existing: JsonObject?): Boolean {
+        val replaced = replacedAt[row["ledger_id"]?.jsonPrimitive?.content] ?: return false
+        return (existing == null || modified(row) != modified(existing)) && modified(row) < replaced
     }
 
     private fun refused(request: okhttp3.Request) =
@@ -383,6 +394,13 @@ class FakePostgrest {
                     return raise(request, "not_owner")
                 }
                 members[member]?.remove(ledger)
+                respond(request, 200, JsonNull)
+            }
+            "mark_ledger_replaced" -> {
+                val ledger = arg("ledger")
+                if (user != null && (roleOf(me, ledger) == null || ownerOf(ledger) in withoutAccess)) return raise(request, "not_writer")
+                val at = minOf(parseTimestamp(arg("as_of")), nowMicros())
+                replacedAt[ledger] = maxOf(replacedAt[ledger] ?: Long.MIN_VALUE, at)
                 respond(request, 200, JsonNull)
             }
             "rename_ledger" -> {

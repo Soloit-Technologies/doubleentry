@@ -29,6 +29,7 @@ supabase/
 | `20261018000000_sync_control.sql` | The switch that stops sync from the server: `service_control` (`sync_paused`, `min_version_code`, `message`) and `sync_control()`, which the app reads before every sync (see [Stopping sync](#stopping-sync)) |
 | `20261018000001_sync_error_reports.sql` | `sync_error_reports`: unexpected sync failures the app sends in, without ledger data; users can only add their own, 50 a day (see [Sync error reports](#sync-error-reports)) |
 | `20261019000000_tighten_table_grants.sql` | Table privileges no wider than the policies: nothing for signed-out users, no delete or truncate for signed-in users, only select on `ledgers`, `ledger_members` and `cloud_subscriptions`, nothing on `ledger_invites`; the same defaults for tables added later |
+| `20261020000000_ledger_replacement.sql` | A replaced ledger refuses older edits: `ledgers.replaced_at`, `mark_ledger_replaced()` (called by the app when an import, "delete all" or a sign-in replaces the cloud ledger) and a trigger that skips writes edited before then, such as an offline device's |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -60,6 +61,10 @@ Sync rules the schema relies on:
   so a transaction and its lines are always written, pulled and resolved together.
   `transaction_entries` is no longer used (see `queries/drop_transaction_entries.sql`).
 - **`deleted_at`** is a tombstone. Rows are never hard-deleted by the app, so no delete policy exists.
+- **Replacing a ledger** (an import, "delete all", or a device's ledger replacing the account's at
+  sign-in) tombstones every row last edited before then and records the time in
+  `ledgers.replaced_at`. A write edited earlier, e.g. from a device that was offline, is skipped like
+  an older edit; when the server doesn't hold the row at all, the app drops it locally.
 - **Rows belong to ledgers.** `ledger_id` is part of every primary and foreign key: ids only need to be
   unique per ledger. Reading needs membership of the ledger (`ledger_members`); writing needs the
   owner or editor role.
