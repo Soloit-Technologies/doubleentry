@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -185,6 +186,55 @@ abstract class SupabaseContract {
         // Nobody else can wipe it.
         api.tombstoneBefore(SyncTable.Accounts, me.ledgerId, formatTimestamp(start + 100_000_000), other.token)
         assertNull(accounts(me).single { it.id == newer.id }.deletedAt)
+    }
+
+    @Test
+    fun aReplacedLedgerRefusesEditsFromBeforeTheReplacement() = runBlocking<Unit> {
+        val me = backend.newUser("me")
+        val other = backend.newUser("other")
+        val existing = upsert(me, account(me.ledgerId, 1910, start)).single()
+        val at = nowMicros()
+        upsert(me, account(me.ledgerId, 1915, at - 1))
+        failsWith<SyncException> { api.markLedgerReplaced(me.ledgerId, formatTimestamp(at), other.token) }
+        api.markLedgerReplaced(me.ledgerId, formatTimestamp(at), me.token)
+
+        // Rows edited before then are left out of the response like older edits: new ones and edits.
+        val stale = existing.copy(name = "Stale", modifiedAt = formatTimestamp(at - 1), updatedAt = null)
+        assertEquals(emptyList<AccountRow>(), upsert(me, account(me.ledgerId, 1920, at - 1), stale))
+        assertEquals(listOf("Account 1910", "Account 1915"), accounts(me).map { it.name }.sorted())
+        assertEquals(1, upsert(me, account(me.ledgerId, 1930, at + 1)).size)
+        // The replacement's own tombstones carry its time.
+        api.tombstoneBefore(SyncTable.Accounts, me.ledgerId, formatTimestamp(at), me.token)
+        assertEquals(listOf(1930), accounts(me).filter { it.deletedAt == null }.map { it.number })
+
+        // It never moves back, nor past now: the ledger mustn't lock everyone out.
+        api.markLedgerReplaced(me.ledgerId, formatTimestamp(start), me.token)
+        assertEquals(emptyList<AccountRow>(), upsert(me, account(me.ledgerId, 1940, at - 1)))
+        api.markLedgerReplaced(me.ledgerId, formatTimestamp(nowMicros() + 3_600_000_000), me.token)
+        assertEquals(1, upsert(me, account(me.ledgerId, 1950, nowMicros() + 1_000_000)).size)
+    }
+
+    @Test
+    fun aDeviceOfflineDuringAReplacementDoesNotBringOldRowsBack() = runBlocking<Unit> {
+        val me = backend.newUser("me")
+        val a = Device("a", me)
+        val bank = a.t.account(1910, "Bank", AccountType.Asset)
+        val food = a.t.account(5010, "Food", AccountType.Expense)
+        a.t.post(day, "Groceries", food, bank, 100_00)
+        a.sync()
+        val b = Device("b", me)
+        b.sync()
+
+        val accounts = b.t.ledger.getAccounts().associateBy { it.number }
+        b.t.post(day, "Offline on B", accounts.getValue(5010), accounts.getValue(1910), 5_00)
+        val before = nowMicros()
+        a.t.ledger.deleteAllData()
+        a.replaceCloudLedger(before)
+
+        b.sync()
+        assertEquals(emptyList<String>(), b.titles())
+        assertEquals(0, b.t.db.syncStatus().pendingChanges().first())
+        assertTrue(backend.rows("transactions", me.ledgerId).none { it["title"]?.jsonPrimitive?.content == "Offline on B" })
     }
 
     @Test

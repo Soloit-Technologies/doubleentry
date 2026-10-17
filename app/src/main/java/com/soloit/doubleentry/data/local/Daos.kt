@@ -17,6 +17,12 @@ interface SyncDao<T : SyncEntity> {
     suspend fun upsertAll(entities: List<T>)
     suspend fun markClean(id: String, updatedAt: Long)
 
+    /**
+     * Drops a row the server refused and doesn't hold: deleted and clean, so it never uploads, and
+     * kept as a tombstone so seeding doesn't add it again. Unless edited again meanwhile, like [markClean].
+     */
+    suspend fun discard(id: String, updatedAt: Long)
+
     /** Revives every row soft-deleted at exactly [stamp] (one delete operation shares one stamp). */
     suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
 }
@@ -69,6 +75,9 @@ interface AccountDao : SyncDao<AccountEntity> {
     @Query("UPDATE accounts SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
     override suspend fun markClean(id: String, updatedAt: Long)
 
+    @Query("UPDATE accounts SET deleted_at = COALESCE(deleted_at, updated_at), is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun discard(id: String, updatedAt: Long)
+
     @Query("UPDATE accounts SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
 
@@ -117,6 +126,9 @@ interface TransactionDao : SyncDao<TransactionEntity> {
 
     @Query("UPDATE transactions SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
     override suspend fun markClean(id: String, updatedAt: Long)
+
+    @Query("UPDATE transactions SET deleted_at = COALESCE(deleted_at, updated_at), is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun discard(id: String, updatedAt: Long)
 
     @Query("UPDATE transactions SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -207,6 +219,9 @@ interface AssetDao : SyncDao<AssetEntity> {
     @Query("UPDATE assets SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
     override suspend fun markClean(id: String, updatedAt: Long)
 
+    @Query("UPDATE assets SET deleted_at = COALESCE(deleted_at, updated_at), is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun discard(id: String, updatedAt: Long)
+
     @Query("UPDATE assets SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
 
@@ -239,6 +254,9 @@ interface InvoiceDao : SyncDao<InvoiceEntity> {
 
     @Query("UPDATE invoices SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
     override suspend fun markClean(id: String, updatedAt: Long)
+
+    @Query("UPDATE invoices SET deleted_at = COALESCE(deleted_at, updated_at), is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun discard(id: String, updatedAt: Long)
 
     @Query("UPDATE invoices SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int
@@ -281,6 +299,9 @@ interface UserSettingDao : SyncDao<UserSettingEntity> {
 
     @Query("UPDATE user_settings SET is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
     override suspend fun markClean(id: String, updatedAt: Long)
+
+    @Query("UPDATE user_settings SET deleted_at = COALESCE(deleted_at, updated_at), is_dirty = 0 WHERE id = :id AND updated_at = :updatedAt")
+    override suspend fun discard(id: String, updatedAt: Long)
 
     @Query("UPDATE user_settings SET deleted_at = NULL, updated_at = :now, is_dirty = 1 WHERE deleted_at = :stamp")
     override suspend fun restoreDeletedAt(stamp: Long, now: Long): Int

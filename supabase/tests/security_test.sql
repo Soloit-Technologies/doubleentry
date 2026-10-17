@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(35);
+select plan(40);
 
 -- -----------------------------------------------------------------------------
 -- Guards for whatever is added later
@@ -167,6 +167,25 @@ select throws_ok(
 
 select throws_ok($$ select public.remove_member('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '33333333-3333-4333-8333-333333333333') $$,
   'P0001', 'not_owner', 'an editor can''t remove other members');
+
+-- A replaced ledger refuses edits from before the replacement, e.g. an offline device's.
+select public.mark_ledger_replaced('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', now() + interval '1 day');
+select is((select replaced_at from public.ledgers where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), now(),
+  'a replacement is never dated later than now');
+insert into public.accounts (ledger_id, id, number, name, type, modified_at)
+values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', gen_random_uuid(), 1940, 'Offline', 0, now() - interval '1 hour');
+select is((select count(*) from public.accounts where number = 1940), 0::bigint, 'a row edited before the replacement is refused');
+update public.accounts set name = 'Offline edit', modified_at = now() - interval '1 hour' where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+select is((select name from public.accounts where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'), 'Same time',
+  'so is an edit from before it');
+reset role;
+update public.accounts set user_id = null where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+select is((select user_id from public.accounts where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'), null,
+  'changes that aren''t edits still apply to older rows (a deleted member''s user_id)');
+select set_config('request.jwt.claims', '{"sub": "44444444-4444-4444-8444-444444444444", "role": "authenticated"}', true);
+set local role authenticated;
+select throws_ok($$ select public.mark_ledger_replaced('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', now()) $$,
+  'P0001', 'not_writer', 'a stranger can''t replace the ledger');
 
 -- The owner's subscription ends: nobody can upload any more, everyone can still read.
 reset role;
