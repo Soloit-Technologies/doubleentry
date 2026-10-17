@@ -243,7 +243,7 @@ class SyncFailureTest {
         assertEquals(SyncAttention.SignInAgain, a.status.attention)
         assertEquals(1, a.pending())
 
-        a.sync.signInAgain("pw")
+        a.sync.signIn("me@example.com", "pw")
         assertFalse(a.status.needsSignIn)
         assertEquals(0, a.pending())
         assertEquals(listOf("Kept", "Synced"), cloudTitles())

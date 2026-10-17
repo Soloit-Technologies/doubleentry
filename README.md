@@ -82,7 +82,7 @@ client id next to the Supabase settings (CI: `GOOGLE_WEB_CLIENT_ID`):
 google.webClientId=<id>.apps.googleusercontent.com
 ```
 
-Without it the app shows only email sign-in for existing accounts. To create the ids, in the Google
+Without it the app can't sign in. To create the ids, in the Google
 Cloud project linked to the Play Console app (*APIs & Services*):
 
 1. *OAuth consent screen*: app name *DoubleEntry*, user type *External*, scopes `openid`, `email`

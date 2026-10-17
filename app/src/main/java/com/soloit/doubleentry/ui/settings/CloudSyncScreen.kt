@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -26,17 +24,13 @@ import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.PhonelinkSetup
 import androidx.compose.material.icons.rounded.Sync
-import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -47,17 +41,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.soloit.doubleentry.sync.ServiceBlock
@@ -82,7 +71,6 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
     val sharedOnDevice by container.sessions.sharedOnDevice.collectAsStateWithLifecycle()
     // App-wide scope: a sign-in or sync keeps running if the user leaves this screen.
     val scope = container.appScope
-    var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmSignOut by remember { mutableStateOf(false) }
@@ -91,19 +79,17 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
 
     val context = LocalActivity.current ?: LocalContext.current
 
-    /** Renews an expired session, with Google or the password; first sign-ins go through [AccountForms]. */
+    /**
+     * Renews an expired session with Google; first sign-ins go through [AccountForms]. Accounts made
+     * with a password sign in with Google as well: it links to the account with the same email.
+     */
     fun signInAgain() {
-        val google = status.signedInWithGoogle
-        if (!google && password.isBlank()) {
-            error = "Enter your password."
-            return
-        }
         busy = true
         error = null
         scope.launch {
             try {
-                if (google) signInWithGoogle(context, sync, sync.googleClientId) else sync.signInAgain(password)
-                password = ""
+                val result = signInWithGoogle(context, sync, sync.googleClientId)
+                if (result == null) error = CANCELLED_HINT else result.question?.let { question = it }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -183,24 +169,14 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "Your session has ended, so nothing is syncing. " +
-                                (if (status.signedInWithGoogle) "Sign in with Google as ${status.signedInEmail} to continue." else "Enter the password for ${status.signedInEmail} to continue.") +
+                                "Sign in with Google as ${status.signedInEmail} to continue." +
                                 if (status.pendingChanges > 0) " ${changesText(status.pendingChanges)} on this device will then be uploaded." else "",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
                         Spacer(Modifier.height(12.dp))
-                        if (status.signedInWithGoogle) {
-                            error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
-                            GoogleButton(busy, label = "Sign in with Google again", onClick = ::signInAgain)
-                        } else {
-                            PasswordField(password, { password = it }, onDone = ::signInAgain)
-                            error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
-                            Spacer(Modifier.height(12.dp))
-                            Button(onClick = ::signInAgain, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                                else Text("Sign in again")
-                            }
-                        }
+                        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
+                        GoogleButton(busy, label = "Sign in with Google again", onClick = ::signInAgain)
                     }
                 }
 
@@ -329,26 +305,6 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
 private fun com.soloit.doubleentry.sync.SyncStatus.attentionTextForReplaced(): String =
     "${changesText(replacedChanges)} made on this device ${if (replacedChanges == 1) "was" else "were"} replaced" +
         (replacedAtMillis?.let { " during the sync on ${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))}" } ?: "") + "."
-
-@Composable
-internal fun PasswordField(value: String, onValueChange: (String) -> Unit, onDone: () -> Unit, label: String = "Password") {
-    var showPassword by remember { mutableStateOf(false) }
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        singleLine = true,
-        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-        trailingIcon = {
-            IconButton(onClick = { showPassword = !showPassword }) {
-                Icon(if (showPassword) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, if (showPassword) "Hide password" else "Show password")
-            }
-        },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = { onDone() }),
-        modifier = Modifier.fillMaxWidth(),
-    )
-}
 
 /** Asks how this device's data and the account's go together before the first sync. */
 @Composable

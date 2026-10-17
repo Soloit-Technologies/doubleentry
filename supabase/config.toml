@@ -32,23 +32,17 @@ port = 54323
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:3000"
-# Accounts are created by Sign in with Google (the provider below); email sign-up stays off.
+# Accounts are created by Sign in with Google (the provider below).
 enable_signup = true
 minimum_password_length = 8
 
 [auth.email]
-# Only accounts made before Sign in with Google use email and password. They can still reset a
-# forgotten password with a 6-digit code typed into the app ({{ .Token }} in the template).
-# On a local stack this setting switches email sign-in off altogether ("Email logins are
-# disabled"), so it stays on here: the contract tests and local development sign in with email.
-# In the hosted project, new email sign-ups are off in the dashboard (see README).
+# The app signs in with Google only. This setting switches email sign-in off altogether ("Email
+# logins are disabled"), so it stays on here: the contract tests and local development sign in
+# with email. The hosted project has it off (see README); don't push this file as it is.
 enable_signup = true
 otp_length = 6
 otp_expiry = 3600
-
-[auth.email.template.recovery]
-subject = "Reset your DoubleEntry password"
-content_path = "./supabase/templates/recovery.html"
 
 # Sign in with Google: the app sends a Google ID token (grant_type=id_token). client_id is the
 # OAuth web client id the tokens are issued for; the secret is only used by browser sign-in.

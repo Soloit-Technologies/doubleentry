@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.CloudDone
@@ -24,7 +23,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,15 +30,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.soloit.doubleentry.billing.CloudBilling
@@ -58,38 +53,25 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
-private enum class AuthStep { Start, EmailSignIn, ForgotPassword, ResetPassword }
-
 /**
- * Signing in: Sign in with Google for everyone (it also creates the account), and email with
- * password only for accounts made before that, including resetting a forgotten password with an
- * emailed code. [onQuestion] receives the sign-in question, if any.
+ * Signing in: Sign in with Google, which also creates the account the first time. [onQuestion]
+ * receives the sign-in question, if any.
  */
 @Composable
 internal fun ColumnScope.AccountForms(sync: SyncManager, scope: CoroutineScope, googleClientId: String, onQuestion: (SignInQuestion?) -> Unit) {
     val context = LocalActivity.current ?: LocalContext.current
-    var step by rememberSaveable { mutableStateOf(AuthStep.Start) }
-    var email by rememberSaveable { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var code by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var info by remember { mutableStateOf<String?>(null) }
+    var hint by remember { mutableStateOf<String?>(null) }
 
-    fun go(to: AuthStep, message: String? = null) {
-        step = to
-        error = null
-        info = message
-        code = ""
-    }
-
-    /** Runs [block] with the busy spinner; errors are shown under the form. */
-    fun run(block: suspend () -> Unit) {
+    fun signIn() {
         busy = true
         error = null
+        hint = null
         scope.launch {
             try {
-                block()
+                val result = signInWithGoogle(context, sync, googleClientId)
+                if (result == null) hint = CANCELLED_HINT else onQuestion(result.question)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -100,103 +82,28 @@ internal fun ColumnScope.AccountForms(sync: SyncManager, scope: CoroutineScope, 
         }
     }
 
-    fun require(vararg values: String, message: String): Boolean {
-        if (values.any { it.isBlank() }) {
-            error = message
-            return false
-        }
-        return true
+    Text("Sign in to back up", style = MaterialTheme.typography.titleMedium)
+    Text(
+        "Use your Google account: no new password to remember. The first sign-in creates your DoubleEntry account.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (googleClientId.isBlank()) {
+        Text("Sign in with Google isn't set up in this build.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        GoogleButton(busy, onClick = ::signIn)
     }
-
-    val title = when (step) {
-        AuthStep.Start -> "Sign in to back up"
-        AuthStep.EmailSignIn -> "Sign in with email"
-        AuthStep.ForgotPassword -> "Reset your password"
-        AuthStep.ResetPassword -> "Choose a new password"
-    }
-    Text(title, style = MaterialTheme.typography.titleMedium)
-    info?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-
-    val emailField = @Composable {
-        OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            label = { Text("Email") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-
-    when (step) {
-        AuthStep.Start -> {
-            Text(
-                "Use your Google account: no new password to remember. The first sign-in creates your DoubleEntry account.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (googleClientId.isBlank()) {
-                Text("Sign in with Google isn't set up in this build.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                GoogleButton(busy) { run { onQuestion((signInWithGoogle(context, sync, googleClientId) ?: return@run).question) } }
-            }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            TextButton(onClick = { go(AuthStep.EmailSignIn) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Text("Have an account with a password? Sign in with email")
-            }
-        }
-        AuthStep.EmailSignIn -> {
-            val signIn = {
-                if (require(email, password, message = "Email and password are required.")) {
-                    run { onQuestion(sync.signIn(email, password)); password = "" }
-                }
-            }
-            emailField()
-            PasswordField(password, { password = it }, onDone = signIn)
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            BusyButton("Sign in", busy, onClick = signIn)
-            Row {
-                TextButton(onClick = { go(AuthStep.Start) }) { Text("Back") }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { go(AuthStep.ForgotPassword) }) { Text("Forgot password?") }
-            }
-        }
-        AuthStep.ForgotPassword -> {
-            val send = {
-                if (require(email, message = "Enter your email.")) {
-                    run {
-                        sync.requestPasswordReset(email)
-                        go(AuthStep.ResetPassword, "If ${email.trim()} has an account, we sent it a 6-digit code.")
-                    }
-                }
-            }
-            emailField()
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            BusyButton("Send code", busy, onClick = send)
-            TextButton(onClick = { go(AuthStep.EmailSignIn) }) { Text("Back") }
-        }
-        AuthStep.ResetPassword -> {
-            val reset = {
-                if (require(code, password, message = "Enter the code and a new password.")) {
-                    run { onQuestion(sync.resetPassword(email, code, password)); password = "" }
-                }
-            }
-            OutlinedTextField(
-                value = code,
-                onValueChange = { value -> code = value.filter(Char::isDigit).take(10) },
-                label = { Text("6-digit code") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            PasswordField(password, { password = it }, onDone = reset, label = "New password")
-            Text("At least 8 characters.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            BusyButton("Save password and sign in", busy, onClick = reset)
-            TextButton(onClick = { go(AuthStep.EmailSignIn) }) { Text("Back") }
-        }
-    }
+    hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 }
+
+/**
+ * Shown after Google's sheet closed without an account. Credential Manager reports a sign-in that
+ * Google refused (for example an app it doesn't recognise) the same way as the user closing the
+ * sheet, so this can't say which one happened.
+ */
+internal const val CANCELLED_HINT =
+    "No account was chosen. If the Google sheet closed by itself, check your connection and try again."
 
 /** A finished sign-in, with the question it asks (if any). */
 internal class SignInResult(val question: SignInQuestion?)
@@ -221,14 +128,6 @@ internal fun GoogleButton(busy: Boolean, label: String = "Continue with Google",
             Spacer(Modifier.width(8.dp))
             Text(label)
         }
-    }
-}
-
-@Composable
-private fun BusyButton(label: String, busy: Boolean, onClick: () -> Unit) {
-    Button(onClick = onClick, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-        if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-        else Text(label)
     }
 }
 
