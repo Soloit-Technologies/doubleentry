@@ -4,9 +4,12 @@ on:
   push:
     branches: [main, master]
     paths-ignore: ['supabase/**', '**.md']
+  # Every pull request runs this: its job is a required check on main, and a skipped run never reports.
   pull_request:
-    paths-ignore: ['supabase/**', '**.md']
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:

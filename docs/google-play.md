@@ -39,13 +39,14 @@ not a personal one.
    ```bash
    keytool -genkeypair -v -keystore upload-key.jks -alias upload -keyalg RSA -keysize 4096 -validity 10000
    ```
-   Put it in `keystore.properties` for local builds and in the `SIGNING_*` secrets for the workflow.
+   Put it in `keystore.properties` for local builds and in the `SIGNING_*` secrets of the
+   `play-release` environment (*Settings → Environments*) for the workflow.
 2. **Create the app** in the Play Console: name *DoubleEntry*, app (not game), free.
    Play App Signing is on by default: Google keeps the app signing key, and you sign uploads with
    the upload key. A lost upload key can be reset through Play support.
 3. **First upload by hand.** Upload `app-release.aab` to *Testing → Internal testing*. The package
    name `com.soloit.doubleentry` is fixed from then on. Later uploads can come from the workflow
-   (secret `PLAY_SERVICE_ACCOUNT_JSON`: a Google Cloud service account invited in
+   (`play-release` secret `PLAY_SERVICE_ACCOUNT_JSON`: a Google Cloud service account invited in
    *Users and permissions* with release rights for this app).
 4. **Production.** Organization accounts don't need the 12-tester, 14-day closed test that new
    personal accounts do; a release can be promoted from internal testing straight to production.
