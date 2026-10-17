@@ -312,8 +312,9 @@ class SyncManager(
     }
 
     /**
-     * Signs in. When this device's data and the account's could conflict, returns a question and
-     * waits for [completeSignIn] (or [cancelSignIn]); otherwise syncs right away and returns null.
+     * Signs in with email and password, which only the local stack and the tests use (the app signs
+     * in with Google). When this device's data and the account's could conflict, returns a question
+     * and waits for [completeSignIn] (or [cancelSignIn]); otherwise syncs right away and returns null.
      */
     suspend fun signIn(email: String, password: String): SignInQuestion? {
         val address = email.trim()
@@ -327,17 +328,6 @@ class SyncManager(
     suspend fun signInWithGoogle(idToken: String, nonce: String, email: String): SignInQuestion? {
         val session = api.signInWithGoogle(idToken, nonce)
         return signInWith(session, session.user?.email ?: email, google = true)
-    }
-
-    /** Emails a code for [resetPassword]. */
-    suspend fun requestPasswordReset(email: String) = api.requestPasswordReset(email.trim())
-
-    /** Sets a new password with the emailed code and signs in, like [signIn]. */
-    suspend fun resetPassword(email: String, code: String, newPassword: String): SignInQuestion? {
-        val address = email.trim()
-        val session = api.verifyRecoveryCode(address, code.trim())
-        api.updatePassword(newPassword, session.accessToken ?: throw SyncException("Please try again."))
-        return signInWith(session, address)
     }
 
     private suspend fun signInWith(token: AuthTokenResponse, address: String, google: Boolean = false): SignInQuestion? {
@@ -556,12 +546,6 @@ class SyncManager(
             prefs.cloudWipeBeforeMicros = null
         }
         publish()
-    }
-
-    /** Renews an expired session for the account that is already signed in. */
-    suspend fun signInAgain(password: String) {
-        val email = prefs.userEmail ?: throw SyncException("Please sign out and sign in again.")
-        signIn(email, password)
     }
 
     /** Hides the notice about changes replaced by another device. */

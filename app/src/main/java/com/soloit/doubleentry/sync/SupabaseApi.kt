@@ -153,9 +153,12 @@ class SupabaseApi(
     private val json = Json { ignoreUnknownKeys = true }
     private val jsonMedia = "application/json".toMediaType()
 
-    enum class Operation { SignIn, GoogleSignIn, Session, Sync, Password, Code, Account, Purchase, Ledger }
+    enum class Operation { SignIn, GoogleSignIn, Session, Sync, Account, Purchase, Ledger }
 
-    /** `POST /auth/v1/token?grant_type=password` */
+    /**
+     * `POST /auth/v1/token?grant_type=password`. Only the local stack and the tests sign in with email;
+     * the hosted project has email sign-in switched off.
+     */
     suspend fun signIn(email: String, password: String): AuthTokenResponse {
         val body = buildJsonObject { put("email", email); put("password", password) }
         return auth("password", body.toString(), Operation.SignIn)
@@ -174,28 +177,6 @@ class SupabaseApi(
     suspend fun signInWithGoogle(idToken: String, nonce: String): AuthTokenResponse {
         val body = buildJsonObject { put("provider", "google"); put("id_token", idToken); put("nonce", nonce) }
         return auth("id_token", body.toString(), Operation.GoogleSignIn)
-    }
-
-    /** `POST /auth/v1/verify` with the 6-digit password-reset code from an email; returns a session. */
-    suspend fun verifyRecoveryCode(email: String, code: String): AuthTokenResponse {
-        val body = buildJsonObject { put("type", "recovery"); put("email", email); put("token", code) }
-        return json.decodeFromString(AuthTokenResponse.serializer(), execute(authRequest("verify", body.toString()), Operation.Code))
-    }
-
-    /** `POST /auth/v1/recover`: emails a password-reset code (silently does nothing for unknown addresses). */
-    suspend fun requestPasswordReset(email: String) {
-        execute(authRequest("recover", buildJsonObject { put("email", email) }.toString()), Operation.Code)
-    }
-
-    /** `PUT /auth/v1/user`: sets a new password for the signed-in user. */
-    suspend fun updatePassword(password: String, accessToken: String) {
-        val request = Request.Builder()
-            .url("${config.baseUrl}/auth/v1/user")
-            .header("apikey", config.anonKey)
-            .header("Authorization", "Bearer $accessToken")
-            .put(buildJsonObject { put("password", password) }.toString().toRequestBody(jsonMedia))
-            .build()
-        execute(request, Operation.Password)
     }
 
     private fun authRequest(path: String, body: String) = Request.Builder()
@@ -495,8 +476,6 @@ class SupabaseApi(
             status == 408 || status == 429 -> "The cloud service is busy right now. Please wait a moment and try again."
             op == Operation.SignIn -> "We couldn't sign you in. Please check your email and password, then try again."
             op == Operation.GoogleSignIn -> "We couldn't sign you in with Google. Please try again."
-            op == Operation.Password -> "We couldn't save the new password. Please try again."
-            op == Operation.Code -> "That code didn't work. Check the latest email and try again."
             op == Operation.Account -> "We couldn't delete your account right now. Please try again later."
             op == Operation.Purchase -> "We couldn't confirm your purchase yet. It will be checked again the next time the app opens."
             op == Operation.Session -> "Your session has expired. Please sign in again."

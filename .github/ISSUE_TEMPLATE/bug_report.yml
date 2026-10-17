@@ -1,0 +1,42 @@
+name: Report a problem
+description: Something in DoubleEntry doesn't work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Issues are public.** Don't include amounts, account names, backups, bank statements or
+        screenshots of your own financial data. Use made-up examples instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Tap …
+        3. …
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Settings → About
+      placeholder: 2.0.0 (13)
+    validations:
+      required: true
+  - type: input
+    id: android-version
+    attributes:
+      label: Android version
+      placeholder: Android 16 (API 36)
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      placeholder: Google Pixel 9

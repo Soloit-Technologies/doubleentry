@@ -9,7 +9,7 @@ What the repository already provides, and the one-time steps that happen in the 
 | Signed release bundle | `./gradlew bundleRelease` → `app/build/outputs/bundle/release/app-release.aab`, or push a `v*` tag ([`release.yml`](../.github/workflows/release.yml)) |
 | R8 mapping file (readable crash stack traces) | `app/build/outputs/mapping/release/mapping.txt`, uploaded with the bundle by the workflow |
 | Store listing text, icon, feature graphic | [`fastlane/metadata/android/en-US/`](../fastlane/metadata/android/en-US) |
-| Privacy policy and support | The public repository [Soloit-Technologies/doubleentry-app](https://github.com/Soloit-Technologies/doubleentry-app): `PRIVACY.md`, and issues as the support channel (*Settings → Support* links there) |
+| Privacy policy and support | This repository: [`PRIVACY.md`](../PRIVACY.md), and its issues as the support channel (*Settings → Support* links there, using the forms in [`.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE)) |
 
 Release builds leave out cloud sync and the Supabase settings (see README → *Build types*), so the
 Play app is offline-only and needs no login. Shipping paid cloud backup is described in
@@ -39,13 +39,14 @@ not a personal one.
    ```bash
    keytool -genkeypair -v -keystore upload-key.jks -alias upload -keyalg RSA -keysize 4096 -validity 10000
    ```
-   Put it in `keystore.properties` for local builds and in the `SIGNING_*` secrets for the workflow.
+   Put it in `keystore.properties` for local builds and in the `SIGNING_*` secrets of the
+   `play-release` environment (*Settings → Environments*) for the workflow.
 2. **Create the app** in the Play Console: name *DoubleEntry*, app (not game), free.
    Play App Signing is on by default: Google keeps the app signing key, and you sign uploads with
    the upload key. A lost upload key can be reset through Play support.
 3. **First upload by hand.** Upload `app-release.aab` to *Testing → Internal testing*. The package
    name `com.soloit.doubleentry` is fixed from then on. Later uploads can come from the workflow
-   (secret `PLAY_SERVICE_ACCOUNT_JSON`: a Google Cloud service account invited in
+   (`play-release` secret `PLAY_SERVICE_ACCOUNT_JSON`: a Google Cloud service account invited in
    *Users and permissions* with release rights for this app).
 4. **Production.** Organization accounts don't need the 12-tester, 14-day closed test that new
    personal accounts do; a release can be promoted from internal testing straight to production.
@@ -57,7 +58,7 @@ not a personal one.
 
 | Section | Answer |
 |---|---|
-| Privacy policy | `https://github.com/Soloit-Technologies/doubleentry-app/blob/main/PRIVACY.md` |
+| Privacy policy | `https://github.com/Soloit-Technologies/doubleentry-android/blob/main/PRIVACY.md` |
 | App access | All functionality is available without special access |
 | Ads | No ads |
 | Content rating | IARC questionnaire: category *Utility, productivity, communication or other*; answer *No* throughout. Expect *Everyone / PEGI 3* |
@@ -84,7 +85,7 @@ not a personal one.
 - **Phone screenshots:** at least 2, from a release build on a phone, e.g. Accounts, an account
   ledger, a new transaction, the income statement and the cost-trends chart. Put them in
   `images/phoneScreenshots/` if you want them versioned.
-- **Category:** Finance. **Website:** `https://github.com/Soloit-Technologies/doubleentry-app`.
+- **Category:** Finance. **Website:** `https://doubleentry.eu`.
   **Contact email:** required by Play and shown publicly, even with GitHub issues as the main
   support channel.
 
@@ -148,7 +149,7 @@ server enforces this is in [`supabase/README.md`](../supabase/README.md#accounts
      voided purchases, and all one-time products*, and press *Send test notification*. The
      function answers it with 200 and stores nothing.
 5. **Supabase.** Apply the migrations, set the Edge Function secrets, deploy the functions and
-   enable the Google provider and the password-reset template (all in `supabase/README.md`).
+   enable the Google provider (all in `supabase/README.md`).
 6. **Sign in with Google.** Create the OAuth clients, including one for the Play app signing key's
    SHA-1 (README → *Sign in with Google*). Without that one, Google sign-in fails in the app
    installed from Play while it works in your own builds.
@@ -171,10 +172,10 @@ server enforces this is in [`supabase/README.md`](../supabase/README.md#accounts
 
 | Section | New answer |
 |---|---|
-| App access | Cloud backup needs an account. Reviewers can sign in with any Google account, but would then have to buy. Instead, create an email account for them in the Supabase dashboard (*Authentication → Add user*), give it complimentary access (SQL in `supabase/README.md`), and tell them to use *Sign in with email* |
+| App access | Cloud backup needs an account. Reviewers can sign in with any Google account, but would then have to buy. Instead, create a Google account for them (e.g. a new Gmail address, without 2-step verification), sign in with it once in the app so the account exists, give it complimentary access (SQL in `supabase/README.md`), and enter its address and password here |
 | Data safety → collection | **Yes**, the app collects data. *Personal info → Email address* and *Name* (from the Google account; account management, required for cloud backup). *Financial info → Other financial info* (the ledger, for app functionality, optional: only with cloud backup). *Financial info → Purchase history* (subscription status, app functionality). *App info and performance → Diagnostics* (sync error reports: kind of error, app version, no ledger content; linked to the account; analytics, to find and fix sync problems). None of it is shared with third parties or used for ads |
 | Data safety → security | Encrypted in transit: yes (HTTPS). Users can request deletion: yes |
-| Data deletion | In the app: *Cloud backup & sync → Delete account*. Play also requires a web link where people can ask for deletion without the app, e.g. a section of `PRIVACY.md` explaining how to request it (an issue or the contact email) |
-| Privacy policy | Update `PRIVACY.md`: what is stored in the cloud (email, ledger, subscription status, and sync error reports without ledger content), where (Supabase, and the region of the project), how long (until the account is deleted; error reports at most 90 days), and that payments are handled by Google Play |
+| Data deletion | In the app: *Cloud backup & sync → Delete account*. Web link for deletion without the app: `https://github.com/Soloit-Technologies/doubleentry-android/blob/main/PRIVACY.md#deleting-your-account` (by email to privacy@soloit.se) |
+| Privacy policy | [`PRIVACY.md`](../PRIVACY.md) covers what is stored in the cloud, who sees it (shared ledgers), where (Supabase, `eu-west-1`), how long (until the account is deleted; error reports at most 90 days) and that payments are handled by Google Play. Keep it in step with `supabase/` |
 | Store listing | Mention the subscription in the full description: free app, optional paid cloud backup, prices in the listing come from Google Play |
 

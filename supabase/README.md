@@ -8,7 +8,6 @@ supabase/
   config.toml      Supabase CLI configuration (local development)
   migrations/      Schema: tables, row-level security, triggers, realtime (applied in order)
   functions/       Edge Functions: Google Play purchases and account deletion
-  templates/       Auth email (password-reset code)
   queries/         Read-only checks and maintenance SQL to run in the SQL editor
   tests/           Security tests (pgTAP), run with `supabase test db`
   fixtures/        Sample data and the upgrade check run by GitHub Actions
@@ -143,21 +142,20 @@ Accounts are created with **Sign in with Google**: the app gets a Google ID toke
 Credential Manager and exchanges it for a session (`POST /auth/v1/token?grant_type=id_token` with
 `provider: google`, the token and the raw nonce whose SHA-256 the token carries). The first sign-in
 creates the account. A Google sign-in with the same verified email as an existing account is linked
-to that account, so older email accounts keep their ledger.
+to that account, so accounts made with email and password before keep their ledger.
 
-Email and password remain only for accounts made before that (and for reviewer accounts); new email
-sign-ups are off. A forgotten password is reset with a 6-digit code typed into the app
-(`/auth/v1/recover`, `/auth/v1/verify`, `PUT /auth/v1/user`), so the email must contain the code.
+Google is the only way to sign in. The hosted project has the email provider switched off; the local
+stack keeps it on, because the contract tests and local development sign in with email and password.
 
 In the hosted project, set this once in the dashboard (`config.toml` only covers the local stack):
 
 1. *Authentication → Sign In / Providers → Google*: enable, and put the OAuth **web** client id in
    *Client IDs* (comma-separated if there are several). The client secret is only needed for browser
    sign-in, which the app doesn't use. Leave *Skip nonce check* off.
-2. *Authentication → Sign In / Providers*: *Allow new users to sign up* on;
-   under *Email*, *Allow new users to sign up* off; email OTP length 6, minimum password length 8.
-3. *Authentication → Emails → Templates*: paste `templates/recovery.html` into *Reset password*.
-   The built-in email sender is enough for the few password resets of older accounts.
+2. *Authentication → Sign In / Providers*: *Allow new users to sign up* on (Google creates accounts
+   with it); under *Email*, *Allow new users to sign up* off. In the hosted project that switch
+   turns off the email provider altogether, and `supabase config push` sets it from
+   `auth.email.enable_signup`, so never push this repository's `config.toml` as it is.
 
 Creating the OAuth clients in Google Cloud is described in the main README
 ([Sign in with Google](../README.md#sign-in-with-google)).

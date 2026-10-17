@@ -8,7 +8,11 @@ name: Release
 #   variable SUPABASE_ANON_KEY    the project's anon (publishable) key; it is public by design
 #   variable GOOGLE_WEB_CLIENT_ID the OAuth web client id for Sign in with Google (public as well)
 #
-# Signing needs (Settings → Secrets and variables → Actions):
+# Merging to main never releases: only a v* tag (which only admins may push) or a manual run does.
+#
+# The secrets live in the `play-release` environment (Settings → Environments), which only v* tags
+# and the main branch may use, so a workflow on any other branch or a pull request can't read them.
+# Signing needs (environment secrets of play-release):
 #   secret SIGNING_KEYSTORE_BASE64   the upload keystore, `base64 -w0 upload-key.jks`
 #   secret SIGNING_STORE_PASSWORD
 #   secret SIGNING_KEY_ALIAS
@@ -22,9 +26,13 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   bundle:
     runs-on: ubuntu-latest
+    environment: play-release
     env:
       PLAY_UPLOAD: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
