@@ -2,6 +2,7 @@ package com.soloit.doubleentry.sync
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -17,6 +18,11 @@ data class SyncErrorReport(
     val kind: String,
     val detail: String,
     @SerialName("pending_changes") val pendingChanges: Int,
+    /**
+     * Identifies the failure for sending it only once in a while: [kind] and the messages, without
+     * the code locations, which differ between occurrences depending on where coroutines resumed.
+     */
+    @Transient val fingerprint: String = "",
 ) {
     companion object {
         /**
@@ -34,11 +40,13 @@ data class SyncErrorReport(
                 .distinct()
                 .take(8)
                 .joinToString(" < ") { "${it.fileName}:${it.lineNumber}" }
+            val kind = chain.joinToString(" < ") { it.javaClass.simpleName }.take(200)
             return SyncErrorReport(
                 appVersion = appVersion,
-                kind = chain.joinToString(" < ") { it.javaClass.simpleName }.take(200),
+                kind = kind,
                 detail = (messages + frames).joinToString("\n").take(2000),
                 pendingChanges = pendingChanges,
+                fingerprint = (listOf(kind) + messages).joinToString("\n"),
             )
         }
 

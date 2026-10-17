@@ -685,9 +685,8 @@ class SyncManager(
         val report = SyncErrorReport.of(e, config.appVersionCode, _status.value.pendingChanges)
         val now = System.currentTimeMillis()
         synchronized(reported) {
-            val key = report.kind + report.detail
-            if (reported[key]?.let { now - it < REPORT_INTERVAL_MILLIS } == true) return
-            reported[key] = now
+            if (reported[report.fingerprint]?.let { now - it < REPORT_INTERVAL_MILLIS } == true) return
+            reported[report.fingerprint] = now
         }
         scope.launch {
             try {
