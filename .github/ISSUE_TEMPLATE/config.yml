@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: Privacy policy
     url: https://github.com/Soloit-Technologies/doubleentry-android/blob/main/PRIVACY.md
-    about: What DoubleEntry does with your data (nothing leaves your device).
+    about: What DoubleEntry does with your data, and how to delete your account.
   - name: Report a security vulnerability
     url: https://github.com/Soloit-Technologies/doubleentry-android/security/advisories/new
     about: Report it privately, not in a public issue.
