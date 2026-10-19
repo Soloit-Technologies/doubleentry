@@ -3,6 +3,7 @@ package com.soloit.doubleentry.data
 import com.soloit.doubleentry.domain.AccountGroup
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.BalanceSheetSettings
+import com.soloit.doubleentry.domain.CostPeriodAccounts
 import com.soloit.doubleentry.domain.DefaultAccountPlan
 import com.soloit.doubleentry.domain.DraftLine
 import com.soloit.doubleentry.domain.EntryType
@@ -135,5 +136,25 @@ class LedgerRepositoryTest {
 
         assertEquals(custom, t.settings.balanceSheet.first())
         assertEquals(DefaultAccountPlan.incomeStatementSettings, t.settings.incomeStatement.first())
+    }
+
+    @Test
+    fun seedingDefaultPlanChoosesItsCostPeriodAccounts() = runBlocking<Unit> {
+        t.ledger.seedDefaultPlan()
+
+        assertEquals(DefaultAccountPlan.costPeriodAccounts, t.settings.getCostPeriodAccounts())
+    }
+
+    @Test
+    fun seedingDefaultPlanKeepsChosenCostPeriodAccountsAndSkipsNumbersTakenByOtherAccounts() = runBlocking<Unit> {
+        t.ledger.createAccount(1700, "My own account", AccountType.Asset)
+        t.settings.saveCostPeriodAccounts(CostPeriodAccounts(accruedExpenses = 2440))
+
+        t.ledger.seedDefaultPlan()
+
+        assertEquals(
+            CostPeriodAccounts(prepaidExpenses = null, accruedExpenses = 2440, accruedIncome = 1710, deferredIncome = 2490),
+            t.settings.getCostPeriodAccounts(),
+        )
     }
 }

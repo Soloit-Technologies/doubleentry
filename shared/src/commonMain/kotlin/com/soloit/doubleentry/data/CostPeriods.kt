@@ -150,7 +150,7 @@ internal class CostPeriods(private val db: AppDatabase, private val settings: Se
             .mapTo(mutableSetOf()) { DeterministicIds.periodTransactionId(sourceId, it) }
 
     /**
-     * The live account chosen in settings for each of [needed]. There are no defaults and interim
+     * The live account chosen in settings for each of [needed]. Only the default plan presets them; interim
      * accounts are never created here: when one isn't chosen the user is asked to choose it.
      */
     private suspend fun interimAccountIds(needed: Set<Periodization.Interim>): Map<Periodization.Interim, String> {

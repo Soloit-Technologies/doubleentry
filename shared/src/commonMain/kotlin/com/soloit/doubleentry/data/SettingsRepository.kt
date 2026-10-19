@@ -53,12 +53,7 @@ class SettingsRepository(
         Keys.INVOICE_PAYMENT_ACCOUNTS to json.encodeToString(intList, settings.paymentAccountNumbers),
     )
 
-    suspend fun saveCostPeriodAccounts(settings: CostPeriodAccounts) = set(
-        Keys.PREPAID_EXPENSES_ACCOUNT to settings.prepaidExpenses?.toString(),
-        Keys.ACCRUED_EXPENSES_ACCOUNT to settings.accruedExpenses?.toString(),
-        Keys.ACCRUED_INCOME_ACCOUNT to settings.accruedIncome?.toString(),
-        Keys.DEFERRED_INCOME_ACCOUNT to settings.deferredIncome?.toString(),
-    )
+    suspend fun saveCostPeriodAccounts(settings: CostPeriodAccounts) = set(*costPeriodAccountEntries(settings))
 
     suspend fun getCostPeriodAccounts(): CostPeriodAccounts =
         costPeriodAccountsFrom(dao.liveWithPrefix(Keys.COST_PERIOD_ACCOUNTS_PREFIX).associate { it.key to it.value })
@@ -170,6 +165,13 @@ class SettingsRepository(
         internal fun balanceSheetEntries(settings: BalanceSheetSettings): Array<Pair<String, String>> = arrayOf(
             Keys.ASSET_GROUPS to encodeGroups(settings.assetGroups),
             Keys.LIABILITY_GROUPS to encodeGroups(settings.liabilityGroups),
+        )
+
+        internal fun costPeriodAccountEntries(settings: CostPeriodAccounts): Array<Pair<String, String?>> = arrayOf(
+            Keys.PREPAID_EXPENSES_ACCOUNT to settings.prepaidExpenses?.toString(),
+            Keys.ACCRUED_EXPENSES_ACCOUNT to settings.accruedExpenses?.toString(),
+            Keys.ACCRUED_INCOME_ACCOUNT to settings.accruedIncome?.toString(),
+            Keys.DEFERRED_INCOME_ACCOUNT to settings.deferredIncome?.toString(),
         )
 
         internal fun incomeStatementEntries(settings: IncomeStatementSettings): Array<Pair<String, String>> = arrayOf(

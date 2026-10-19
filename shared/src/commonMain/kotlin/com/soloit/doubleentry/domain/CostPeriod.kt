@@ -175,8 +175,8 @@ object Periodization {
 }
 
 /**
- * Interim accounts for [Periodization], by account number (like the invoice settings). They have
- * no defaults: lines can only be spread over months whose interim account has been chosen.
+ * Interim accounts for [Periodization], by account number (like the invoice settings). Only the
+ * default plan presets them: lines can only be spread over months whose interim account has been chosen.
  */
 data class CostPeriodAccounts(
     val prepaidExpenses: Int? = null,

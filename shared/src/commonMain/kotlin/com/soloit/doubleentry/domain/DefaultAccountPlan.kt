@@ -6,7 +6,7 @@ package com.soloit.doubleentry.domain
  * 21xx–28xx liabilities, 3xxx income, 4xxx home, 50xx–52xx transport and travel, 6xxx food and
  * household, 7xxx personal and leisure, and 8xxx family, finance, health, insurance,
  * depreciation and tax. The groups line up with [CashflowSettings.DEFAULT_CASH_GROUPS] and with
- * the report groups seeded alongside the accounts. Ids are deterministic so that seeding the plan
+ * the report groups and cost period accounts seeded alongside the accounts. Ids are deterministic so that seeding the plan
  * on several devices converges on the same rows under cloud sync.
  */
 object DefaultAccountPlan {
@@ -393,5 +393,13 @@ object DefaultAccountPlan {
         taxPrefixes = listOf("891", "892", "893", "894", "896"),
         // Pension savings can't be spent, so income routed there is shown as deferred.
         deferredAssetPrefixes = listOf("196"),
+    )
+
+    /** Interim accounts for lines spread over a cost period. */
+    val costPeriodAccounts = CostPeriodAccounts(
+        prepaidExpenses = 1700,
+        accruedExpenses = 2420,
+        accruedIncome = 1710,
+        deferredIncome = 2490,
     )
 }

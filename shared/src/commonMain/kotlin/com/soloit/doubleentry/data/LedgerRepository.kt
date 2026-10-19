@@ -62,7 +62,7 @@ class LedgerRepository(
     }
 
     /**
-     * Seeds the default chart of accounts and its report groups. Ids are deterministic, so accounts
+     * Seeds the default chart of accounts, its report groups and its cost period accounts. Ids are deterministic, so accounts
      * that already exist (for example pulled from another device) are left untouched and numbers in
      * use are skipped. Report settings are only written where the user has none, live or deleted.
      */
@@ -78,8 +78,18 @@ class LedgerRepository(
                 accountDao.upsert(AccountEntity(entry.id, entry.number, entry.name, entry.type.ordinal, updatedAt = SEED_TIMESTAMP))
                 created++
             }
+            // A cost period account is only chosen when the number is the plan's own account, not
+            // an unrelated account the user already had under that number.
+            val costPeriodAccounts = SettingsRepository.costPeriodAccountEntries(DefaultAccountPlan.costPeriodAccounts)
+                .mapNotNull { (key, value) ->
+                    val number = value ?: return@mapNotNull null
+                    val entry = DefaultAccountPlan.accounts.firstOrNull { it.number.toString() == number } ?: return@mapNotNull null
+                    val account = accountDao.byId(entry.id)?.takeIf { it.deletedAt == null && it.number == entry.number }
+                    if (account != null) key to number else null
+                }
             val defaults = SettingsRepository.balanceSheetEntries(DefaultAccountPlan.balanceSheetSettings) +
-                SettingsRepository.incomeStatementEntries(DefaultAccountPlan.incomeStatementSettings)
+                SettingsRepository.incomeStatementEntries(DefaultAccountPlan.incomeStatementSettings) +
+                costPeriodAccounts
             for ((key, value) in defaults) {
                 if (db.settings().byKey(key) != null) continue
                 // Same oldest timestamp as the accounts: settings already in the cloud win.
