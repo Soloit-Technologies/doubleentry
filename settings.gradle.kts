@@ -22,3 +22,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "DoubleEntry"
 include(":app")
+include(":shared")
+include(":desktopApp")

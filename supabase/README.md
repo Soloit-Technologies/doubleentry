@@ -268,7 +268,7 @@ GitHub Actions runs all of these on every pull request; this is how to run them 
 | What | Where | Run with |
 |---|---|---|
 | Security rules: what a user can't do with their own token (read others' ledgers, grant themselves access, promote themselves, …), and guards for new tables and functions | `tests/security_test.sql` | `supabase test db` |
-| The app's sync code against the real stack: conflicts, paging, invites, Realtime, account deletion. The same tests run against the app's in-memory fake, which keeps the fake honest | `app/src/test/.../sync/SupabaseContractTest.kt` | see below |
+| The app's sync code against the real stack: conflicts, paging, invites, Realtime, account deletion. The same tests run against the app's in-memory fake, which keeps the fake honest | `shared/src/jvmTest/.../sync/SupabaseContractTest.kt` | see below |
 | Migrations re-run over existing data, and new migrations applied over the previous schema's data | `fixtures/sample_ledgers.sql`, `fixtures/upgrade_check.sql` | see `.github/workflows/supabase.yml` |
 | Subscription rules of the Edge Functions | `functions/_shared/subscriptions_test.ts` | `deno test` in `functions/` |
 
@@ -278,7 +278,7 @@ Contract tests against a local stack:
 supabase start
 eval "$(supabase status -o env | grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY)=')"
 SUPABASE_TEST_URL=$API_URL SUPABASE_TEST_ANON_KEY=$ANON_KEY SUPABASE_TEST_SERVICE_KEY=$SERVICE_ROLE_KEY \
-  ./gradlew testDebugUnitTest --tests '*SupabaseContractTest*'
+  ./gradlew :shared:jvmTest --tests '*SupabaseContractTest*'
 ```
 
 Without the variables only the fake half runs. **When a migration changes the schema, update

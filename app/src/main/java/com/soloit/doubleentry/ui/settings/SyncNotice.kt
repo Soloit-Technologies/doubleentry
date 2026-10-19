@@ -29,27 +29,6 @@ import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.sync.SyncAttention
 import com.soloit.doubleentry.sync.SyncStatus
 
-fun changesText(count: Int): String = if (count == 1) "1 change" else "$count changes"
-
-/** One line on what needs the user's attention, or null when sync is fine. */
-fun SyncStatus.attentionText(): String? = when (attention) {
-    SyncAttention.UpdateRequired -> "Update the app to keep syncing" +
-        if (pendingChanges > 0) " · ${changesText(pendingChanges)} only on this device" else ""
-    SyncAttention.ServicePaused -> "Cloud sync is paused for maintenance" +
-        if (pendingChanges > 0) " · ${changesText(pendingChanges)} only on this device" else ""
-    SyncAttention.SignInAgain -> "Sign in again to keep syncing" +
-        if (pendingChanges > 0) " · ${changesText(pendingChanges)} only on this device" else ""
-    SyncAttention.LostAccess -> "You no longer have access to this shared ledger"
-    SyncAttention.NotBackedUp -> (if (sharedLedger) "The owner's cloud backup isn't active" else "Cloud backup isn't active") +
-        " · ${changesText(pendingChanges)} only on this device"
-    SyncAttention.Failing -> "Sync isn't working · ${changesText(pendingChanges)} not uploaded yet"
-    SyncAttention.Offline -> "Offline · ${changesText(pendingChanges)} will upload when you're back online"
-    SyncAttention.Paused -> "Sync is paused · ${changesText(pendingChanges)} only on this device"
-    SyncAttention.Replaced -> "${changesText(replacedChanges)} from this device ${if (replacedChanges == 1) "was" else "were"} " +
-        "replaced by newer edits from another device"
-    null -> null
-}
-
 /** App-wide strip above the navigation bar; opens the Cloud sync screen. */
 @Composable
 fun SyncBanner(status: SyncStatus, onOpen: () -> Unit, onDismissReplaced: () -> Unit, modifier: Modifier = Modifier) {

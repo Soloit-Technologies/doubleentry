@@ -58,8 +58,6 @@ import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
-import kotlin.math.abs
-import kotlin.math.roundToInt
 
 enum class AmountTone { Neutral, Signed, Positive, Negative }
 
@@ -271,13 +269,6 @@ fun AmountRow(
 @Composable
 fun ChangeText(current: Long, previous: Long, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
     Text(changeLabel(current, previous), modifier = modifier, style = MaterialTheme.typography.labelSmall.tabular(), color = color)
-}
-
-fun changeLabel(current: Long, previous: Long): String {
-    val delta = current - previous
-    if (delta == 0L) return "No change"
-    val percent = if (previous != 0L) " (${if (delta > 0) "+" else "−"}${(abs(delta.toDouble()) * 100 / abs(previous.toDouble())).roundToInt()}%)" else ""
-    return Money.formatSigned(delta) + percent
 }
 
 /** Collapsible group with a title, a total and child content. */

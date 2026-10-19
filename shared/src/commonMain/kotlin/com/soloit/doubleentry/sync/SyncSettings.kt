@@ -1,0 +1,216 @@
+package com.soloit.doubleentry.sync
+
+import com.soloit.doubleentry.platform.KeyValueStores
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+
+/** Build-time Supabase project settings (see app/build.gradle.kts and README). */
+data class SupabaseConfig(
+    val url: String,
+    val anonKey: String,
+    val featureEnabled: Boolean,
+    /** OAuth web client id for Sign in with Google; empty when not set up. */
+    val googleClientId: String = "",
+    /** This build's versionCode, compared with the server's [SyncControl.minVersionCode]. */
+    val appVersionCode: Int = 0,
+) {
+    val baseUrl: String get() = url.trimEnd('/')
+    val isConfigured: Boolean get() = url.isNotBlank() && anonKey.isNotBlank()
+
+    /** Cloud sync is available only when the feature flag is on and the project is configured. */
+    val isAvailable: Boolean get() = featureEnabled && isConfigured
+}
+
+/**
+ * Tables in parent → child order; pushes and pulls follow this order to satisfy foreign keys.
+ * Transaction lines travel inside their transaction (`transactions.lines`).
+ */
+enum class SyncTable(val remoteName: String) {
+    Accounts("accounts"),
+    Transactions("transactions"),
+    Assets("assets"),
+    Invoices("invoices"),
+    Settings("user_settings"),
+}
+
+private val accessJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+/** A ledger this device keeps a copy of besides the account's own, as last listed by the server. */
+@Serializable
+data class LocalLedger(val id: String, val name: String)
+
+/**
+ * Device-local sync state. The account (session, tokens, subscription) is shared by every ledger on
+ * the device; the rest (watermarks, pending cloud wipe, replaced-change notice, last sync) belongs
+ * to one ledger's database. The account's own ledger, in the device's main database, is
+ * [ledgerSlot] null and keeps its state next to the account's; every other ledger has its own file.
+ */
+class SyncPreferences(
+    stores: KeyValueStores,
+    private val tokens: TokenStore,
+    /** The ledger whose state this reads and writes: null for the account's own, else that ledger's id. */
+    val ledgerSlot: String? = null,
+) {
+    private val prefs = stores.open("supabase_sync")
+    private val ledger = if (ledgerSlot == null) prefs else stores.open("supabase_sync.$ledgerSlot")
+
+    var enabled: Boolean
+        get() = prefs.getBoolean("enabled", false)
+        set(value) = prefs.edit { putBoolean("enabled", value) }
+
+    var userId: String?
+        get() = prefs.getString("userId")
+        set(value) = prefs.edit { putString("userId", value) }
+
+    var userEmail: String?
+        get() = prefs.getString("userEmail")
+        set(value) = prefs.edit { putString("userEmail", value) }
+
+    /** The signed-in account's own ledger, which the device's main database syncs with. */
+    var ownLedgerId: String?
+        get() = prefs.getString("ledgerId")
+        set(value) = prefs.edit { putString("ledgerId", value) }
+
+    /** The cloud ledger this database syncs with. */
+    var ledgerId: String?
+        get() = ledgerSlot ?: ownLedgerId
+        set(value) {
+            check(ledgerSlot == null || value == ledgerSlot) { "A shared ledger's database always syncs that ledger" }
+            if (ledgerSlot == null) ownLedgerId = value
+        }
+
+    /** The ledger open on this device: null for the account's own. */
+    var activeLedgerSlot: String?
+        get() = prefs.getString("activeLedger")
+        set(value) = prefs.edit { putString("activeLedger", value) }
+
+    /** Other ledgers with a copy on this device. Only while signed in: signing out removes them. */
+    var localLedgers: List<LocalLedger>
+        get() = prefs.getString("localLedgers")
+            ?.let { runCatching { accessJson.decodeFromString(ListSerializer(LocalLedger.serializer()), it) }.getOrNull() }
+            .orEmpty()
+        set(value) = prefs.edit { putString("localLedgers", accessJson.encodeToString(ListSerializer(LocalLedger.serializer()), value)) }
+
+    /** The account's ledgers as last listed by the server; shown while it can't be reached. */
+    var ledgers: List<LedgerInfo>
+        get() = prefs.getString("ledgers")
+            ?.let { runCatching { accessJson.decodeFromString(ListSerializer(LedgerInfo.serializer()), it) }.getOrNull() }
+            .orEmpty()
+        set(value) = prefs.edit { putString("ledgers", accessJson.encodeToString(ListSerializer(LedgerInfo.serializer()), value)) }
+
+    /** The account uses Sign in with Google (no password), so renewing a session asks Google. */
+    var signedInWithGoogle: Boolean
+        get() = prefs.getBoolean("signedInWithGoogle", false)
+        set(value) = prefs.edit { putBoolean("signedInWithGoogle", value) }
+
+    var accessTokenExpiresAtMillis: Long?
+        get() = prefs.getLong("expiresAt", 0L).takeIf { it > 0 }
+        set(value) = prefs.edit { putLong("expiresAt", value ?: 0L) }
+
+    var lastSyncAtMillis: Long?
+        get() = ledger.getLong("lastSyncAt", 0L).takeIf { it > 0 }
+        set(value) = ledger.edit { putLong("lastSyncAt", value ?: 0L) }
+
+    /**
+     * The account this device's ledger last synced with. Kept after sign-out (the data stays), so a
+     * later sign-in can tell "back to the same account" from "a different ledger".
+     */
+    var dataOwnerId: String?
+        get() = prefs.getString("dataOwnerId")
+        set(value) = prefs.edit { putString("dataOwnerId", value) }
+
+    var dataOwnerEmail: String?
+        get() = prefs.getString("dataOwnerEmail")
+        set(value) = prefs.edit { putString("dataOwnerEmail", value) }
+
+    /**
+     * Set when this device replaced its whole ledger (delete all, import): before the next pull,
+     * every cloud row last changed before this moment (epoch micros) is deleted too. Kept across
+     * sign-out like the data it belongs to; the next sign-in decides whether it still applies.
+     */
+    var cloudWipeBeforeMicros: Long?
+        get() = ledger.getLong("cloudWipeBefore", 0L).takeIf { it > 0 }
+        set(value) = ledger.edit { putLong("cloudWipeBefore", value ?: 0L) }
+
+    /** Last measured [com.soloit.doubleentry.data.local.ServerClock] offset; a property of this device, kept across sign-outs. */
+    var clockOffsetMicros: Long
+        get() = prefs.getLong("clockOffsetMicros", 0L)
+        set(value) = prefs.edit { putLong("clockOffsetMicros", value) }
+
+    /** The last known [CloudAccess] of the signed-in account; used while the server can't be reached. */
+    var cloudAccess: CloudAccess?
+        get() = prefs.getString("cloudAccess")?.let { runCatching { accessJson.decodeFromString(CloudAccess.serializer(), it) }.getOrNull() }
+        set(value) = prefs.edit {
+            if (value == null) remove("cloudAccess") else putString("cloudAccess", accessJson.encodeToString(CloudAccess.serializer(), value))
+        }
+
+    /** The last known [LedgerAccess] to this ledger, for a ledger other than the account's own. */
+    var ledgerAccess: LedgerAccess?
+        get() = ledger.getString("ledgerAccess")?.let { runCatching { accessJson.decodeFromString(LedgerAccess.serializer(), it) }.getOrNull() }
+        set(value) = ledger.edit {
+            if (value == null) remove("ledgerAccess") else putString("ledgerAccess", accessJson.encodeToString(LedgerAccess.serializer(), value))
+        }
+
+    /** Unsynced local edits that lost to another device's newer edits since the user last dismissed the notice. */
+    val replacedChanges: Int get() = ledger.getInt("replacedChanges", 0)
+
+    val replacedAtMillis: Long? get() = ledger.getLong("replacedAt", 0L).takeIf { it > 0 }
+
+    fun addReplacedChanges(count: Int, atMillis: Long) = ledger.edit {
+        putInt("replacedChanges", replacedChanges + count)
+        putLong("replacedAt", atMillis)
+    }
+
+    fun clearReplacedChanges() = ledger.edit {
+        remove("replacedChanges")
+        remove("replacedAt")
+    }
+
+    var accessToken: String?
+        get() = tokens.get("access")
+        set(value) = tokens.put("access", value)
+
+    var refreshToken: String?
+        get() = tokens.get("refresh")
+        set(value) = tokens.put("refresh", value)
+
+    /** Highest server `updated_at` already pulled for [table] (ISO-8601), or null for a full pull. */
+    fun watermark(table: SyncTable): String? = ledger.getString("watermark.${table.remoteName}")
+
+    fun setWatermarks(values: Map<SyncTable, String>) = ledger.edit {
+        values.forEach { (table, value) -> putString("watermark.${table.remoteName}", value) }
+    }
+
+    /** Forgets this ledger's sync state, for a ledger removed from the device. */
+    fun clearLedger() {
+        check(ledgerSlot != null) { "The account's own ledger is cleared with the session" }
+        ledger.edit { clear() }
+    }
+
+    /** Clears the session and the own ledger's watermarks so the next sign-in performs a full pull. */
+    fun clearSession() {
+        prefs.edit {
+            remove("userId")
+            remove("userEmail")
+            remove("ledgerId")
+            remove("activeLedger")
+            remove("localLedgers")
+            remove("ledgers")
+            remove("signedInWithGoogle")
+            remove("expiresAt")
+            remove("lastSyncAt")
+            remove("replacedChanges")
+            remove("replacedAt")
+            remove("cloudAccess")
+            SyncTable.entries.forEach { remove("watermark.${it.remoteName}") }
+        }
+        tokens.clear()
+    }
+}
+
+/** Where session tokens live: encrypted with a key the operating system keeps (Android Keystore, DPAPI). */
+interface TokenStore {
+    fun get(name: String): String?
+    fun put(name: String, value: String?)
+    fun clear()
+}

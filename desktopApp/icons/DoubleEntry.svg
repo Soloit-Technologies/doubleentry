@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The DoubleEntry mark (app/src/main/res/drawable/ic_launcher_*.xml) on a rounded square.
+     The .ico, .icns and .png files next to it are rendered from this file. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="18 18 72 72">
+  <defs>
+    <linearGradient id="brand" x1="18" y1="18" x2="90" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1BAE8F"/>
+      <stop offset="1" stop-color="#075247"/>
+    </linearGradient>
+  </defs>
+  <rect x="19" y="19" width="70" height="70" rx="15" fill="url(#brand)"/>
+  <path fill="#F6C453" d="M51.4,60.5 Q54,57 56.6,60.5 L64.5,73 Q66,76 62.5,76 L45.5,76 Q42,76 43.5,73 Z"/>
+  <path fill="#FFFFFF" d="M26,53 H82 A3,3 0 0,1 82,59 H26 A3,3 0 0,1 26,53 Z"/>
+  <path fill="#FFFFFF" d="M33,31 H43 A5,5 0 0,1 48,36 V46 A5,5 0 0,1 43,51 H33 A5,5 0 0,1 28,46 V36 A5,5 0 0,1 33,31 Z"/>
+  <path fill="#A8F0DC" d="M65,31 H75 A5,5 0 0,1 80,36 V46 A5,5 0 0,1 75,51 H65 A5,5 0 0,1 60,46 V36 A5,5 0 0,1 65,31 Z"/>
+</svg>

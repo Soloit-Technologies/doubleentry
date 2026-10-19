@@ -5,7 +5,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
 }
 
 // Supabase project settings are read from local.properties (git-ignored) or, for CI,
@@ -56,8 +55,8 @@ android {
         applicationId = "com.soloit.doubleentry"
         minSdk = 26
         targetSdk = 37
-        versionCode = 13
-        versionName = "2.0.0"
+        versionCode = providers.gradleProperty("app.versionCode").get().toInt()
+        versionName = providers.gradleProperty("app.versionName").get()
 
         manifestPlaceholders["appLabel"] = "DoubleEntry"
     }
@@ -101,7 +100,7 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
-        // Robolectric: repository and sync tests run against a real (in-memory) Room database.
+        // Robolectric runs the tests of Android-only code (billing).
         unitTests.isIncludeAndroidResources = true
     }
 }
@@ -117,12 +116,8 @@ kotlin {
     }
 }
 
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
-    arg("room.generateKotlin", "true")
-}
-
 dependencies {
+    implementation(project(":shared"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.activity.compose)
@@ -139,13 +134,8 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    ksp(libs.androidx.room.compiler)
-
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.okhttp)
     implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.fragment)
@@ -157,6 +147,4 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
-    testImplementation(libs.okhttp.mockwebserver)
-    testImplementation(libs.androidx.test.core)
 }
