@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.TrendingDown
@@ -20,12 +21,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.soloit.doubleentry.domain.Money
+import com.soloit.doubleentry.domain.reports.BreakdownLine
 import com.soloit.doubleentry.domain.reports.IncomeStatementReport
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AmountRow
@@ -80,24 +84,50 @@ fun IncomeStatementReportPage(onOpenSettings: () -> Unit) {
         item { ReportSectionCard(report.revenue, "Total revenue", "Other revenue", accent = finance.revenue, previous = previous?.revenue) }
         item { SectionHeader("Expenses") }
         item { ReportSectionCard(report.expenses, "Total expenses", "Other expenses", accent = finance.expense, previous = previous?.expenses) }
-        item { SectionHeader("Key figures") }
-        item {
-            SectionCard {
-                if (report.hasTaxAccounts) AmountRow("Revenue net of income tax", report.revenueNetOfIncomeTax)
-                if (report.hasDepreciationAccounts) {
-                    AmountRow("Expenses before depreciation", report.expensesBeforeDepreciation)
-                    AmountRow("EBDA", report.ebda, supporting = "Earnings before depreciation & amortization", tone = AmountTone.Signed)
-                }
-                if (report.showEbitda) {
-                    AmountRow("Cash operating expenses", report.cashOperatingExpenses, supporting = "Excluding depreciation and taxes")
-                    AmountRow("EBITDA", report.ebitda, supporting = "Earnings before interest, taxes, D&A", tone = AmountTone.Signed)
-                }
-                if (report.hasTaxAccounts) AmountRow("EBT", report.ebt, supporting = "Earnings before tax", tone = AmountTone.Signed)
-                if (report.hasTaxAccounts || report.showEbitda) CardDivider()
-                AmountRow("Net income", report.netIncome, emphasized = true, tone = AmountTone.Signed, previous = previous?.netIncome)
-                if (report.hasDeferredAccounts) {
-                    AmountRow("Less: routed to deferred assets", -report.deferredFromRevenue, supporting = "e.g. salary paid straight into pension savings")
-                    AmountRow("Spendable net income", report.spendableNetIncome, emphasized = true, tone = AmountTone.Signed, previous = previous?.spendableNetIncome)
+        item { SectionHeader("From revenue to net income") }
+        item { BreakdownCard(report.breakdown, previous?.breakdown) }
+    }
+}
+
+/**
+ * [lines] one step per row, each marked with how it combines with the row above, so every subtotal
+ * shows where it comes from. Steps with accounts behind them expand to list those accounts.
+ */
+@Composable
+private fun BreakdownCard(lines: List<BreakdownLine>, previous: List<BreakdownLine>?) {
+    val previousByLabel = remember(previous) { previous?.associateBy { it.label } }
+    val previousAccounts = remember(previous) { previous?.flatMap { it.accounts }?.associate { it.accountId to it.amount } }
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    SectionCard {
+        lines.forEach { line ->
+            if (line.kind == BreakdownLine.Kind.Result) CardDivider()
+            val canExpand = line.accounts.isNotEmpty()
+            val isExpanded = expanded[line.label] == true
+            val emphasized = line.kind == BreakdownLine.Kind.Result
+            AmountRow(
+                label = line.label,
+                cents = line.amount,
+                supporting = line.note ?: if (canExpand) "${line.accounts.size} account${if (line.accounts.size == 1) "" else "s"}" else null,
+                emphasized = emphasized,
+                tone = if (line.kind == BreakdownLine.Kind.Less) AmountTone.Neutral else AmountTone.Signed,
+                leading = {
+                    Text(
+                        when (line.kind) {
+                            BreakdownLine.Kind.Start -> ""
+                            BreakdownLine.Kind.Less -> "−"
+                            BreakdownLine.Kind.Subtotal, BreakdownLine.Kind.Result -> "="
+                        },
+                        style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(12.dp),
+                    )
+                },
+                onClick = if (canExpand) ({ expanded[line.label] = !isExpanded }) else null,
+                previous = previousByLabel?.let { it[line.label]?.amount ?: 0L },
+            )
+            if (canExpand && isExpanded) {
+                Column(Modifier.padding(start = 24.dp)) {
+                    line.accounts.forEach { row -> ReportRowItem(row, null, previousAccounts?.let { it[row.accountId] ?: 0L }) }
                 }
             }
         }

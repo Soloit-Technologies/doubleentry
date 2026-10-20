@@ -33,6 +33,7 @@ import com.soloit.doubleentry.desktop.ui.components.MoneyText
 import com.soloit.doubleentry.desktop.ui.components.Segmented
 import com.soloit.doubleentry.desktop.ui.components.rememberViewModel
 import com.soloit.doubleentry.desktop.ui.components.tabular
+import com.soloit.doubleentry.domain.reports.BreakdownLine
 import com.soloit.doubleentry.domain.reports.ReportRow
 import com.soloit.doubleentry.domain.reports.ReportSection
 import com.soloit.doubleentry.ui.components.changeLabel
@@ -217,8 +218,17 @@ private fun IncomeStatement() {
         SectionCard("Expenses", report.expenses, "Total expenses", previous?.expenses)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                if (report.showEbitda) Line("EBITDA", listOfNotNull(report.ebitda, previous?.ebitda))
-                Line("Net income", listOfNotNull(report.netIncome, previous?.netIncome), strong = true)
+                val previousLines = previous?.breakdown?.associateBy { it.label }
+                report.breakdown.forEach { line ->
+                    val sign = when (line.kind) {
+                        BreakdownLine.Kind.Start -> ""
+                        BreakdownLine.Kind.Less -> "− "
+                        BreakdownLine.Kind.Subtotal, BreakdownLine.Kind.Result -> "= "
+                    }
+                    val label = sign + line.label + (line.note?.let { " ($it)" }.takeIf { line.kind == BreakdownLine.Kind.Subtotal }.orEmpty())
+                    val amounts = if (previousLines == null) listOf(line.amount) else listOf(line.amount, previousLines[line.label]?.amount ?: 0L)
+                    Line(label, amounts, strong = line.kind == BreakdownLine.Kind.Result)
+                }
                 report.savingsRate?.let { Line("Saved of income: ${(it * 100).toInt()} %", emptyList()) }
             }
         }
