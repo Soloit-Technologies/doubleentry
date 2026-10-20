@@ -103,14 +103,6 @@ import kotlin.reflect.KClass
 /** Imports the bank statement file at [uri] (a document picked by the user) into [accountId]. */
 @Serializable data class StatementImportRoute(val accountId: String, val uri: String)
 @Serializable data class TransactionDetailRoute(val id: String)
-/** [accountId] and [date] (ISO) prefill a new transaction, e.g. one started from an account's ledger. */
-@Serializable
-data class TransactionEditorRoute(
-    val editId: String? = null,
-    val duplicateId: String? = null,
-    val accountId: String? = null,
-    val date: String? = null,
-)
 @Serializable data class InvoiceDetailRoute(val id: String)
 @Serializable data class InvoiceEditorRoute(val editId: String? = null)
 @Serializable data class AssetDetailRoute(val id: String)

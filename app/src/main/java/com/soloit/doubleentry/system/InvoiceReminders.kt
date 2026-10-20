@@ -17,15 +17,13 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.soloit.doubleentry.DoubleEntryApp
 import com.soloit.doubleentry.R
+import com.soloit.doubleentry.data.InvoiceReminder
 import com.soloit.doubleentry.data.ReminderPrefs
 import com.soloit.doubleentry.domain.Invoice
-import com.soloit.doubleentry.domain.Money
-import com.soloit.doubleentry.domain.formatMedium
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 
 /** Runs once a day and posts one summary notification about unpaid invoices that need attention. */
@@ -34,11 +32,7 @@ class InvoiceReminderWorker(context: Context, params: WorkerParameters) : Corout
         val container = (applicationContext as DoubleEntryApp).container
         val prefs = container.preferences.reminders.value
         if (!prefs.enabled) return Result.success()
-        val ledger = container.ledger
-        val due = InvoiceReminders.select(container.invoices.liveInvoices(), LocalDate.now(), prefs.daysBefore).map { invoice ->
-            val title = ledger.getTransaction(invoice.bookingTransactionId)?.title?.takeIf { it.isNotBlank() } ?: "Invoice ${invoice.invoiceDate}"
-            title to invoice
-        }
+        val due = InvoiceReminder.due(container.invoices, container.ledger, LocalDate.now(), prefs.daysBefore)
         InvoiceReminders.show(applicationContext, due, LocalDate.now())
         return Result.success()
     }
@@ -49,10 +43,6 @@ object InvoiceReminders {
     private const val WORK_NAME = "invoice-reminders"
     private const val NOTIFICATION_ID = 1001
     private val NOTIFY_AT: LocalTime = LocalTime.of(9, 0)
-
-    /** Unpaid invoices due within [daysBefore] days of [today] (overdue ones included), earliest first. */
-    fun select(invoices: List<Invoice>, today: LocalDate, daysBefore: Int): List<Invoice> =
-        invoices.filter { !it.isPaid && it.remaining > 0 && it.dueDate <= today.plusDays(daysBefore.toLong()) }.sortedBy { it.dueDate }
 
     fun createChannel(context: Context) {
         val channel = NotificationChannel(CHANNEL_ID, "Invoice reminders", NotificationManager.IMPORTANCE_DEFAULT)
@@ -89,13 +79,8 @@ object InvoiceReminders {
         }
         if (!canNotify(context)) return
 
-        val overdue = due.count { it.second.dueDate < today }
-        val title = when {
-            overdue == due.size -> "${due.size} overdue invoice${plural(due.size)}"
-            overdue > 0 -> "${due.size} invoice${plural(due.size)} to pay · $overdue overdue"
-            else -> "${due.size} invoice${plural(due.size)} due soon"
-        }
-        val lines = due.map { (name, invoice) -> "$name · ${Money.format(invoice.remaining)} · ${dueText(invoice.dueDate, today)}" }
+        val title = InvoiceReminder.title(due, today)
+        val lines = InvoiceReminder.lines(due, today)
         val target = if (due.size == 1) Launch.intent(context, LaunchTarget.Invoice, due[0].second.id) else Launch.intent(context, LaunchTarget.Invoices)
         val tap = PendingIntent.getActivity(context, 0, target, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
@@ -111,17 +96,4 @@ object InvoiceReminders {
         @Suppress("MissingPermission") // checked by canNotify
         manager.notify(NOTIFICATION_ID, notification)
     }
-
-    internal fun dueText(dueDate: LocalDate, today: LocalDate): String {
-        val days = ChronoUnit.DAYS.between(today, dueDate)
-        return when {
-            days < -1 -> "${-days} days overdue"
-            days == -1L -> "due yesterday"
-            days == 0L -> "due today"
-            days == 1L -> "due tomorrow"
-            else -> "due ${dueDate.formatMedium()}"
-        }
-    }
-
-    private fun plural(n: Int) = if (n == 1) "" else "s"
 }

@@ -309,50 +309,7 @@ private fun com.soloit.doubleentry.sync.SyncStatus.attentionTextForReplaced(): S
 /** Asks how this device's data and the account's go together before the first sync. */
 @Composable
 private fun SignInQuestionDialog(question: SignInQuestion, onChoose: (SignInChoice) -> Unit, onCancel: () -> Unit) {
-    val title: String
-    val message: String
-    val keepDevice: String
-    val useCloud: String
-    when (question) {
-        is SignInQuestion.ChangesWhileSignedOut -> {
-            title = "Changes made while signed out"
-            message = "This device has ${changesText(question.changes)} that ${if (question.changes == 1) "was" else "were"} made while you were signed out" +
-                (if (question.deletions > 0) ", including ${question.deletions} deleted item${if (question.deletions == 1) "" else "s"}" else "") +
-                ". Upload them to ${question.email}, or discard them and use the data in the cloud?" +
-                (if (question.deletions > 0) "\n\nUploading also deletes those items on your other devices." else "")
-            keepDevice = "Upload my changes"
-            useCloud = "Discard them, use cloud data"
-        }
-        is SignInQuestion.TwoLedgers -> {
-            title = "Which data do you want to keep?"
-            message = "This device has its own ledger, and ${question.email} already has one in the cloud. " +
-                "Only one can be kept; combining them would duplicate accounts and transactions.\n\n" +
-                "• Use cloud data: the ledger on this device is deleted and replaced with the one from the cloud.\n" +
-                "• Use this device's data: the ledger in the cloud is replaced, on all your devices.\n\n" +
-                "Not sure? Cancel and export a backup first (Settings → Data management)."
-            keepDevice = "Use this device's data"
-            useCloud = "Use cloud data"
-        }
-        is SignInQuestion.OtherAccount -> {
-            val previous = question.previousEmail ?: "another account"
-            title = "Switch to ${question.email}?"
-            message = "The ledger on this device belongs to $previous, which keeps its copy in the cloud either way.\n\n" +
-                (if (question.accountHasData) {
-                    "• Use ${question.email}'s ledger: this device switches to the ledger already in that account.\n" +
-                        "• Copy this ledger: it replaces the ledger in ${question.email}, on all devices signed in to it."
-                } else {
-                    "• Start empty: ${question.email} starts with a new, empty ledger.\n" +
-                        "• Copy this ledger: ${question.email} gets a copy of it."
-                }) +
-                if (question.unsyncedChanges > 0) {
-                    "\n\n${changesText(question.unsyncedChanges)} on this device never reached $previous and will only be kept if you copy."
-                } else {
-                    ""
-                }
-            keepDevice = "Copy this ledger"
-            useCloud = if (question.accountHasData) "Use ${question.email}'s ledger" else "Start empty"
-        }
-    }
+    val (title, message, keepDevice, useCloud) = question.prompt()
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text(title) },

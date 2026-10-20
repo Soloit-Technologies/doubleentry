@@ -52,7 +52,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -75,9 +74,10 @@ class InvoiceSettingsViewModel(private val settings: SettingsRepository, ledger:
         InvoiceSettingsUiState(a.filter { it.type == AccountType.Asset || it.type == AccountType.Liability }, c, p)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, InvoiceSettingsUiState())
 
+    private fun form() = InvoiceSettings(credit.value, payment.value.sorted())
+
     init {
-        viewModelScope.launch {
-            val s = settings.invoice.first()
+        showStored(settings.invoice, ::form) { s ->
             credit.value = s.creditAccountNumber
             payment.value = s.paymentAccountNumbers.toSet()
         }
@@ -87,7 +87,7 @@ class InvoiceSettingsViewModel(private val settings: SettingsRepository, ledger:
     fun togglePayment(number: Int) = payment.update { if (number in it) it - number else it + number }
 
     fun save() = viewModelScope.launch {
-        settings.saveInvoice(InvoiceSettings(credit.value, payment.value.sorted()))
+        settings.saveInvoice(form())
         saved.update { it + 1 }
     }
 }

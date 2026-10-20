@@ -42,7 +42,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -66,7 +65,7 @@ class CostPeriodSettingsViewModel(private val settings: SettingsRepository, ledg
     }.stateIn(viewModelScope, SharingStarted.Eagerly, CostPeriodSettingsUiState())
 
     init {
-        viewModelScope.launch { chosen.value = settings.costPeriodAccounts.first() }
+        showStored(settings.costPeriodAccounts, { chosen.value }) { chosen.value = it }
     }
 
     fun set(interim: Interim, number: Int?) = chosen.update {

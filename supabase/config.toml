@@ -32,6 +32,8 @@ port = 54323
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:3000"
+# The desktop app signs in through the system browser, which returns to a local port it opens.
+additional_redirect_urls = ["http://127.0.0.1:*/auth/callback"]
 # Accounts are created by Sign in with Google (the provider below).
 enable_signup = true
 minimum_password_length = 8
@@ -44,8 +46,9 @@ enable_signup = true
 otp_length = 6
 otp_expiry = 3600
 
-# Sign in with Google: the app sends a Google ID token (grant_type=id_token). client_id is the
-# OAuth web client id the tokens are issued for; the secret is only used by browser sign-in.
+# Sign in with Google: the Android app sends a Google ID token (grant_type=id_token). client_id is
+# the OAuth web client id the tokens are issued for; the secret is used by browser sign-in, which
+# the desktop app does (grant_type=pkce).
 [auth.external.google]
 enabled = true
 client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"

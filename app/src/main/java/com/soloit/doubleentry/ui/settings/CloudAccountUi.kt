@@ -232,7 +232,7 @@ private fun PlansCard(access: CloudAccess, billing: CloudBilling?) {
             Text("Restore purchase")
         }
         Text(
-            "Billed through Google Play. Cancel anytime there.",
+            "Renews automatically. Billed through Google Play; cancel anytime there.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
