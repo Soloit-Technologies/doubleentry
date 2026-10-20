@@ -4,6 +4,7 @@ import com.soloit.doubleentry.domain.reports.BalanceSheetCalculator
 import com.soloit.doubleentry.domain.reports.CashFlowCalculator
 import com.soloit.doubleentry.domain.reports.CostTrendCalculator
 import com.soloit.doubleentry.domain.reports.IncomeStatementCalculator
+import com.soloit.doubleentry.domain.reports.NetWorthCalculator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -139,6 +140,30 @@ class ReportsTest {
         assertEquals(LocalDate.of(2026, 3, 31), year.timeline[2].end)
         assertEquals(20_000L, year.timeline[2].netFlow)
         assertEquals(23_000L, year.timeline.last().balance)
+    }
+
+    @Test
+    fun netWorthTrendAccumulatesAssetsMinusLiabilitiesMonthByMonth() {
+        val months = CostTrendCalculator.months(YearMonth.of(2026, 1), YearMonth.of(2026, 3))
+        val trend = NetWorthCalculator.compute(
+            accounts,
+            months,
+            openingBalances = mapOf("chk" to 10_000L, "mtg" to 50_000L, "sal" to 99_000L),
+            monthlyMovements = mapOf(
+                "chk" to mapOf(YearMonth.of(2026, 1) to 3_000L, YearMonth.of(2026, 3) to -1_000L),
+                "sav" to mapOf(YearMonth.of(2026, 2) to 2_000L),
+                "mtg" to mapOf(YearMonth.of(2026, 2) to -500L),
+                "rent" to mapOf(YearMonth.of(2026, 2) to 7_000L),
+            ),
+        )
+        assertEquals(months, trend.points.map { it.month })
+        assertEquals(listOf(13_000L, 15_000L, 14_000L), trend.points.map { it.assets })
+        assertEquals(listOf(50_000L, 49_500L, 49_500L), trend.points.map { it.liabilities })
+        assertEquals(listOf(-37_000L, -34_500L, -35_500L), trend.points.map { it.netWorth })
+        assertEquals(-40_000L, trend.opening)
+        assertEquals(4_500L, trend.change)
+        assertEquals(3_000L, trend.changeAt(0))
+        assertEquals(-1_000L, trend.changeAt(2))
     }
 
     @Test

@@ -168,6 +168,13 @@ interface EntryDao {
     )
     suspend fun monthlyTotals(from: LocalDate, to: LocalDate): List<MonthlyAccountTotals>
 
+    /** Date of the earliest live transaction with a line on any of [accountIds], or null without one. */
+    @Query(
+        """SELECT MIN(t.date) FROM transaction_entries e INNER JOIN transactions t ON t.id = e.transaction_id
+           WHERE t.deleted_at IS NULL AND e.account_id IN (:accountIds)""",
+    )
+    suspend fun firstDateOn(accountIds: List<String>): LocalDate?
+
     @Query(
         """SELECT e.account_id FROM transaction_entries e
            INNER JOIN transactions t ON t.id = e.transaction_id

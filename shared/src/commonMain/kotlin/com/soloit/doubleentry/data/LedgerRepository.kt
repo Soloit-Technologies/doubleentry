@@ -19,6 +19,8 @@ import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.TransactionDraft
 import com.soloit.doubleentry.domain.TransactionValidator
 import com.soloit.doubleentry.domain.newId
+import com.soloit.doubleentry.domain.reports.NetWorthCalculator
+import com.soloit.doubleentry.domain.reports.NetWorthTrend
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
@@ -145,9 +147,37 @@ class LedgerRepository(
         signed(entryDao.totalsBetween(from, to).associate { it.accountId to (it.debits to it.credits) })
 
     /** Per account, the balance change of each month between [from] and [to]. */
-    suspend fun getMonthlyMovements(from: YearMonth, to: YearMonth): Map<String, Map<YearMonth, Long>> {
+    suspend fun getMonthlyMovements(from: YearMonth, to: YearMonth): Map<String, Map<YearMonth, Long>> =
+        monthlyMovements(from.atDay(1), to.atEndOfMonth())
+
+    /**
+     * Net worth at the end of each of the [months] months up to and including the month of
+     * [through]. The last point stops at [through], so passing today gives today's figure rather
+     * than one that includes transactions dated later this month.
+     */
+    suspend fun getNetWorthTrend(through: LocalDate, months: Int = 12): NetWorthTrend =
+        getNetWorthTrend(YearMonth.from(through).minusMonths(months - 1L), through)
+
+    /** Net worth at the end of every month from [from] up to and including the month of [through]. */
+    suspend fun getNetWorthTrend(from: YearMonth, through: LocalDate): NetWorthTrend {
+        val last = YearMonth.from(through)
+        return NetWorthCalculator.compute(
+            accounts = getAccounts(),
+            months = generateSequence(from) { it.plusMonths(1) }.takeWhile { it <= last }.toList(),
+            openingBalances = getBalances(from.atDay(1).minusDays(1)),
+            monthlyMovements = monthlyMovements(from.atDay(1), through),
+        )
+    }
+
+    /** Month of the earliest transaction on an asset or liability account, i.e. where net worth history starts. */
+    suspend fun firstNetWorthMonth(): YearMonth? {
+        val ids = getAccounts().filter { it.type == AccountType.Asset || it.type == AccountType.Liability }.map { it.id }
+        return if (ids.isEmpty()) null else entryDao.firstDateOn(ids)?.let(YearMonth::from)
+    }
+
+    private suspend fun monthlyMovements(from: LocalDate, to: LocalDate): Map<String, Map<YearMonth, Long>> {
         val types = accountDao.live().associate { it.id to AccountType.fromOrdinal(it.type) }
-        return entryDao.monthlyTotals(from.atDay(1), to.atEndOfMonth())
+        return entryDao.monthlyTotals(from, to)
             .filter { it.accountId in types }
             .groupBy { it.accountId }
             .mapValues { (accountId, rows) ->
