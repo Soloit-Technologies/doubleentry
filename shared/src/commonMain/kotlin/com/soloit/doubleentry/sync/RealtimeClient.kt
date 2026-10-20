@@ -29,6 +29,9 @@ import kotlin.time.Duration.Companion.seconds
  * every synced table of the [ledgerId] this device syncs and calls [onChange] for each event, so
  * edits from other devices and members arrive within seconds. RLS limits events to ledgers the
  * signed-in user is a member of.
+ *
+ * Events sent while no connection was subscribed are lost, so [onChange] is also called each time
+ * the subscription becomes live: the sync it asks for catches up on whatever was missed.
  */
 class RealtimeClient(
     private val config: SupabaseConfig,
@@ -72,13 +75,18 @@ class RealtimeClient(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     val message = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+                    val status = runCatching { message["payload"]?.jsonObject?.get("status")?.jsonPrimitive?.content }.getOrNull()
                     when (message["event"]?.jsonPrimitive?.content) {
                         "postgres_changes" -> onChange()
                         "phx_error", "phx_close" -> webSocket.close(1000, null)
                         // A rejected join (e.g. expired token) leaves a silent socket; reconnect instead.
-                        "phx_reply" -> {
-                            val status = runCatching { message["payload"]?.jsonObject?.get("status")?.jsonPrimitive?.content }.getOrNull()
-                            if (status == "error") webSocket.close(1000, null)
+                        "phx_reply" -> if (status == "error") webSocket.close(1000, null)
+                        // After the join, the server reports whether the postgres_changes subscription
+                        // took. Once it has, catch up on what changed while not subscribed; if it
+                        // failed, the channel stays joined but silent, so reconnect.
+                        "system" -> when (status) {
+                            "ok" -> onChange()
+                            "error" -> webSocket.close(1000, null)
                         }
                     }
                 }
@@ -104,11 +112,12 @@ class RealtimeClient(
                 socket.send(message("phoenix", "heartbeat") {})
             }
         }
-        // Tokens expire after about an hour; hand the channel a fresh one before that happens.
+        // Tokens expire after about an hour, and the server closes the channel when its token does.
+        // accessToken() renews one only shortly before it expires, so ask often enough to catch that.
         val tokenRefresh = launch {
             var current = initialToken
             while (isActive) {
-                delay(5.minutes)
+                delay(TOKEN_CHECK_INTERVAL)
                 val next = runCatching { tokens.accessToken(forceRefresh = false) }.getOrNull() ?: continue
                 if (next != current) {
                     current = next
@@ -159,5 +168,6 @@ class RealtimeClient(
     private companion object {
         const val TAG = "RealtimeClient"
         const val TOPIC = "realtime:doubleentry-sync"
+        val TOKEN_CHECK_INTERVAL = 20.seconds
     }
 }

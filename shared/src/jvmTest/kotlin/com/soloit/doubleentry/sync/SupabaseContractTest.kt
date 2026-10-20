@@ -451,4 +451,23 @@ class LocalSupabaseContractTest : SupabaseContract() {
         upsert(me, account(me.ledgerId, 1, nowMicros()))
         assertNotNull(withTimeoutOrNull(10.seconds) { events.receive() })
     }
+
+    @Test
+    fun realtimeAnnouncesAnotherMembersChangesToASharedLedger() = runBlocking<Unit> {
+        val owner = backend.newUser("owner")
+        val me = backend.newUser("me")
+        api.acceptInvite(api.createInvite(owner.ledgerId, "editor", owner.token).code, me.token)
+
+        val events = Channel<Unit>(Channel.UNLIMITED)
+        val realtime = RealtimeClient(backend.config, backend.client, { me.token }, ledgerId = { owner.ledgerId }) { events.trySend(Unit) }
+        scope.launch { realtime.run() }
+
+        // Once subscribed, the client asks for a catch-up sync by itself.
+        assertNotNull("No catch-up event within 30 seconds", withTimeoutOrNull(30.seconds) { events.receive() })
+        withTimeoutOrNull(2.seconds) { while (true) events.receive() }
+
+        // Only the owner writes: the member's phone must hear about it without syncing.
+        upsert(owner, account(owner.ledgerId, 1000, nowMicros()))
+        assertNotNull("No Realtime event for the owner's change", withTimeoutOrNull(10.seconds) { events.receive() })
+    }
 }

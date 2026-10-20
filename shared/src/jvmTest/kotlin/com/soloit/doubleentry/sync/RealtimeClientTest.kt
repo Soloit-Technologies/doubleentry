@@ -117,4 +117,25 @@ class RealtimeClientTest {
         second.send("""{"topic":"realtime:doubleentry-sync","event":"postgres_changes","payload":{},"ref":null}""")
         withTimeout(5.seconds) { changes.receive() }
     }
+
+    @Test
+    fun aLiveSubscriptionAsksForASyncToCatchUp() = runBlocking<Unit> {
+        val connection = accept()
+        start({ "token" })
+
+        connection.join()
+        connection.send("""{"topic":"realtime:doubleentry-sync","event":"system","payload":{"message":"Subscribed to PostgreSQL","status":"ok","extension":"postgres_changes","channel":"doubleentry-sync"},"ref":null}""")
+        withTimeout(5.seconds) { changes.receive() }
+    }
+
+    @Test
+    fun aFailedSubscriptionReconnects() = runBlocking<Unit> {
+        val failed = accept()
+        val second = accept()
+        start({ "token" })
+
+        failed.join()
+        failed.send("""{"topic":"realtime:doubleentry-sync","event":"system","payload":{"message":"Unable to subscribe to changes with given parameters.","status":"error","extension":"postgres_changes","channel":"doubleentry-sync"},"ref":null}""")
+        second.join()
+    }
 }
