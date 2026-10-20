@@ -49,6 +49,8 @@ import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SearchField
 import com.soloit.doubleentry.ui.components.SectionCard
+import com.soloit.doubleentry.ui.components.TextAndFigures
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.theme.tabular
 import kotlin.math.roundToInt
 
@@ -116,13 +118,15 @@ private fun AssetCard(asset: Asset, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconAvatar(Icons.Rounded.Inventory2, MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(asset.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextAndFigures(
+                    figures = {
+                        MoneyText(asset.currentValue, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("of ${Money.format(asset.cost)}", style = MaterialTheme.typography.bodySmall.tabular(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    },
+                    spacing = 0.dp,
+                ) {
+                    Text(asset.name, style = MaterialTheme.typography.titleMedium, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
                     Text("Since ${asset.activationDate.formatMedium()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    MoneyText(asset.currentValue, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("of ${Money.format(asset.cost)}", style = MaterialTheme.typography.bodySmall.tabular(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Spacer(Modifier.height(12.dp))

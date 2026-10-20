@@ -55,6 +55,8 @@ import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SectionHeader
 import com.soloit.doubleentry.ui.components.StatusChip
+import com.soloit.doubleentry.ui.components.TextAndFigures
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.theme.AppTheme
 
 @Composable
@@ -179,8 +181,8 @@ private fun TitleSuggestions(suggestions: List<Transaction>, onPick: (Transactio
             ) {
                 Icon(Icons.Rounded.History, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(tx.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextAndFigures(figures = { MoneyText(tx.totalDebits, style = MaterialTheme.typography.bodyMedium) }) {
+                    Text(tx.title, style = MaterialTheme.typography.bodyMedium, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         "${tx.flowSummary()} · ${tx.date.formatMedium()}",
                         style = MaterialTheme.typography.bodySmall,
@@ -189,8 +191,6 @@ private fun TitleSuggestions(suggestions: List<Transaction>, onPick: (Transactio
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Spacer(Modifier.width(12.dp))
-                MoneyText(tx.totalDebits, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }

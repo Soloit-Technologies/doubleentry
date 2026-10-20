@@ -55,13 +55,16 @@ import com.soloit.doubleentry.domain.reports.CostSeries
 import com.soloit.doubleentry.domain.shortLabel
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.EmptyState
+import com.soloit.doubleentry.ui.components.FigureRow
 import com.soloit.doubleentry.ui.components.LoadingState
 import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.MonthPickerDialog
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SectionHeader
 import com.soloit.doubleentry.ui.components.SegmentedChoice
+import com.soloit.doubleentry.ui.components.TextAndFigures
 import com.soloit.doubleentry.ui.components.TrendLineChart
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.theme.AppTheme
 import kotlin.math.roundToInt
 
@@ -112,11 +115,11 @@ fun CostTrendsReportPage(onOpenSettings: () -> Unit) {
                     SectionCard(contentPadding = PaddingValues(16.dp)) {
                         SeriesPicker(result.overall, result.series, series, vm::select)
                         Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            Figure("Total", series.total, Modifier.weight(1f))
-                            Figure("Avg / month", series.perMonth, Modifier.weight(1f))
+                        FigureRow(spacing = 16.dp) { item ->
+                            Figure("Total", series.total, item)
+                            Figure("Avg / month", series.perMonth, item)
                             val monthIndex = state.selectedMonth ?: result.months.lastIndex
-                            Figure(result.months[monthIndex].shortLabel(), series.monthly[monthIndex], Modifier.weight(1f))
+                            Figure(result.months[monthIndex].shortLabel(), series.monthly[monthIndex], item)
                         }
                         Spacer(Modifier.height(12.dp))
                         TrendLineChart(
@@ -180,7 +183,7 @@ private fun SeriesPicker(overall: List<CostSeries>, all: List<CostSeries>, selec
 @Composable
 private fun Figure(label: String, cents: Long, modifier: Modifier = Modifier) {
     Column(modifier) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         MoneyText(cents, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
     }
 }
@@ -211,15 +214,14 @@ private fun TopCostRow(
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(series.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextAndFigures(figures = { MoneyText(series.total, fontWeight = FontWeight.Medium) }, spacing = 0.dp) {
+                    Text(series.name, style = MaterialTheme.typography.bodyLarge, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         (if (series.isGroup) "Group · " else "") + "avg ${Money.formatWhole(series.perMonth)} / month",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                MoneyText(series.total, fontWeight = FontWeight.Medium)
                 if (breakdown.isNotEmpty()) {
                     val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
                     Icon(
@@ -255,14 +257,22 @@ private fun AccountShareRow(account: CostSeries, share: Float, color: Color, sel
             .padding(start = 36.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(account.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text(
-                "${(share * 100).roundToInt()}%",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
-            MoneyText(account.total, style = MaterialTheme.typography.bodyMedium)
+            TextAndFigures(
+                figures = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${(share * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                        MoneyText(account.total, style = MaterialTheme.typography.bodyMedium)
+                    }
+                },
+                spacing = 8.dp,
+            ) {
+                Text(account.name, style = MaterialTheme.typography.bodyMedium, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         Spacer(Modifier.height(6.dp))
         ShareBar(share, color.copy(alpha = 0.7f), height = 4.dp)

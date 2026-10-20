@@ -20,10 +20,15 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.domain.Money
 import kotlin.math.abs
@@ -52,6 +57,7 @@ fun TrendLineChart(
     val onBubble = MaterialTheme.colorScheme.inverseOnSurface
     val labelStyle = MaterialTheme.typography.labelSmall.copy(color = labelColor)
     val bubbleStyle = MaterialTheme.typography.labelMedium.copy(color = onBubble, fontFeatureSettings = "tnum")
+    val gutters = rememberAxisGutters(measurer, labelStyle, bubbleStyle)
 
     val progress = remember { Animatable(0f) }
     LaunchedEffect(values) {
@@ -62,11 +68,11 @@ fun TrendLineChart(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(220.dp)
-            .pointerInput(values) {
+            .height(168.dp + gutters.top + gutters.bottom)
+            .pointerInput(values, gutters) {
                 detectTapGestures { offset ->
                     if (values.isEmpty()) return@detectTapGestures
-                    val left = 44.dp.toPx()
+                    val left = gutters.left.toPx()
                     val right = size.width - 12.dp.toPx()
                     val step = if (values.size > 1) (right - left) / (values.size - 1) else 0f
                     val index = if (step == 0f) 0 else ((offset.x - left) / step).let { Math.round(it) }.coerceIn(0, values.lastIndex)
@@ -75,10 +81,10 @@ fun TrendLineChart(
             },
     ) {
         if (values.isEmpty()) return@Canvas
-        val left = 44.dp.toPx()
+        val left = gutters.left.toPx()
         val right = size.width - 12.dp.toPx()
-        val top = 28.dp.toPx()
-        val bottom = size.height - 24.dp.toPx()
+        val top = gutters.top.toPx()
+        val bottom = size.height - gutters.bottom.toPx()
 
         val rawMax = values.max().coerceAtLeast(0)
         val rawMin = values.min().coerceAtMost(0)
@@ -98,9 +104,9 @@ fun TrendLineChart(
         }
 
         // X-axis labels, thinned out so they never overlap.
-        val labelEvery = max(1, ceil(values.size / 6.0).toInt())
+        val every = labelEvery(labels, values.size, step, measurer, labelStyle)
         labels.forEachIndexed { i, label ->
-            if (i % labelEvery != 0 && i != labels.lastIndex) return@forEachIndexed
+            if ((labels.lastIndex - i) % every != 0) return@forEachIndexed
             val text = measurer.measure(label, labelStyle)
             val lx = (x(i) - text.size.width / 2).coerceIn(left - 8.dp.toPx(), size.width - text.size.width.toFloat())
             drawText(text, topLeft = Offset(lx, bottom + 6.dp.toPx()))
@@ -144,6 +150,41 @@ fun TrendLineChart(
     }
 }
 
+/** Room around a chart's plot for the axis labels and the value bubble. */
+private data class AxisGutters(val left: Dp, val top: Dp, val bottom: Dp)
+
+/**
+ * Measures the gutters from the label styles so labels still fit with a large system font. The
+ * y-axis gutter fits a wide sample label rather than the actual ones, so stacked charts keep their
+ * columns lined up.
+ */
+@Composable
+private fun rememberAxisGutters(measurer: TextMeasurer, labelStyle: TextStyle, bubbleStyle: TextStyle? = null): AxisGutters {
+    val density = LocalDensity.current
+    return remember(measurer, labelStyle, bubbleStyle, density) {
+        with(density) {
+            val label = measurer.measure("-888k", labelStyle).size
+            val bubble = bubbleStyle?.let { measurer.measure("0", it).size.height.toDp() + 8.dp } ?: 0.dp
+            AxisGutters(
+                left = maxOf(44.dp, label.width.toDp() + 8.dp),
+                top = maxOf(28.dp, bubble + 4.dp),
+                bottom = maxOf(24.dp, label.height.toDp() + 8.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Every how many points an x-axis label goes: at most about six labels, and far enough apart that
+ * the widest one doesn't touch its neighbours. Counted back from the last point, which is always
+ * labelled.
+ */
+private fun DrawScope.labelEvery(labels: List<String>, count: Int, step: Float, measurer: TextMeasurer, style: TextStyle): Int {
+    val widest = labels.take(count).maxOfOrNull { measurer.measure(it, style).size.width } ?: 0
+    val apart = if (step > 0f) ceil((widest + 8.dp.toPx()) / step).toInt() else 1
+    return maxOf(1, ceil(count / 6.0).toInt(), apart)
+}
+
 /** Rounds the axis to "nice" steps (1, 2, 5 × 10ⁿ) with about four intervals. */
 private fun niceScale(min: Long, rawMax: Long): Triple<Long, Long, Long> {
     // A flat series (e.g. all zero) still gets a visible range.
@@ -184,6 +225,7 @@ fun FlowBarChart(
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val labelStyle = MaterialTheme.typography.labelSmall.copy(color = labelColor)
+    val gutters = rememberAxisGutters(measurer, labelStyle)
     val count = min(inflows.size, outflows.size)
 
     val progress = remember { Animatable(0f) }
@@ -195,11 +237,11 @@ fun FlowBarChart(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(150.dp)
-            .pointerInput(count) {
+            .height(126.dp + gutters.bottom)
+            .pointerInput(count, gutters) {
                 detectTapGestures { offset ->
                     if (count == 0) return@detectTapGestures
-                    val left = 44.dp.toPx()
+                    val left = gutters.left.toPx()
                     val right = size.width - 12.dp.toPx()
                     val step = if (count > 1) (right - left) / (count - 1) else 0f
                     val index = if (step == 0f) 0 else ((offset.x - left) / step).let { Math.round(it) }.coerceIn(0, count - 1)
@@ -208,10 +250,10 @@ fun FlowBarChart(
             },
     ) {
         if (count == 0) return@Canvas
-        val left = 44.dp.toPx()
+        val left = gutters.left.toPx()
         val right = size.width - 12.dp.toPx()
         val top = 8.dp.toPx()
-        val bottom = size.height - 24.dp.toPx()
+        val bottom = size.height - gutters.bottom.toPx()
 
         val (axisMin, axisMax, tick) = niceScale(-outflows.take(count).max().coerceAtLeast(0), inflows.take(count).max().coerceAtLeast(0))
         fun y(v: Long) = bottom - (v - axisMin).toFloat() / (axisMax - axisMin).toFloat() * (bottom - top)
@@ -227,9 +269,9 @@ fun FlowBarChart(
             gridValue += tick
         }
 
-        val labelEvery = max(1, ceil(count / 6.0).toInt())
+        val every = labelEvery(labels, count, step, measurer, labelStyle)
         labels.take(count).forEachIndexed { i, label ->
-            if (i % labelEvery != 0 && i != count - 1) return@forEachIndexed
+            if ((count - 1 - i) % every != 0) return@forEachIndexed
             val text = measurer.measure(label, labelStyle)
             val lx = (x(i) - text.size.width / 2).coerceIn(left - 8.dp.toPx(), size.width - text.size.width.toFloat())
             drawText(text, topLeft = Offset(lx, bottom + 6.dp.toPx()))

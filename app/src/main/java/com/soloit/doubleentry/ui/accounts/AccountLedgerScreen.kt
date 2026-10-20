@@ -75,6 +75,8 @@ import com.soloit.doubleentry.ui.components.MonthSelector
 import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SearchField
 import com.soloit.doubleentry.ui.components.SectionCard
+import com.soloit.doubleentry.ui.components.TextAndFigures
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
 import kotlinx.coroutines.launch
@@ -128,7 +130,7 @@ fun AccountLedgerScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(state.account?.name ?: "Account", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(state.account?.name ?: "Account", maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
                         state.account?.let {
                             Text("#${it.number} · ${it.type.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -232,17 +234,19 @@ fun AccountLedgerScreen(
             itemsIndexed(state.rows, key = { _, r -> r.transactionId }) { index, row ->
                 GroupedItem(index, state.rows.size, onClick = { onOpenTransaction(row.transactionId) }) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(row.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        TextAndFigures(
+                            figures = {
+                                MoneyText(row.amount, tone = AmountTone.Signed, showSign = true, fontWeight = FontWeight.Medium)
+                                Text(
+                                    com.soloit.doubleentry.domain.Money.format(row.balance),
+                                    style = MaterialTheme.typography.bodySmall.tabular(),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            },
+                            spacing = 0.dp,
+                        ) {
+                            Text(row.title, style = MaterialTheme.typography.bodyLarge, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
                             Text(row.date.formatMedium(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            MoneyText(row.amount, tone = AmountTone.Signed, showSign = true, fontWeight = FontWeight.Medium)
-                            Text(
-                                com.soloit.doubleentry.domain.Money.format(row.balance),
-                                style = MaterialTheme.typography.bodySmall.tabular(),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
                     }
                 }

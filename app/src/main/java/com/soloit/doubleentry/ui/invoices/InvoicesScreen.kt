@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -48,6 +47,8 @@ import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SearchField
 import com.soloit.doubleentry.ui.components.SegmentedChoice
 import com.soloit.doubleentry.ui.components.StatusChip
+import com.soloit.doubleentry.ui.components.TextAndFigures
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.theme.AppTheme
 
 @Composable
@@ -139,17 +140,17 @@ private fun InvoiceCard(row: InvoiceRowUi, onClick: () -> Unit) {
     Surface(onClick = onClick, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextAndFigures(
+                    figures = {
+                        val partial = !row.invoice.isPaid && row.invoice.partiallyPaid > 0
+                        MoneyText(if (partial) row.invoice.remaining else row.invoice.amountDue, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        if (partial) {
+                            Text("left of ${Money.format(row.invoice.amountDue)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                ) {
+                    Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
                     Text("Invoice date ${row.invoice.invoiceDate.formatMedium()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    val partial = !row.invoice.isPaid && row.invoice.partiallyPaid > 0
-                    MoneyText(if (partial) row.invoice.remaining else row.invoice.amountDue, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    if (partial) {
-                        Text("left of ${Money.format(row.invoice.amountDue)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
                 }
             }
             DueStatusChip(row.invoice.dueStatus())

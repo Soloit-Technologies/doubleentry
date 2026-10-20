@@ -78,6 +78,8 @@ import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SectionHeader
 import com.soloit.doubleentry.ui.components.SegmentedChoice
+import com.soloit.doubleentry.ui.components.TextAndFigures
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.transactions.BookingLines
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -161,8 +163,8 @@ private fun RecurringRow(row: RecurringRowUi) {
             if (row.rule.paused) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary,
         )
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(row.rule.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TextAndFigures(figures = { MoneyText(row.rule.amount, fontWeight = FontWeight.Medium) }) {
+            Text(row.rule.title, style = MaterialTheme.typography.bodyLarge, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
             Text(row.flow, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 when {
@@ -176,8 +178,6 @@ private fun RecurringRow(row: RecurringRowUi) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(12.dp))
-        MoneyText(row.rule.amount, fontWeight = FontWeight.Medium)
     }
 }
 

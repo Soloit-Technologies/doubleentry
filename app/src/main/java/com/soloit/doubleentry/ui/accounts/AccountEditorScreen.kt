@@ -38,6 +38,7 @@ import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AccountTypeAvatar
 import com.soloit.doubleentry.ui.components.GroupedItem
+import com.soloit.doubleentry.ui.components.isLargeFont
 
 private val typeDescriptions = mapOf(
     AccountType.Asset to "Things you own: cash, bank accounts, investments, property.",
@@ -65,14 +66,16 @@ fun AccountEditorScreen(accountId: String?, onDone: () -> Unit) {
             Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // A large font needs more room for the number than a fixed width gives, so the fields stack.
+            val stacked = isLargeFont()
+            val fields = @Composable { numberModifier: Modifier, nameModifier: Modifier ->
                 OutlinedTextField(
                     value = state.number,
                     onValueChange = vm::setNumber,
                     label = { Text("Number") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
-                    modifier = Modifier.width(120.dp),
+                    modifier = numberModifier,
                 )
                 OutlinedTextField(
                     value = state.name,
@@ -80,8 +83,13 @@ fun AccountEditorScreen(accountId: String?, onDone: () -> Unit) {
                     label = { Text("Name") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    modifier = Modifier.weight(1f),
+                    modifier = nameModifier,
                 )
+            }
+            if (stacked) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { fields(Modifier.fillMaxWidth(), Modifier.fillMaxWidth()) }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { fields(Modifier.width(120.dp), Modifier.weight(1f)) }
             }
             Text("Type", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             Column {

@@ -21,10 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
-import androidx.compose.material3.LocalContentColor
-import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.TrendingDown
@@ -53,7 +50,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import com.soloit.doubleentry.domain.AccountType
 import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.ui.theme.AppTheme
@@ -61,7 +61,10 @@ import com.soloit.doubleentry.ui.theme.tabular
 
 enum class AmountTone { Neutral, Signed, Positive, Negative }
 
-/** An amount in tabular digits; [tone] controls coloring (Signed = green/red by sign). */
+/**
+ * An amount in tabular digits; [tone] controls coloring (Signed = green/red by sign). It shrinks to
+ * fit its width rather than clipping digits, which a large system font would otherwise do.
+ */
 @Composable
 fun MoneyText(
     cents: Long,
@@ -71,8 +74,6 @@ fun MoneyText(
     showSign: Boolean = false,
     color: Color = Color.Unspecified,
     fontWeight: FontWeight? = null,
-    /** Shrinks the text to fit its width instead of clipping (for narrow tiles). */
-    autoSize: Boolean = false,
 ) {
     val finance = AppTheme.finance
     val resolved = when {
@@ -83,19 +84,6 @@ fun MoneyText(
         tone == AmountTone.Signed && cents < 0 -> finance.negative
         else -> Color.Unspecified
     }
-    if (autoSize) {
-        BasicText(
-            text = if (showSign) Money.formatSigned(cents) else Money.format(cents),
-            modifier = modifier,
-            style = style.tabular().merge(
-                color = resolved.takeOrElse { LocalContentColor.current },
-                fontWeight = fontWeight,
-            ),
-            maxLines = 1,
-            autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = style.fontSize),
-        )
-        return
-    }
     Text(
         text = if (showSign) Money.formatSigned(cents) else Money.format(cents),
         modifier = modifier,
@@ -104,7 +92,48 @@ fun MoneyText(
         fontWeight = fontWeight,
         maxLines = 1,
         textAlign = TextAlign.End,
+        autoSize = fitToWidth(style),
     )
+}
+
+/** Shrinks single-line text that would otherwise be clipped, down to 10sp (still scaled by the system font). */
+fun fitToWidth(style: TextStyle): TextAutoSize? =
+    if (style.fontSize.isSpecified) TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = style.fontSize) else null
+
+/** The system font scale from which side-by-side layouts stack or wrap instead (150 % and up). */
+@Composable
+fun isLargeFont(): Boolean = LocalDensity.current.fontScale >= 1.5f
+
+/**
+ * A list row's text and the figures trailing it. With a large font the figures move under the
+ * text, so neither squeezes the other into a sliver.
+ */
+@Composable
+fun RowScope.TextAndFigures(
+    figures: @Composable ColumnScope.() -> Unit,
+    spacing: Dp = 12.dp,
+    text: @Composable ColumnScope.() -> Unit,
+) {
+    if (isLargeFont()) {
+        Column(Modifier.weight(1f)) {
+            text()
+            figures()
+        }
+    } else {
+        Column(Modifier.weight(1f), content = text)
+        Spacer(Modifier.width(spacing))
+        Column(horizontalAlignment = Alignment.End, content = figures)
+    }
+}
+
+/** Equal-width figures side by side, or stacked with a large font; [content] gives each figure the modifier. */
+@Composable
+fun FigureRow(modifier: Modifier = Modifier, spacing: Dp = 12.dp, content: @Composable (item: Modifier) -> Unit) {
+    if (isLargeFont()) {
+        Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing)) { content(Modifier.fillMaxWidth()) }
+    } else {
+        Row(modifier, horizontalArrangement = Arrangement.spacedBy(spacing)) { content(Modifier.weight(1f)) }
+    }
 }
 
 fun AccountType.icon(): ImageVector = when (this) {
@@ -206,9 +235,9 @@ fun StatTile(
                     Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                 }
-                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            MoneyText(cents, style = MaterialTheme.typography.titleMedium, tone = tone, fontWeight = FontWeight.SemiBold, autoSize = true)
+            MoneyText(cents, style = MaterialTheme.typography.titleMedium, tone = tone, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -238,7 +267,17 @@ fun AmountRow(
             leading()
             Spacer(Modifier.width(12.dp))
         }
-        Column(Modifier.weight(1f)) {
+        TextAndFigures(
+            figures = {
+                MoneyText(
+                    cents,
+                    style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+                    tone = tone,
+                    fontWeight = if (emphasized) FontWeight.SemiBold else null,
+                )
+                if (previous != null) ChangeText(cents, previous)
+            },
+        ) {
             Text(
                 label,
                 style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
@@ -248,16 +287,6 @@ fun AmountRow(
             if (supporting != null) {
                 Text(supporting, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            MoneyText(
-                cents,
-                style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
-                tone = tone,
-                fontWeight = if (emphasized) FontWeight.SemiBold else null,
-            )
-            if (previous != null) ChangeText(cents, previous)
         }
     }
 }
@@ -289,15 +318,17 @@ fun ExpandableGroup(
             Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
+            TextAndFigures(
+                figures = {
+                    MoneyText(total, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    if (previous != null) ChangeText(total, previous)
+                },
+                spacing = 0.dp,
+            ) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
                 if (supporting != null) {
                     Text(supporting, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                MoneyText(total, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                if (previous != null) ChangeText(total, previous)
             }
             Icon(
                 Icons.Rounded.ExpandMore,
@@ -367,7 +398,7 @@ fun StatusChip(text: String, container: Color, content: Color, modifier: Modifie
                 Icon(icon, null, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
             }
-            Text(text, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            Text(text, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

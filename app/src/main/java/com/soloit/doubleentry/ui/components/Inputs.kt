@@ -4,12 +4,16 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -21,6 +25,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +54,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.domain.formatMedium
 import com.soloit.doubleentry.domain.label
@@ -113,30 +119,33 @@ fun YearSelector(year: Int, onYearChange: (Int) -> Unit, modifier: Modifier = Mo
     )
 }
 
-/** Year stepper above a 3×4 grid of months. */
+/** Year stepper above a 3×4 grid of months (2×6 with a large font). */
 @Composable
 fun MonthPickerDialog(initial: YearMonth, onDismiss: () -> Unit, onConfirm: (YearMonth) -> Unit, title: String = "Choose month") {
     var year by rememberSaveable { mutableIntStateOf(initial.year) }
+    val columns = if (isLargeFont()) 2 else 3
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { year-- }) { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, "Previous year") }
                     Text(year.toString(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     IconButton(onClick = { year++ }) { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, "Next year") }
                 }
-                for (row in 0 until 4) {
+                for (row in 0 until 12 / columns) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (col in 0 until 3) {
-                            val month = YearMonth.of(year, row * 3 + col + 1)
+                        for (col in 0 until columns) {
+                            val month = YearMonth.of(year, row * columns + col + 1)
                             val selected = month == initial
                             val text = month.monthAbbreviation()
+                            val padding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                            val label = @Composable { Text(text, maxLines = 1, autoSize = fitToWidth(MaterialTheme.typography.labelLarge)) }
                             if (selected) {
-                                FilledTonalButton(onClick = { onConfirm(month) }, modifier = Modifier.weight(1f)) { Text(text, maxLines = 1) }
+                                FilledTonalButton(onClick = { onConfirm(month) }, modifier = Modifier.weight(1f), contentPadding = padding) { label() }
                             } else {
-                                OutlinedButton(onClick = { onConfirm(month) }, modifier = Modifier.weight(1f)) { Text(text, maxLines = 1) }
+                                OutlinedButton(onClick = { onConfirm(month) }, modifier = Modifier.weight(1f), contentPadding = padding) { label() }
                             }
                         }
                     }
@@ -230,7 +239,7 @@ fun AmountField(
             field = if (text == new.text) new else TextFieldValue(text, TextRange(text.length))
             if (text != value) onValueChange(text)
         },
-        label = { Text(label, maxLines = 1) },
+        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         enabled = enabled,
         isError = isError,
         singleLine = true,
@@ -254,13 +263,22 @@ fun <T> SegmentedChoice(
     label: (T) -> String,
     modifier: Modifier = Modifier,
 ) {
+    // A large font leaves too little room per segment, so the options wrap as chips instead.
+    if (isLargeFont()) {
+        FlowRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { option ->
+                FilterChip(selected = option == selected, onClick = { onSelect(option) }, label = { Text(label(option)) })
+            }
+        }
+        return
+    }
     SingleChoiceSegmentedButtonRow(modifier.fillMaxWidth()) {
         options.forEachIndexed { index, option ->
             SegmentedButton(
                 selected = option == selected,
                 onClick = { onSelect(option) },
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
-            ) { Text(label(option), maxLines = 1) }
+            ) { Text(label(option), maxLines = 1, autoSize = fitToWidth(MaterialTheme.typography.labelLarge)) }
         }
     }
 }

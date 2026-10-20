@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.soloit.doubleentry.domain.Money
@@ -41,6 +42,7 @@ import com.soloit.doubleentry.ui.components.AmountTone
 import com.soloit.doubleentry.ui.components.CardDivider
 import com.soloit.doubleentry.ui.components.EmptyState
 import com.soloit.doubleentry.ui.components.ExpandableGroup
+import com.soloit.doubleentry.ui.components.FigureRow
 import com.soloit.doubleentry.ui.components.FlowBarChart
 import com.soloit.doubleentry.ui.components.LoadingState
 import com.soloit.doubleentry.ui.components.MoneyText
@@ -81,9 +83,9 @@ fun CashFlowReportPage(onOpenSettings: () -> Unit) {
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile("Inflows", report.totalInflows, Modifier.weight(1f), Icons.Rounded.SouthWest, finance.positive, AmountTone.Positive)
-                StatTile("Outflows", report.totalOutflows, Modifier.weight(1f), Icons.Rounded.NorthEast, finance.negative, AmountTone.Negative)
+            FigureRow(spacing = 8.dp) { item ->
+                StatTile("Inflows", report.totalInflows, item, Icons.Rounded.SouthWest, finance.positive, AmountTone.Positive)
+                StatTile("Outflows", report.totalOutflows, item, Icons.Rounded.NorthEast, finance.negative, AmountTone.Negative)
             }
         }
         if (report.timeline.isNotEmpty()) {
@@ -154,10 +156,10 @@ private fun CashTimelineCard(report: CashFlowReport) {
     SectionCard(contentPadding = PaddingValues(16.dp)) {
         Text(point.label(report.dailyTimeline), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            TimelineFigure("Cash", point.balance, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
-            TimelineFigure("In", point.inflow, finance.positive, Modifier.weight(1f))
-            TimelineFigure("Out", point.outflow, finance.negative, Modifier.weight(1f))
+        FigureRow(spacing = 16.dp) { item ->
+            TimelineFigure("Cash", point.balance, MaterialTheme.colorScheme.primary, item)
+            TimelineFigure("In", point.inflow, finance.positive, item)
+            TimelineFigure("Out", point.outflow, finance.negative, item)
         }
         Spacer(Modifier.height(12.dp))
         TrendLineChart(
@@ -188,7 +190,7 @@ private fun CashFlowPoint.label(daily: Boolean): String =
 @Composable
 private fun TimelineFigure(label: String, cents: Long, color: Color, modifier: Modifier = Modifier) {
     Column(modifier) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
         MoneyText(cents, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
     }
 }
