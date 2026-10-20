@@ -33,6 +33,7 @@ import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AmountRow
 import com.soloit.doubleentry.ui.components.CardDivider
 import com.soloit.doubleentry.ui.components.DatePickerModal
+import com.soloit.doubleentry.ui.components.FigureRow
 import com.soloit.doubleentry.ui.components.LoadingState
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SectionHeader
@@ -77,10 +78,10 @@ fun BalanceSheetReportPage(onOpenSettings: () -> Unit) {
             return@LazyColumn
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile("Assets", report.totalAssets, Modifier.weight(1f), Icons.Rounded.AccountBalanceWallet, finance.asset)
-                StatTile("Liabilities", report.totalLiabilities, Modifier.weight(1f), Icons.Rounded.CreditCard, finance.liability)
-                StatTile("Equity", report.totalEquity, Modifier.weight(1f), Icons.Rounded.PieChart, finance.equity)
+            FigureRow(spacing = 8.dp) { item ->
+                StatTile("Assets", report.totalAssets, item, Icons.Rounded.AccountBalanceWallet, finance.asset)
+                StatTile("Liabilities", report.totalLiabilities, item, Icons.Rounded.CreditCard, finance.liability)
+                StatTile("Equity", report.totalEquity, item, Icons.Rounded.PieChart, finance.equity)
             }
         }
         item {

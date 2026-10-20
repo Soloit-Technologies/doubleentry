@@ -8,6 +8,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -37,11 +39,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -181,15 +190,19 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                                 onDismissReplaced = container.sync::dismissReplaced,
                             )
                         }
-                        NavigationBar {
-                            topLevel.forEach { item ->
-                                val selected = destination?.hierarchy?.any { it.hasRoute(item.type) } == true
-                                NavigationBarItem(
-                                    selected = selected,
-                                    onClick = { nav.navigateTopLevel(item.route) },
-                                    icon = { Icon(if (selected) item.selectedIcon else item.icon, contentDescription = null) },
-                                    label = { Text(item.label) },
-                                )
+                        BoxWithConstraints {
+                            // The bar has 8dp side padding and 8dp between tabs.
+                            val labelStyle = navLabelStyle((maxWidth - 16.dp - 8.dp * (topLevel.size - 1)) / topLevel.size)
+                            NavigationBar {
+                                topLevel.forEach { item ->
+                                    val selected = destination?.hierarchy?.any { it.hasRoute(item.type) } == true
+                                    NavigationBarItem(
+                                        selected = selected,
+                                        onClick = { nav.navigateTopLevel(item.route) },
+                                        icon = { Icon(if (selected) item.selectedIcon else item.icon, contentDescription = null) },
+                                        label = { Text(item.label, style = labelStyle, maxLines = 1) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -348,6 +361,24 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
             }
             onLaunchHandled()
         }
+    }
+}
+
+/**
+ * One label style for every tab. With a large font the labels shrink together to the size the
+ * longest one fits [tabWidth] at, instead of wrapping or each tab ending up a different size.
+ */
+@Composable
+private fun navLabelStyle(tabWidth: Dp): TextStyle {
+    val base = MaterialTheme.typography.labelMedium
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(tabWidth, base, density) {
+        val available = with(density) { tabWidth.roundToPx() }
+        fun fits(size: TextUnit) = topLevel.all { measurer.measure(it.label, base.copy(fontSize = size)).size.width <= available }
+        var size = base.fontSize
+        while (size.value > 6f && !fits(size)) size = (size.value - 0.5f).sp
+        base.copy(fontSize = size)
     }
 }
 

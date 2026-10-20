@@ -60,6 +60,7 @@ import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SectionHeader
 import com.soloit.doubleentry.ui.components.StatusChip
 import com.soloit.doubleentry.ui.components.icon
+import com.soloit.doubleentry.ui.components.isLargeFont
 import java.time.LocalDate
 
 @Composable
@@ -210,13 +211,17 @@ private fun CostPeriodsCard(summary: CostPeriodSummary, accounts: Map<String, Ac
 
 @Composable
 internal fun EntriesCard(tx: Transaction, onOpenAccount: ((String) -> Unit)? = null) {
+    // With a large font two fixed amount columns don't fit, so each line shows its one amount and names its side.
+    val singleColumn = isLargeFont()
     Column {
         SectionHeader("Lines")
         SectionCard {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                 Text("Account", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                Text("Debit", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(96.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
-                Text("Credit", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(96.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                if (!singleColumn) {
+                    Text("Debit", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(96.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                    Text("Credit", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(96.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                }
             }
             tx.entries.forEach { e ->
                 Row(
@@ -229,13 +234,18 @@ internal fun EntriesCard(tx: Transaction, onOpenAccount: ((String) -> Unit)? = n
                     // The name gets the full row width; the amounts share the second line with the account number
                     Column(Modifier.weight(1f)) {
                         Text(e.account.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("#${e.account.number}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                            Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
-                                if (e.type == EntryType.Debit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
-                            }
-                            Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
-                                if (e.type == EntryType.Credit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
+                        if (singleColumn) {
+                            Text("#${e.account.number} · ${e.type.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.align(Alignment.End))
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("#${e.account.number}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
+                                    if (e.type == EntryType.Debit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
+                                    if (e.type == EntryType.Credit) MoneyText(e.amount, style = MaterialTheme.typography.bodyMedium)
+                                }
                             }
                         }
                     }
@@ -244,11 +254,16 @@ internal fun EntriesCard(tx: Transaction, onOpenAccount: ((String) -> Unit)? = n
             CardDivider()
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Text("Total", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
+                if (singleColumn) {
+                    // Saved transactions always balance, so one total covers both sides.
                     MoneyText(tx.totalDebits, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                }
-                Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
-                    MoneyText(tx.totalCredits, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                } else {
+                    Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
+                        MoneyText(tx.totalDebits, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    }
+                    Column(Modifier.width(96.dp), horizontalAlignment = Alignment.End) {
+                        MoneyText(tx.totalCredits, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }

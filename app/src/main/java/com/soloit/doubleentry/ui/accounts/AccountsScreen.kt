@@ -1,5 +1,6 @@
 package com.soloit.doubleentry.ui.accounts
 
+import com.soloit.doubleentry.ui.components.FigureRow
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -74,7 +75,10 @@ import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.MonthSelector
 import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SearchField
+import com.soloit.doubleentry.ui.components.TextAndFigures
 import com.soloit.doubleentry.ui.components.color
+import com.soloit.doubleentry.ui.components.fitToWidth
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
 import java.time.YearMonth
@@ -174,6 +178,7 @@ private fun NetWorthHero(state: AccountsUiState) {
                 style = MaterialTheme.typography.displaySmall.tabular(),
                 color = scheme.onPrimary,
                 maxLines = 1,
+                autoSize = fitToWidth(MaterialTheme.typography.displaySmall),
             )
             Spacer(Modifier.height(8.dp))
             Surface(shape = CircleShape, color = scheme.onPrimary.copy(alpha = 0.16f), contentColor = scheme.onPrimary) {
@@ -184,14 +189,14 @@ private fun NetWorthHero(state: AccountsUiState) {
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("${Money.formatSigned(state.netWorthChange)} this month", style = MaterialTheme.typography.labelMedium.tabular())
+                    Text("${Money.formatSigned(state.netWorthChange)} this month", style = MaterialTheme.typography.labelMedium.tabular(), maxLines = 1, autoSize = fitToWidth(MaterialTheme.typography.labelMedium))
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HeroFigure("Income", state.income, Modifier.weight(1f))
-                HeroFigure("Spending", state.spending, Modifier.weight(1f))
-                HeroFigure("Saved", state.income - state.spending, Modifier.weight(1f))
+            FigureRow { item ->
+                HeroFigure("Income", state.income, item)
+                HeroFigure("Spending", state.spending, item)
+                HeroFigure("Saved", state.income - state.spending, item)
             }
         }
     }
@@ -202,7 +207,7 @@ private fun HeroFigure(label: String, cents: Long, modifier: Modifier = Modifier
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     Column(modifier.clip(MaterialTheme.shapes.medium).background(onPrimary.copy(alpha = 0.12f)).padding(10.dp)) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = onPrimary.copy(alpha = 0.8f))
-        Text(Money.formatWhole(cents), style = MaterialTheme.typography.titleSmall.tabular(), color = onPrimary, maxLines = 1)
+        Text(Money.formatWhole(cents), style = MaterialTheme.typography.titleSmall.tabular(), color = onPrimary, maxLines = 1, autoSize = fitToWidth(MaterialTheme.typography.titleSmall))
     }
 }
 
@@ -230,8 +235,20 @@ private fun AccountRow(row: AccountBalanceUi, reconciliation: ReconciliationStat
     Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         AccountTypeAvatar(row.account.type)
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(row.account.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TextAndFigures(
+            figures = {
+                MoneyText(row.closing, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                if (row.change != 0L) {
+                    Text(
+                        Money.formatSigned(row.change),
+                        style = MaterialTheme.typography.bodySmall.tabular(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            spacing = 0.dp,
+        ) {
+            Text(row.account.name, style = MaterialTheme.typography.bodyLarge, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("#${row.account.number}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (reconciliation != null) {
@@ -242,16 +259,6 @@ private fun AccountRow(row: AccountBalanceUi, reconciliation: ReconciliationStat
                         Icon(Icons.Rounded.Warning, "Changed since reconciliation", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error)
                     }
                 }
-            }
-        }
-        Column(horizontalAlignment = Alignment.End) {
-            MoneyText(row.closing, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            if (row.change != 0L) {
-                Text(
-                    Money.formatSigned(row.change),
-                    style = MaterialTheme.typography.bodySmall.tabular(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
