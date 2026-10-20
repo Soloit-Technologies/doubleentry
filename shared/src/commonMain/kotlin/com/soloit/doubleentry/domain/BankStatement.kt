@@ -145,7 +145,7 @@ object BankStatement {
             amount = table.headers.indices.firstOrNull { it !in used && looksLikeMoney(table.column(it)) }?.also { used += it }
         }
         val chainedBalance = if (balance == null && amount != null) {
-            table.headers.indices.firstOrNull { it !in used && looksLikeMoney(table.column(it)) && chains(table, amount!!, it) }
+            table.headers.indices.firstOrNull { it !in used && looksLikeMoney(table.column(it)) && chains(table, amount, it) }
                 ?.also { used += it }
         } else {
             null

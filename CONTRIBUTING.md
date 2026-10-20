@@ -6,8 +6,10 @@ agree on the approach before you put time into it.
 ## Pull requests
 
 1. Fork the repository and branch off `main`.
-2. Build and test: `./gradlew :shared:jvmTest testDebugUnitTest :desktopApp:test assembleDebug`. For changes to `supabase/`, see
+2. Build and test: `./gradlew lint :shared:jvmTest testDebugUnitTest :desktopApp:test assembleDebug`. For changes to `supabase/`, see
    [`supabase/README.md`](supabase/README.md#testing) for running the local stack and its tests.
+   `main` has no lint or compiler warnings, and the build fails on any new one: fix the cause, or
+   suppress it where it is (`@Suppress`, `tools:ignore`) with a comment saying why.
 3. Open a pull request against `main`. The *Android*, *Desktop* and *Sync contract* workflows must pass, and a
    maintainer reviews every change before it is merged.
 

@@ -130,7 +130,7 @@ fun PeriodControls(
         }
         if (onCompareChange != null) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CompareMode.entries.forEach { mode ->
+                CompareMode.availableFor(period.mode).forEach { mode ->
                     // In year mode "previous period" and "last year" are the same thing.
                     if (mode == CompareMode.LastYear && period.mode == PeriodMode.Year) return@forEach
                     FilterChip(

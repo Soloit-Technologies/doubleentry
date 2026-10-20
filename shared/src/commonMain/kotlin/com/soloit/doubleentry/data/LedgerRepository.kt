@@ -146,6 +146,14 @@ class LedgerRepository(
     suspend fun getMovements(from: LocalDate, to: LocalDate): Map<String, Long> =
         signed(entryDao.totalsBetween(from, to).associate { it.accountId to (it.debits to it.credits) })
 
+    /** Date of the earliest revenue or expense line, i.e. where the income statement's history starts. */
+    suspend fun firstIncomeStatementDate(): LocalDate? {
+        val ids = accountDao.live().filter {
+            AccountType.fromOrdinal(it.type).let { t -> t == AccountType.Revenue || t == AccountType.Expense }
+        }.map { it.id }
+        return if (ids.isEmpty()) null else entryDao.firstDateOn(ids)
+    }
+
     /** Per account, the balance change of each month between [from] and [to]. */
     suspend fun getMonthlyMovements(from: YearMonth, to: YearMonth): Map<String, Map<YearMonth, Long>> =
         monthlyMovements(from.atDay(1), to.atEndOfMonth())

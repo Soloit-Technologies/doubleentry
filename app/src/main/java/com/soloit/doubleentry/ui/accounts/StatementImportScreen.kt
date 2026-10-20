@@ -1,6 +1,5 @@
 package com.soloit.doubleentry.ui.accounts
 
-import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -64,6 +63,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.soloit.doubleentry.domain.Money
 import com.soloit.doubleentry.domain.StatementColumns
@@ -95,7 +95,7 @@ private const val ALL_UNASSIGNED = -1
 fun StatementImportScreen(route: StatementImportRoute, onBack: () -> Unit, onOpenTransaction: (String) -> Unit) {
     val resolver = LocalContext.current.applicationContext.contentResolver
     val vm = appViewModel {
-        StatementImportViewModel(it.ledger, it.invoices, it.statementImports, it.preferences, it.undo, route.accountId, DocumentStatementFile(resolver, Uri.parse(route.uri)))
+        StatementImportViewModel(it.ledger, it.invoices, it.statementImports, it.preferences, it.undo, route.accountId, DocumentStatementFile(resolver, route.uri.toUri()))
     }
     val state by vm.state.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf<Int?>(null) }
