@@ -31,14 +31,18 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.domain.Money
+import java.math.BigDecimal
+import java.math.RoundingMode
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
 
 /**
  * Line chart of monthly amounts with a soft gradient fill. Tapping selects the nearest month,
- * which is highlighted with a guide line and its value.
+ * which is highlighted with a guide line and its value. The axis fits the values rather than
+ * starting at zero, so small changes on a large amount stay visible.
  */
 @Composable
 fun TrendLineChart(
@@ -86,9 +90,7 @@ fun TrendLineChart(
         val top = gutters.top.toPx()
         val bottom = size.height - gutters.bottom.toPx()
 
-        val rawMax = values.max().coerceAtLeast(0)
-        val rawMin = values.min().coerceAtMost(0)
-        val (axisMin, axisMax, tick) = niceScale(rawMin, rawMax)
+        val (axisMin, axisMax, tick) = niceScale(values.min(), values.max())
         fun y(v: Long) = bottom - (v - axisMin).toFloat() / (axisMax - axisMin).toFloat() * (bottom - top)
         val step = if (values.size > 1) (right - left) / (values.size - 1) else 0f
         fun x(i: Int) = if (values.size == 1) (left + right) / 2 else left + i * step
@@ -98,19 +100,13 @@ fun TrendLineChart(
         while (gridValue <= axisMax) {
             val gy = y(gridValue)
             drawLine(gridColor, Offset(left, gy), Offset(right, gy), strokeWidth = 1f, pathEffect = if (gridValue == 0L) null else PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
-            val text = measurer.measure(Money.formatCompact(gridValue), labelStyle)
+            val text = measurer.measure(axisLabel(gridValue, axisMin, axisMax, tick), labelStyle)
             drawText(text, topLeft = Offset(left - text.size.width - 8.dp.toPx(), gy - text.size.height / 2))
             gridValue += tick
         }
 
         // X-axis labels, thinned out so they never overlap.
-        val every = labelEvery(labels, values.size, step, measurer, labelStyle)
-        labels.forEachIndexed { i, label ->
-            if ((labels.lastIndex - i) % every != 0) return@forEachIndexed
-            val text = measurer.measure(label, labelStyle)
-            val lx = (x(i) - text.size.width / 2).coerceIn(left - 8.dp.toPx(), size.width - text.size.width.toFloat())
-            drawText(text, topLeft = Offset(lx, bottom + 6.dp.toPx()))
-        }
+        drawXAxisLabels(measurer, labels, labelStyle, labelEvery(labels, values.size, step, measurer, labelStyle), ::x, left, bottom)
 
         // Line and gradient fill, revealed left to right.
         val visible = max(1, ceil(values.size * progress.value).toInt())
@@ -155,15 +151,15 @@ private data class AxisGutters(val left: Dp, val top: Dp, val bottom: Dp)
 
 /**
  * Measures the gutters from the label styles so labels still fit with a large system font. The
- * y-axis gutter fits a wide sample label rather than the actual ones, so stacked charts keep their
- * columns lined up.
+ * y-axis gutter fits a wide sample label (a zoomed axis can need two decimals) rather than the
+ * actual ones, so stacked charts keep their columns lined up.
  */
 @Composable
 private fun rememberAxisGutters(measurer: TextMeasurer, labelStyle: TextStyle, bubbleStyle: TextStyle? = null): AxisGutters {
     val density = LocalDensity.current
     return remember(measurer, labelStyle, bubbleStyle, density) {
         with(density) {
-            val label = measurer.measure("-888k", labelStyle).size
+            val label = measurer.measure("-8.88M", labelStyle).size
             val bubble = bubbleStyle?.let { measurer.measure("0", it).size.height.toDp() + 8.dp } ?: 0.dp
             AxisGutters(
                 left = maxOf(44.dp, label.width.toDp() + 8.dp),
@@ -185,10 +181,52 @@ private fun DrawScope.labelEvery(labels: List<String>, count: Int, step: Float, 
     return maxOf(1, ceil(count / 6.0).toInt(), apart)
 }
 
+/**
+ * Draws every [every]th x-axis label, counted back from the last. A label pushed inwards to stay
+ * inside the chart is skipped when it would touch its neighbour.
+ */
+private fun DrawScope.drawXAxisLabels(
+    measurer: TextMeasurer,
+    labels: List<String>,
+    style: TextStyle,
+    every: Int,
+    x: (Int) -> Float,
+    left: Float,
+    bottom: Float,
+) {
+    val gap = 8.dp.toPx()
+    var nextStart = Float.MAX_VALUE
+    for (i in labels.lastIndex downTo 0 step every) {
+        val text = measurer.measure(labels[i], style)
+        val lx = (x(i) - text.size.width / 2).coerceIn(left - 8.dp.toPx(), size.width - text.size.width.toFloat())
+        if (lx + text.size.width + gap > nextStart) continue
+        drawText(text, topLeft = Offset(lx, bottom + 6.dp.toPx()))
+        nextStart = lx
+    }
+}
+
+/**
+ * A compact axis label (`12k`, `2.45M`) with just enough decimals to tell neighbouring grid lines
+ * apart, which matters once the axis no longer starts at zero.
+ */
+private fun axisLabel(value: Long, axisMin: Long, axisMax: Long, tick: Long): String {
+    if (value == 0L) return "0"
+    val (divisor, suffix) = when (max(abs(axisMin), abs(axisMax)) / 100) {
+        in 1_000_000..Long.MAX_VALUE -> 100_000_000.0 to "M"
+        in 1_000 until 1_000_000 -> 100_000.0 to "k"
+        else -> return Money.formatCompact(value)
+    }
+    val decimals = ceil(-log10(tick / divisor)).toInt().coerceIn(0, 3)
+    val text = BigDecimal.valueOf(value / divisor).setScale(decimals, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+    return text + suffix
+}
+
 /** Rounds the axis to "nice" steps (1, 2, 5 × 10ⁿ) with about four intervals. */
-private fun niceScale(min: Long, rawMax: Long): Triple<Long, Long, Long> {
-    // A flat series (e.g. all zero) still gets a visible range.
-    val max = if (rawMax == min) min + max(abs(min), 10_000L) else rawMax
+private fun niceScale(rawMin: Long, rawMax: Long): Triple<Long, Long, Long> {
+    // A flat series (e.g. an unchanged balance) gets a small band around it, so the line sits mid-chart.
+    val pad = if (rawMax == rawMin) max(abs(rawMin) / 20, 5_000L) else 0L
+    val min = rawMin - pad
+    val max = rawMax + pad
     val range = (max - min).toDouble()
     val rough = range / 4
     val magnitude = Math.pow(10.0, Math.floor(Math.log10(rough)))
@@ -264,18 +302,12 @@ fun FlowBarChart(
         while (gridValue <= axisMax) {
             val gy = y(gridValue)
             drawLine(gridColor, Offset(left, gy), Offset(right, gy), strokeWidth = 1f, pathEffect = if (gridValue == 0L) null else PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
-            val text = measurer.measure(Money.formatCompact(gridValue), labelStyle)
+            val text = measurer.measure(axisLabel(gridValue, axisMin, axisMax, tick), labelStyle)
             drawText(text, topLeft = Offset(left - text.size.width - 8.dp.toPx(), gy - text.size.height / 2))
             gridValue += tick
         }
 
-        val every = labelEvery(labels, count, step, measurer, labelStyle)
-        labels.take(count).forEachIndexed { i, label ->
-            if ((count - 1 - i) % every != 0) return@forEachIndexed
-            val text = measurer.measure(label, labelStyle)
-            val lx = (x(i) - text.size.width / 2).coerceIn(left - 8.dp.toPx(), size.width - text.size.width.toFloat())
-            drawText(text, topLeft = Offset(lx, bottom + 6.dp.toPx()))
-        }
+        drawXAxisLabels(measurer, labels.take(count), labelStyle, labelEvery(labels, count, step, measurer, labelStyle), ::x, left, bottom)
 
         // Bars grow out of the zero line; the selected column stays strong while the rest fade back.
         val barWidth = if (count == 1) 24.dp.toPx() else min(step * 0.6f, 14.dp.toPx()).coerceAtLeast(2f)
