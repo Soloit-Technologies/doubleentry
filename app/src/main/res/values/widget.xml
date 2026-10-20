@@ -8,5 +8,6 @@
     <string name="widget_label">Net worth</string>
     <string name="widget_placeholder">—</string>
     <string name="widget_add">New transaction</string>
-    <string name="widget_description">Your net worth at a glance, with a button to record a transaction.</string>
+    <string name="widget_change">%1$s in 12 months</string>
+    <string name="widget_description">Your net worth and its 12-month trend at a glance, with a button to record a transaction.</string>
 </resources>
