@@ -177,5 +177,5 @@ server enforces this is in [`supabase/README.md`](../supabase/README.md#accounts
 | Data safety → security | Encrypted in transit: yes (HTTPS). Users can request deletion: yes |
 | Data deletion | In the app: *Cloud backup & sync → Delete account*. Web link for deletion without the app: `https://github.com/Soloit-Technologies/doubleentry-android/blob/main/PRIVACY.md#deleting-your-account` (by email to privacy@soloit.se) |
 | Privacy policy | [`PRIVACY.md`](../PRIVACY.md) covers what is stored in the cloud, who sees it (shared ledgers), where (Supabase, `eu-west-1`), how long (until the account is deleted; error reports at most 90 days) and that payments are handled by Google Play. Keep it in step with `supabase/` |
-| Store listing | Mention the subscription in the full description: free app, optional paid cloud backup, prices in the listing come from Google Play |
+| Store listing | Mention the subscription in the full description: free app, optional paid cloud backup, prices in the listing come from Google Play. Rewrite the offline-only claims, which would then be misleading: "Your ledger stays on your phone. There is no sign-up, no ads and no tracking." in `full_description.txt` and "Private, offline, no account." in `short_description.txt` |
 
