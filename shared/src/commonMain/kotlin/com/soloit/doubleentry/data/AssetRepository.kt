@@ -129,8 +129,8 @@ class AssetRepository(
 
     /**
      * Repairs depreciation: every due month gets exactly one live posting (deleted ones are revived,
-     * missing ones re-created, legacy duplicates removed, legacy descriptions rewritten) and each
-     * asset's totals are reconciled. Returns the number of postings revived, created, rewritten or removed.
+     * missing ones re-created) and each asset's totals are reconciled. Returns the number of postings
+     * revived or created.
      */
     suspend fun reconcileWriteoffs(today: LocalDate = LocalDate.now()): Int = writeoffLock.withLock {
         var repaired = 0
@@ -147,20 +147,6 @@ class AssetRepository(
                     if (slot.month > lastCompleted) break
                     if (slot.amount <= 0) continue
                     if (ensurePosting(asset, slot)) repaired++
-
-                    // Replace the old GUID-bearing description with the user-facing one.
-                    val txId = DeterministicIds.writeoffTransactionId(asset.id, slot.month)
-                    val legacyDescription = Depreciation.legacyDescription(asset.id, slot.month)
-                    val canonical = transactionDao.byId(txId)
-                    if (canonical != null && canonical.description == legacyDescription) {
-                        transactionDao.upsert(canonical.copy(description = Depreciation.description(slot.month), updatedAt = nowMicros(), isDirty = true))
-                        repaired++
-                    }
-
-                    for (duplicate in transactionDao.liveByDescription(legacyDescription, excludeId = txId)) {
-                        ledger.softDeleteTransaction(duplicate.id)
-                        repaired++
-                    }
                     lastLive = slot.month
                     liveTotal += slot.amount
                 }
@@ -174,7 +160,7 @@ class AssetRepository(
         repaired
     }
 
-    /** Live depreciation postings of an asset, newest first (including legacy ones found by marker). */
+    /** Live depreciation postings of an asset, newest first. */
     suspend fun getWriteoffTransactions(assetId: String): List<Transaction> {
         val asset = getAsset(assetId) ?: return emptyList()
         return writeoffTransactionEntities(asset)
@@ -185,12 +171,10 @@ class AssetRepository(
     suspend fun isDepreciationTransaction(transactionId: String): Boolean = ledger.isDepreciationTransaction(transactionId)
 
     private suspend fun writeoffTransactionEntities(asset: Asset): Set<String> {
-        val byId = Depreciation.writeoffIds(asset).chunked(500)
+        return Depreciation.writeoffIds(asset).chunked(500)
             .flatMap { transactionDao.byIds(it) }
             .filter { it.deletedAt == null }
-            .map { it.id }
-        val byMarker = transactionDao.liveByDescriptionSuffix(Depreciation.legacyAssetMarker(asset.id)).map { it.id }
-        return (byId + byMarker).toSet()
+            .mapTo(mutableSetOf()) { it.id }
     }
 
     /** Creates or revives the canonical posting for one schedule slot. Returns true when it changed anything. */
