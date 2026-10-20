@@ -597,6 +597,15 @@ class SyncManager(
         stopForegroundWork()
     }
 
+    /**
+     * The device got a network connection: upload what was edited offline, and reconnect Realtime
+     * now rather than when its backoff runs out (up to minutes after a long outage).
+     */
+    fun onNetworkAvailable() {
+        requestSync()
+        realtime.wake()
+    }
+
     @Synchronized
     private fun startForegroundWork() {
         if (!canSync || foregroundJob?.isActive == true) return

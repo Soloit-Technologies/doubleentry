@@ -2,10 +2,12 @@ package com.soloit.doubleentry.sync
 
 import com.soloit.doubleentry.platform.Log
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -21,6 +23,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.currentCoroutineContext
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -42,6 +45,12 @@ class RealtimeClient(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val ref = AtomicInteger(0)
+    private val wakeups = Channel<Unit>(Channel.CONFLATED)
+
+    /** The network is back: stop waiting out the backoff and connect now. */
+    fun wake() {
+        wakeups.trySend(Unit)
+    }
 
     /** Keeps a connection open (reconnecting with backoff) until the calling coroutine is cancelled. */
     suspend fun run() {
@@ -49,16 +58,18 @@ class RealtimeClient(
         while (currentCoroutineContext().isActive) {
             val token = runCatching { tokens.accessToken(forceRefresh = false) }.getOrNull()
             if (token == null) {
-                delay(1.minutes)
+                waitOrWake(1.minutes)
                 continue
             }
             val started = System.currentTimeMillis()
             runCatching { connectOnce(token) }.onFailure { Log.d(TAG, "Realtime connection ended", it) }
             if (System.currentTimeMillis() - started > 60_000) backoff = 2.seconds
-            delay(backoff)
-            backoff = (backoff * 2).coerceAtMost(5.minutes)
+            backoff = if (waitOrWake(backoff)) 2.seconds else (backoff * 2).coerceAtMost(5.minutes)
         }
     }
+
+    /** Waits [time], or less if [wake] is called. Returns true when woken. */
+    private suspend fun waitOrWake(time: Duration): Boolean = withTimeoutOrNull(time) { wakeups.receive() } != null
 
     private suspend fun connectOnce(initialToken: String) = coroutineScope {
         val closed = CompletableDeferred<Unit>()

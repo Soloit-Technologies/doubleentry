@@ -64,10 +64,11 @@ class RealtimeClientTest {
 
     private fun accept(): Connection = Connection().also { server.enqueue(MockResponse.Builder().webSocketUpgrade(it).build()) }
 
-    private fun start(tokens: AccessTokenProvider, ledger: String = "ledger-1") {
+    private fun start(tokens: AccessTokenProvider, ledger: String = "ledger-1"): RealtimeClient {
         val config = SupabaseConfig(server.url("/").toString(), "anon", true)
         val client = RealtimeClient(config, OkHttpClient(), tokens, ledgerId = { ledger }) { changes.trySend(Unit) }
         scope.launch { client.run() }
+        return client
     }
 
     @After
@@ -137,5 +138,17 @@ class RealtimeClientTest {
         failed.join()
         failed.send("""{"topic":"realtime:doubleentry-sync","event":"system","payload":{"message":"Unable to subscribe to changes with given parameters.","status":"error","extension":"postgres_changes","channel":"doubleentry-sync"},"ref":null}""")
         second.join()
+    }
+
+    @Test
+    fun wakingConnectsWithoutWaitingOutTheRetryDelay() = runBlocking<Unit> {
+        val connection = accept()
+        val calls = AtomicInteger()
+        // Without a token (offline) the client waits a minute before trying again.
+        val client = start({ if (calls.incrementAndGet() == 1) throw java.io.IOException("Offline") else "token" })
+
+        withTimeout(5.seconds) { while (calls.get() == 0) kotlinx.coroutines.delay(10) }
+        client.wake()
+        connection.join()
     }
 }
