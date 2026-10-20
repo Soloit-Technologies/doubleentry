@@ -87,6 +87,21 @@ class ReportsTest {
     }
 
     @Test
+    fun monthlyAverageDividesEveryRowAndKeepsTotalsConsistent() {
+        val movements = mapOf("sal" to 480_000L, "rent" to 120_000L, "food" to 100_000L)
+        val payslip = tx("pay", Triple(pension, 36_000L, EntryType.Debit), Triple(salary, 36_000L, EntryType.Credit))
+        val report = IncomeStatementCalculator.computeMonthlyAverage(
+            accounts, movements, listOf(payslip),
+            IncomeStatementSettings(expenseGroups = listOf(AccountGroup("Living", listOf("5", "6"))), deferredAssetPrefixes = listOf("194")),
+            months = 12,
+        )
+        assertEquals(40_000L, report.totalRevenue)
+        assertEquals(listOf(8_333L, 10_000L), report.expenses.groups.single().rows.map { it.amount }.sorted())
+        assertEquals(18_333L, report.totalExpenses)
+        assertEquals(3_000L, report.deferredFromRevenue)
+    }
+
+    @Test
     fun cashFlowNetsTransfersInsideAGroup() {
         val groups = listOf(AccountGroup("Bank", listOf("1910", "1920")), AccountGroup("Cash", listOf("1010")))
         val transactions = listOf(

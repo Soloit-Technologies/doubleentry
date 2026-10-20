@@ -14,10 +14,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import java.time.LocalDate
+import java.time.YearMonth
 
 data class IncomeStatementUiState(
     val period: ReportPeriod = ReportPeriod(),
     val report: IncomeStatementReport? = null,
+    /** The comparison in effect: what was picked, unless the period mode doesn't offer it. */
     val compare: CompareMode = CompareMode.None,
     /** The report for the comparison period, when comparing. */
     val previous: IncomeStatementReport? = null,
@@ -31,24 +34,30 @@ class IncomeStatementViewModel(private val ledger: LedgerRepository, settings: S
     val state: StateFlow<IncomeStatementUiState> = combine(period, compare, settings.incomeStatement, ledger.changes) { p, c, s, _ -> Triple(p, c, s) }
         .mapLatest { (p, c, s) ->
             val accounts = ledger.getAccounts()
-            val other = p.comparedWith(c)
+            val effective = if (c in CompareMode.availableFor(p.mode)) c else CompareMode.None
+            val (previous, previousLabel) = if (effective == CompareMode.TwelveMonthAverage) {
+                val window = p.averageWindow(ledger.firstIncomeStatementDate()?.let(YearMonth::from))
+                window?.let { computeAverage(it, accounts, s) } to window?.label
+            } else {
+                val other = p.comparedWith(effective)
+                other?.let { compute(it.from, it.to, accounts, s) } to other?.label
+            }
             IncomeStatementUiState(
                 period = p,
-                report = compute(p, accounts, s),
-                compare = c,
-                previous = other?.let { compute(it, accounts, s) },
-                previousLabel = other?.label,
+                report = compute(p.from, p.to, accounts, s),
+                compare = effective,
+                previous = previous,
+                previousLabel = previousLabel,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), IncomeStatementUiState())
 
-    private suspend fun compute(p: ReportPeriod, accounts: List<Account>, s: IncomeStatementSettings): IncomeStatementReport {
-        val needsTransactions = s.deferredAssetPrefixes.any { it.isNotBlank() }
-        return IncomeStatementCalculator.compute(
-            accounts = accounts,
-            movements = ledger.getMovements(p.from, p.to),
-            transactions = if (needsTransactions) ledger.getTransactions(p.from, p.to) else emptyList(),
-            settings = s,
-        )
-    }
+    private suspend fun compute(from: LocalDate, to: LocalDate, accounts: List<Account>, s: IncomeStatementSettings): IncomeStatementReport =
+        IncomeStatementCalculator.compute(accounts, ledger.getMovements(from, to), transactionsFor(from, to, s), s)
+
+    private suspend fun computeAverage(w: AverageWindow, accounts: List<Account>, s: IncomeStatementSettings): IncomeStatementReport =
+        IncomeStatementCalculator.computeMonthlyAverage(accounts, ledger.getMovements(w.from, w.to), transactionsFor(w.from, w.to, s), s, w.months)
+
+    private suspend fun transactionsFor(from: LocalDate, to: LocalDate, s: IncomeStatementSettings) =
+        if (s.deferredAssetPrefixes.any { it.isNotBlank() }) ledger.getTransactions(from, to) else emptyList()
 }

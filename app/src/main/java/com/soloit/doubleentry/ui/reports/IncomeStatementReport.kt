@@ -61,10 +61,15 @@ fun IncomeStatementReportPage(onOpenSettings: () -> Unit) {
                 StatTile("Expenses", report.totalExpenses, Modifier.weight(1f), Icons.AutoMirrored.Rounded.TrendingDown, finance.expense)
             }
         }
-        if (previous != null && state.previousLabel != null) {
+        val comparisonNote = when {
+            previous != null && state.previousLabel != null -> "Changes are against ${state.previousLabel}."
+            state.compare == CompareMode.TwelveMonthAverage -> "No earlier months with income or expenses to average yet."
+            else -> null
+        }
+        if (comparisonNote != null) {
             item {
                 Text(
-                    "Changes are against ${state.previousLabel}.",
+                    comparisonNote,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp),

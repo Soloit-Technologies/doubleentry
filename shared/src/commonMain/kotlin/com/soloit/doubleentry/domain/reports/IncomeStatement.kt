@@ -6,6 +6,7 @@ import com.soloit.doubleentry.domain.EntryType
 import com.soloit.doubleentry.domain.IncomeStatementSettings
 import com.soloit.doubleentry.domain.Transaction
 import com.soloit.doubleentry.domain.matchesAnyPrefix
+import kotlin.math.roundToLong
 
 data class IncomeStatementReport(
     val revenue: ReportSection,
@@ -75,6 +76,22 @@ object IncomeStatementCalculator {
             hasDepreciationAccounts = settings.depreciationPrefixes.any { it.isNotBlank() },
             hasDeferredAccounts = settings.deferredAssetPrefixes.any { it.isNotBlank() },
         )
+    }
+
+    /**
+     * The average month of a [months]-long span: [compute] over the whole span with every account's
+     * movement divided by [months], so group and section totals still add up row by row.
+     */
+    fun computeMonthlyAverage(
+        accounts: List<Account>,
+        movements: Map<String, Long>,
+        transactions: List<Transaction>,
+        settings: IncomeStatementSettings,
+        months: Int,
+    ): IncomeStatementReport {
+        fun average(cents: Long) = (cents.toDouble() / months).roundToLong()
+        val report = compute(accounts, movements.mapValues { average(it.value) }, transactions, settings)
+        return report.copy(deferredFromRevenue = average(report.deferredFromRevenue))
     }
 
     /** Per transaction: min(debits to deferred assets, credits to revenue). */

@@ -191,10 +191,11 @@ private fun IncomeStatement() {
     ReportDocument(controls = {
         PeriodControls(state.period) { vm.period.value = it }
         Spacer(Modifier.weight(1f))
+        val modes = CompareMode.availableFor(state.period.mode)
         ComboBox(
-            items = CompareMode.entries.map { it.label },
-            selected = state.compare.ordinal,
-            onSelectionChange = { index, _ -> vm.compare.value = CompareMode.entries[index] },
+            items = modes.map { it.label },
+            selected = modes.indexOf(state.compare),
+            onSelectionChange = { index, _ -> vm.compare.value = modes[index] },
             modifier = Modifier.width(240.dp),
         )
     }) {
