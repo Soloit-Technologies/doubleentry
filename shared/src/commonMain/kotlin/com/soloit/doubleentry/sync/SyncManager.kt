@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration.Companion.minutes
+import java.util.concurrent.atomic.AtomicLong
 
 data class SyncStatus(
     /** The cloud sync feature is switched on for this build (`cloudSync.enabled`). */
@@ -171,6 +172,9 @@ class SyncManager(
     private val gate = Mutex()
     private val refreshLock = Mutex()
     private val requests = Channel<Unit>(Channel.CONFLATED)
+
+    /** When the oldest sync request still waiting was made, 0 when none waits; for [SyncTiming]. */
+    private val requestedAt = AtomicLong(0)
     private val realtime = RealtimeClient(config, api.http, this, ledgerId = { prefs.ledgerId }) { requestSync() }
 
     @Volatile private var inForeground = false
@@ -233,7 +237,9 @@ class SyncManager(
     val userId: String? get() = prefs.userId
 
     override fun requestSync() {
-        if (canSync) requests.trySend(Unit)
+        if (!canSync) return
+        requestedAt.compareAndSet(0, System.currentTimeMillis())
+        requests.trySend(Unit)
     }
 
     /** Runs a full pull + push now and waits for it. Returns false when it failed. */
@@ -273,10 +279,12 @@ class SyncManager(
         if (!canSync) return
         gate.withLock {
             setSyncing(true)
+            val timing = SyncTiming(requestedAt.getAndSet(0))
             try {
                 if (serviceBlocked()) return@withLock
                 ensureLedger()
                 val upload = refreshAccess()
+                timing.step("checks")
                 if (lostAccess) {
                     succeeded()
                     return@withLock
@@ -291,8 +299,10 @@ class SyncManager(
                 // Pull first so later edits from other devices replace local rows before they are
                 // uploaded; the server refuses any that still arrive late, and push takes those.
                 recordReplaced(engine.pullAll(this).replacedLocalChanges)
+                timing.step("pull")
                 if (upload) {
                     recordReplaced(engine.pushAll(this).replacedLocalChanges)
+                    timing.step("push")
                     prefs.lastSyncAtMillis = System.currentTimeMillis()
                 }
                 succeeded()
@@ -307,6 +317,7 @@ class SyncManager(
                 fail(e)
             } finally {
                 setSyncing(false)
+                Log.d(TAG, timing.toString())
             }
         }
     }
@@ -737,4 +748,19 @@ class SyncManager(
         const val TAG = "SyncManager"
         const val REPORT_INTERVAL_MILLIS = 6 * 3600_000L
     }
+}
+
+/** How long one sync spent waiting and on each step, logged so a slow sync can be traced. */
+private class SyncTiming(requestedAt: Long) {
+    private val start = System.currentTimeMillis()
+    private var last = start
+    private val steps = mutableListOf<String>().apply { if (requestedAt > 0) add("waited ${start - requestedAt} ms") }
+
+    fun step(name: String) {
+        val now = System.currentTimeMillis()
+        steps += "$name ${now - last} ms"
+        last = now
+    }
+
+    override fun toString() = "Sync took ${System.currentTimeMillis() - start} ms (${steps.joinToString()})"
 }
