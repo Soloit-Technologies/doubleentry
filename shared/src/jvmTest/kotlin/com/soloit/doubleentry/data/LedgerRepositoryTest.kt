@@ -20,6 +20,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.YearMonth
 
 class LedgerRepositoryTest {
     private val t = TestLedger()
@@ -42,6 +43,30 @@ class LedgerRepositoryTest {
         assertEquals(1_250_50L, balances[food.id])
         assertEquals(30_000_00L, t.ledger.getBalances(day)[bank.id])
         assertEquals(-1_250_50L, t.ledger.getMovements(day.plusDays(1), day.plusDays(1))[bank.id])
+    }
+
+    @Test
+    fun netWorthTrendEndsAtTheGivenDate() = runBlocking<Unit> {
+        val bank = t.account(1910, "Bank", AccountType.Asset)
+        val card = t.account(2410, "Credit card", AccountType.Liability)
+        val salary = t.account(3010, "Salary", AccountType.Revenue)
+        val food = t.account(5010, "Food", AccountType.Expense)
+        t.post(LocalDate.of(2025, 6, 1), "Before the window", bank, salary, 1_000_00)
+        t.post(LocalDate.of(2026, 7, 25), "Salary", bank, salary, 30_000_00)
+        t.post(LocalDate.of(2026, 8, 3), "Groceries on card", food, card, 500_00)
+        t.post(LocalDate.of(2026, 9, 30), "Later this month", bank, salary, 99_00)
+
+        val trend = t.ledger.getNetWorthTrend(day, months = 3)
+        assertEquals(listOf(YearMonth.of(2026, 7), YearMonth.of(2026, 8), YearMonth.of(2026, 9)), trend.points.map { it.month })
+        assertEquals(listOf(31_000_00L, 30_500_00L, 30_500_00L), trend.points.map { it.netWorth })
+        assertEquals(500_00L, trend.points.last().liabilities)
+        assertEquals(31_099_00L - 500_00L, t.ledger.getNetWorthTrend(LocalDate.of(2026, 9, 30), months = 3).latest!!.netWorth)
+
+        assertEquals(YearMonth.of(2025, 6), t.ledger.firstNetWorthMonth())
+        val all = t.ledger.getNetWorthTrend(YearMonth.of(2025, 5), day)
+        assertEquals(17, all.points.size)
+        assertEquals(listOf(0L, 1_000_00L), all.points.take(2).map { it.netWorth })
+        assertEquals(30_500_00L, all.change)
     }
 
     @Test

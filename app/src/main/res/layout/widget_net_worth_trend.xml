@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two rows or taller: the compact widget plus the change over 12 months and a sparkline. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="top"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/widget_label"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/widget_amount"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:autoSizeMaxTextSize="22sp"
+                android:autoSizeMinTextSize="12sp"
+                android:autoSizeTextType="uniform"
+                android:fontFeatureSettings="tnum"
+                android:maxLines="1"
+                android:text="@string/widget_placeholder"
+                android:textColor="@color/widget_text"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/widget_change"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFeatureSettings="tnum"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="12sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/widget_add"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="12dp"
+            android:background="@drawable/widget_button"
+            android:contentDescription="@string/widget_add"
+            android:src="@drawable/ic_widget_add" />
+    </LinearLayout>
+
+    <!-- Drawn in white and tinted here, so it follows the launcher's light or dark theme. Widgets
+         are inflated without AppCompat, so the platform tint attribute is the one that works. -->
+    <ImageView
+        android:id="@+id/widget_sparkline"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        android:layout_weight="1"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY"
+        android:tint="@color/widget_accent"
+        android:visibility="gone"
+        tools:ignore="UseAppTint" />
+</LinearLayout>

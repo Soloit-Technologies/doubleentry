@@ -40,7 +40,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -96,6 +99,7 @@ import com.soloit.doubleentry.ui.transactions.TransactionEditorScreen
 import com.soloit.doubleentry.ui.transactions.TransactionsScreen
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import java.time.YearMonth
 import kotlin.reflect.KClass
 
 // ---- Routes ---------------------------------------------------------------------------------
@@ -159,6 +163,8 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
         val destination = entry?.destination
         val showBar = destination == null || topLevel.any { destination.hasRoute(it.type) }
         val snackbar = remember { SnackbarHostState() }
+        // Month the Accounts page asked the net worth report to open at, until the report picks it up.
+        var netWorthMonth by rememberSaveable { mutableStateOf<String?>(null) }
         val syncStatus by container.sync.status.collectAsStateWithLifecycle()
 
         // Deletes elsewhere close their screen at once, so the undo snackbar lives here.
@@ -225,6 +231,10 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                 composable<AccountsRoute> {
                     AccountsScreen(
                         onOpenAccount = { id, month -> nav.navigate(AccountLedgerRoute(id, month.year, month.monthValue)) },
+                        onOpenNetWorth = { month ->
+                            netWorthMonth = month.toString()
+                            nav.navigateTopLevel(ReportsRoute)
+                        },
                         onNewAccount = { nav.navigate(AccountEditorRoute()) },
                         onOpenSettings = settings,
                         onRestoreFromCloud = { nav.navigate(CloudSyncRoute) },
@@ -278,6 +288,8 @@ fun DoubleEntryRoot(container: AppContainer, launchRequest: LaunchRequest? = nul
                         onOpenBalanceSheetSettings = { nav.navigate(BalanceSheetSettingsRoute) },
                         onOpenIncomeSettings = { nav.navigate(IncomeStatementSettingsRoute) },
                         onOpenCashflowSettings = { nav.navigate(CashflowSettingsRoute) },
+                        openNetWorthAt = netWorthMonth?.let(YearMonth::parse),
+                        onNetWorthOpened = { netWorthMonth = null },
                     )
                 }
 

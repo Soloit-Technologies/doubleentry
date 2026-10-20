@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.rounded.Verified
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.TrendingDown
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Add
@@ -86,6 +87,7 @@ import java.time.YearMonth
 @Composable
 fun AccountsScreen(
     onOpenAccount: (String, YearMonth) -> Unit,
+    onOpenNetWorth: (YearMonth) -> Unit,
     onNewAccount: () -> Unit,
     onOpenSettings: () -> Unit,
     onRestoreFromCloud: () -> Unit,
@@ -130,7 +132,7 @@ fun AccountsScreen(
                     )
                 }
                 else -> {
-                    item { NetWorthHero(state) }
+                    item { NetWorthHero(state, onClick = { onOpenNetWorth(state.month) }) }
                     item {
                         SearchField(
                             state.query,
@@ -166,12 +168,22 @@ fun AccountsScreen(
 }
 
 @Composable
-private fun NetWorthHero(state: AccountsUiState) {
+private fun NetWorthHero(state: AccountsUiState, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val gradient = Brush.linearGradient(listOf(scheme.primary, lerp(scheme.primary, Color.Black, 0.28f)))
-    Surface(shape = MaterialTheme.shapes.extraLarge, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = MaterialTheme.shapes.extraLarge, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.background(gradient).padding(20.dp)) {
-            Text("Net worth · ${state.month.label()}", style = MaterialTheme.typography.labelLarge, color = scheme.onPrimary.copy(alpha = 0.85f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Net worth · ${state.month.label()}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = scheme.onPrimary.copy(alpha = 0.85f),
+                    modifier = Modifier.weight(1f),
+                )
+                // Says where a tap goes: the trend lives in Reports.
+                Text("Trend", style = MaterialTheme.typography.labelLarge, color = scheme.onPrimary)
+                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = scheme.onPrimary, modifier = Modifier.size(20.dp))
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 Money.format(state.netWorth),

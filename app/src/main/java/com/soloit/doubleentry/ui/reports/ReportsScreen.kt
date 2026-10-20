@@ -28,6 +28,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,8 +48,10 @@ import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SegmentedChoice
 import com.soloit.doubleentry.ui.components.YearSelector
 import kotlinx.coroutines.launch
+import java.time.YearMonth
 
-private val reportTabs = listOf("Balance sheet", "Income", "Cash flow", "Cost trends")
+private val reportTabs = listOf("Balance sheet", "Net worth", "Income", "Cash flow", "Cost trends")
+private const val NET_WORTH_PAGE = 1
 
 @Composable
 fun ReportsScreen(
@@ -56,9 +59,15 @@ fun ReportsScreen(
     onOpenBalanceSheetSettings: () -> Unit,
     onOpenIncomeSettings: () -> Unit,
     onOpenCashflowSettings: () -> Unit,
+    /** When set, opens the net worth report at this month; cleared through [onNetWorthOpened]. */
+    openNetWorthAt: YearMonth? = null,
+    onNetWorthOpened: () -> Unit = {},
 ) {
     val pager = rememberPagerState { reportTabs.size }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(openNetWorthAt) {
+        if (openNetWorthAt != null) pager.scrollToPage(NET_WORTH_PAGE)
+    }
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
@@ -82,8 +91,9 @@ fun ReportsScreen(
         HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().padding(padding), key = { it }) { page ->
             when (page) {
                 0 -> BalanceSheetReportPage(onOpenBalanceSheetSettings)
-                1 -> IncomeStatementReportPage(onOpenIncomeSettings)
-                2 -> CashFlowReportPage(onOpenCashflowSettings)
+                NET_WORTH_PAGE -> NetWorthReportPage(openNetWorthAt, onNetWorthOpened)
+                2 -> IncomeStatementReportPage(onOpenIncomeSettings)
+                3 -> CashFlowReportPage(onOpenCashflowSettings)
                 else -> CostTrendsReportPage(onOpenIncomeSettings)
             }
         }
