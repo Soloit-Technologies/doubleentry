@@ -55,7 +55,6 @@ import com.soloit.doubleentry.ui.components.SectionHeader
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -88,15 +87,16 @@ class BalanceSheetSettingsViewModel(private val settings: SettingsRepository, le
     val assets = GroupDrafts()
     val liabilities = GroupDrafts()
 
+    private fun form() = BalanceSheetSettings(assets.toGroups(), liabilities.toGroups())
+
     init {
-        viewModelScope.launch {
-            val s = settings.balanceSheet.first()
+        showStored(settings.balanceSheet, ::form) { s ->
             assets.load(s.assetGroups)
             liabilities.load(s.liabilityGroups)
         }
     }
 
-    fun save() = save { settings.saveBalanceSheet(BalanceSheetSettings(assets.toGroups(), liabilities.toGroups())) }
+    fun save() = save { settings.saveBalanceSheet(form()) }
 }
 
 class IncomeStatementSettingsViewModel(private val settings: SettingsRepository, ledger: LedgerRepository) : ReportSettingsViewModel(ledger) {
@@ -106,9 +106,16 @@ class IncomeStatementSettingsViewModel(private val settings: SettingsRepository,
     val tax = MutableStateFlow("")
     val deferred = MutableStateFlow("")
 
+    private fun form() = IncomeStatementSettings(
+        revenueGroups = revenue.toGroups(),
+        expenseGroups = expenses.toGroups(),
+        depreciationPrefixes = parsePrefixes(depreciation.value),
+        taxPrefixes = parsePrefixes(tax.value),
+        deferredAssetPrefixes = parsePrefixes(deferred.value),
+    )
+
     init {
-        viewModelScope.launch {
-            val s = settings.incomeStatement.first()
+        showStored(settings.incomeStatement, ::form) { s ->
             revenue.load(s.revenueGroups)
             expenses.load(s.expenseGroups)
             depreciation.value = s.depreciationPrefixes.joinToString(", ")
@@ -117,29 +124,21 @@ class IncomeStatementSettingsViewModel(private val settings: SettingsRepository,
         }
     }
 
-    fun save() = save {
-        settings.saveIncomeStatement(
-            IncomeStatementSettings(
-                revenueGroups = revenue.toGroups(),
-                expenseGroups = expenses.toGroups(),
-                depreciationPrefixes = parsePrefixes(depreciation.value),
-                taxPrefixes = parsePrefixes(tax.value),
-                deferredAssetPrefixes = parsePrefixes(deferred.value),
-            ),
-        )
-    }
+    fun save() = save { settings.saveIncomeStatement(form()) }
 }
 
 class CashflowSettingsViewModel(private val settings: SettingsRepository, ledger: LedgerRepository) : ReportSettingsViewModel(ledger) {
     val groups = GroupDrafts()
 
+    private fun form() = CashflowSettings(groups.toGroups())
+
     init {
-        viewModelScope.launch { groups.load(settings.cashflow.first().cashGroups) }
+        showStored(settings.cashflow, ::form) { groups.load(it.cashGroups) }
     }
 
     fun resetToDefaults() = groups.load(CashflowSettings.DEFAULT_CASH_GROUPS)
 
-    fun save() = save { settings.saveCashflow(CashflowSettings(groups.toGroups())) }
+    fun save() = save { settings.saveCashflow(form()) }
 }
 
 @Composable

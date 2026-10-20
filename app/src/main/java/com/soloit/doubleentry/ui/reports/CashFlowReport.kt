@@ -29,13 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
-import com.soloit.doubleentry.data.LedgerRepository
-import com.soloit.doubleentry.data.SettingsRepository
 import com.soloit.doubleentry.domain.Money
-import com.soloit.doubleentry.domain.reports.CashFlowCalculator
 import com.soloit.doubleentry.domain.monthAbbreviation
 import com.soloit.doubleentry.domain.reports.CashFlowPoint
 import com.soloit.doubleentry.domain.reports.CashFlowReport
@@ -55,33 +50,7 @@ import com.soloit.doubleentry.ui.components.StatTile
 import com.soloit.doubleentry.ui.components.TrendLineChart
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.stateIn
 import java.time.format.DateTimeFormatter
-
-data class CashFlowUiState(val period: ReportPeriod = ReportPeriod(), val report: CashFlowReport? = null)
-
-class CashFlowViewModel(ledger: LedgerRepository, settings: SettingsRepository) : ViewModel() {
-    val period = MutableStateFlow(ReportPeriod())
-
-    val state: StateFlow<CashFlowUiState> = combine(period, settings.cashflow, ledger.changes) { p, s, _ -> p to s }
-        .mapLatest { (p, s) ->
-            val report = CashFlowCalculator.compute(
-                accounts = ledger.getAccounts(),
-                beginningBalances = ledger.getBalances(p.from.minusDays(1)),
-                endingBalances = ledger.getBalances(p.to),
-                transactions = ledger.getTransactions(p.from, p.to),
-                groups = s.cashGroups,
-                period = p.from..p.to,
-            )
-            CashFlowUiState(p, report)
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CashFlowUiState())
-}
 
 @Composable
 fun CashFlowReportPage(onOpenSettings: () -> Unit) {

@@ -1,0 +1,62 @@
+name: Desktop
+
+# Tests the desktop app and builds its Windows installer (.msi) on every push and pull request.
+# The installer is unsigned: Windows SmartScreen warns about it until releases are signed (see
+# docs/multiplatform-plan.md → Distribution). Cloud sync is included when the SUPABASE_URL and
+# SUPABASE_ANON_KEY repository variables are set, like the Android debug build.
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore: ['supabase/**', '**.md']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+
+      # The page tests draw every screen off-screen and keep the pictures.
+      - name: Desktop tests
+        run: ./gradlew :desktopApp:test
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: desktop-screenshots
+          path: desktopApp/build/screenshots
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+
+      - name: Windows installer
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: ./gradlew :desktopApp:packageReleaseMsi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: DoubleEntry-windows
+          path: desktopApp/build/compose/binaries/main-release/msi/*.msi

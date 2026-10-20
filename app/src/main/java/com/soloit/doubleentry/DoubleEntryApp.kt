@@ -1,6 +1,8 @@
 package com.soloit.doubleentry
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -31,6 +33,10 @@ class DoubleEntryApp : Application() {
                 container.sync.onBackground()
                 container.appLock.onBackground()
             }
+        })
+
+        getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = container.sync.onNetworkAvailable()
         })
     }
 }

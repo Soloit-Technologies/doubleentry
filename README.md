@@ -1,7 +1,10 @@
-# DoubleEntry for Android
+# DoubleEntry
 
-Personal double-entry bookkeeping for Android, written in Kotlin with Jetpack Compose and
-Material 3, with an optional Supabase backend for cloud backup and sync.
+Personal double-entry bookkeeping for Android and Windows, written in Kotlin, with an optional
+Supabase backend for cloud backup and sync. The bookkeeping rules, reports, statement import and
+sync are shared Kotlin Multiplatform code; each app has its own native UI (Jetpack Compose with
+Material 3 on Android, Compose Desktop with Fluent on Windows). The plan for more platforms is in
+[`docs/multiplatform-plan.md`](docs/multiplatform-plan.md).
 
 - **Accounts.** Net worth at a glance, accounts grouped by type, monthly ledger per account with running balance.
   Reconcile an account against a bank statement (optionally posting the difference as an adjustment);
@@ -32,7 +35,21 @@ Material 3, with an optional Supabase backend for cloud backup and sync.
 2. Let Gradle sync, then run the **app** configuration on a device or emulator (Android 8.0 / API 26+).
 
 From a terminal: `./gradlew assembleDebug` builds `app/build/outputs/apk/debug/app-debug.apk`,
-`./gradlew testDebugUnitTest` runs the unit tests.
+`./gradlew :shared:jvmTest testDebugUnitTest :desktopApp:test` runs the unit tests.
+
+### Desktop (Windows)
+
+`./gradlew :desktopApp:run` starts the desktop app (on Windows, macOS or Linux; it's designed for
+Windows 11). `./gradlew :desktopApp:packageReleaseMsi` builds the Windows installer, on Windows
+only; the [Desktop workflow](.github/workflows/desktop.yml) builds it on every push. The app keeps
+its data in `%LOCALAPPDATA%\DoubleEntry` (`-Ddoubleentry.dataDir=…` points it elsewhere) and uses
+the same `local.properties` Supabase settings as the Android app.
+
+Desktop-first rather than a stretched phone screen: account list, ledger and transaction side by
+side in resizable panes, wide tables with keyboard navigation (arrow keys, Enter to edit), right-click
+menus, the transaction editor and statement import in windows of their own, bank statements dropped
+onto an account's ledger, and shortcuts (Ctrl+N new transaction, Ctrl+F search, Ctrl+1–5 sections,
+Ctrl+Enter to save). It follows the Windows light/dark setting and accent color.
 
 Build types:
 
@@ -81,7 +98,16 @@ client id next to the Supabase settings (CI: `GOOGLE_WEB_CLIENT_ID`):
 google.webClientId=<id>.apps.googleusercontent.com
 ```
 
-Without it the app can't sign in. To create the ids, in the Google
+Without it the app can't sign in. The desktop app signs in through the system browser instead
+(Supabase's own Google sign-in with PKCE, returning to a port it opens on `127.0.0.1`), so it
+needs no client id of its own, but the Supabase project needs:
+
+- the Google provider's *Client Secret* (of the web client), and the web client's *Authorized
+  redirect URIs* in Google Cloud must include `https://<project-ref>.supabase.co/auth/v1/callback`;
+- `http://127.0.0.1:*/auth/callback` under *Authentication → URL Configuration → Redirect URLs*
+  (the local stack has it in `supabase/config.toml`).
+
+To create the ids, in the Google
 Cloud project linked to the Play Console app (*APIs & Services*):
 
 1. *OAuth consent screen*: app name *DoubleEntry*, user type *External*, scopes `openid`, `email`
@@ -127,15 +153,28 @@ Cloud project linked to the Play Console app (*APIs & Services*):
 ## Project structure
 
 ```
-app/src/main/java/com/soloit/doubleentry/
-  domain/          Pure Kotlin: models, money, deterministic ids, depreciation, report calculators
-  data/            Room database and repositories (ledger, assets, invoices, settings, backup)
-  sync/            Supabase auth + PostgREST client, push/pull engine, realtime, session storage
-  system/          Invoice reminders (WorkManager), app lock, home-screen widget, launcher shortcuts
-  ui/              Compose screens per feature, shared components and theme
-app/src/test/      Unit tests (incl. fixed values for the deterministic ids) and
-                   Robolectric tests of the repositories and of sync between two devices (fake PostgREST)
-app/schemas/       Exported Room schema (keep under version control for migrations)
+shared/            Kotlin Multiplatform (Android and JVM), used by both apps
+  src/commonMain/kotlin/com/soloit/doubleentry/
+    domain/        Pure Kotlin: models, money, deterministic ids, depreciation, report calculators
+    data/          Room database and repositories (ledger, assets, invoices, settings, backup)
+    sync/          Supabase auth + PostgREST client, push/pull engine, realtime, session storage
+    ui/            Screen state: each screen's ViewModel, which both apps' screens display
+    platform/      What each app provides: key-value storage, logging
+    AppCore.kt     The ledgers on the device, sync and startup work, wired once for every app
+  src/jvmTest/     Unit tests (incl. fixed values for the deterministic ids), the repositories on an
+                   in-memory database and sync between two devices (fake PostgREST)
+  schemas/         Exported Room schema (keep under version control for migrations)
+app/               The Android app
+  src/main/java/com/soloit/doubleentry/
+    system/        Invoice reminders (WorkManager), app lock, widget, shortcuts, Keystore token storage
+    billing/       Google Play subscriptions
+    ui/            Compose screens per feature, shared components and theme
+desktopApp/        The Windows app (Compose Desktop, Fluent design)
+  src/main/kotlin/com/soloit/doubleentry/desktop/
+    platform/      Data folder, DPAPI token storage, browser sign-in, notifications, title bar
+    ui/            Pages, panes and windows per feature
+  src/test/        Renders every page to build/screenshots; enters a transaction by keyboard
+  icons/           App icon (rendered from DoubleEntry.svg)
 supabase/          Migrations, maintenance queries and CLI config for the backend
 ```
 
@@ -145,6 +184,8 @@ Amounts are stored as `Long` cents everywhere; dates as ISO `yyyy-MM-dd`. All de
 ## Continuous integration
 
 - `.github/workflows/android.yml` runs the unit tests and builds a debug APK on every push and pull request.
+- `.github/workflows/desktop.yml` tests the desktop app (keeping the page screenshots) and builds the
+  Windows installer on every push and pull request.
 - `.github/workflows/release.yml` builds the signed Play bundle when a `v*` tag is pushed and can upload it
   to the internal testing track. Setup is in [`docs/google-play.md`](docs/google-play.md).
 - `.github/workflows/supabase.yml` validates the migrations on a throwaway Supabase stack (security
