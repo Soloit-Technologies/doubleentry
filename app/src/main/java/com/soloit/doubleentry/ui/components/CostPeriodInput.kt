@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soloit.doubleentry.domain.CostPeriod
@@ -35,7 +36,6 @@ import com.soloit.doubleentry.domain.shortLabel
 import com.soloit.doubleentry.domain.yearMonth
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * The period a line's cost or income belongs to. Unset, it offers to choose one; set, it shows
@@ -158,7 +158,7 @@ private fun RangePickerModal(initial: CostPeriod, onDismiss: () -> Unit, onConfi
  */
 @Composable
 private fun RangeHeadline(start: LocalDate?, end: LocalDate?) {
-    val format = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault())
+    val format = DateTimeFormatter.ofPattern("d MMM yyyy", LocalLocale.current.platformLocale)
     val text = when {
         start == null -> "Start date – End date"
         end == null -> "${start.format(format).replace(".", "")} – End date"

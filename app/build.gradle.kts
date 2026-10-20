@@ -98,6 +98,16 @@ android {
         buildConfig = true
     }
 
+    // Main has no lint warnings: any warning fails `./gradlew lint`, which CI runs on every pull request.
+    lint {
+        warningsAsErrors = true
+        abortOnError = true
+        checkDependencies = true
+        // Dependabot keeps libraries current; these checks fail whenever a new version ships,
+        // whatever the change is.
+        disable += setOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion")
+    }
+
     testOptions {
         unitTests.isReturnDefaultValues = true
         // Robolectric runs the tests of Android-only code (billing).

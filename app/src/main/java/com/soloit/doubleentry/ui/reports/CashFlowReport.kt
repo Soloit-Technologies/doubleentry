@@ -21,7 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -147,7 +147,7 @@ fun CashFlowReportPage(onOpenSettings: () -> Unit) {
 private fun CashTimelineCard(report: CashFlowReport) {
     val finance = AppTheme.finance
     val timeline = report.timeline
-    var selected by remember(timeline) { mutableStateOf(timeline.lastIndex) }
+    var selected by remember(timeline) { mutableIntStateOf(timeline.lastIndex) }
     val point = timeline[selected.coerceIn(0, timeline.lastIndex)]
     val labels = remember(timeline) {
         if (report.dailyTimeline) timeline.map { it.start.dayOfMonth.toString() } else timeline.map { it.start.yearMonth.monthAbbreviation() }
