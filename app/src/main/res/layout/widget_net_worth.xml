@@ -9,15 +9,15 @@
     android:paddingHorizontal="16dp"
     android:paddingVertical="12dp">
 
-    <!-- The amount takes the height the label leaves and shrinks to fit it, so a large system font
+    <!-- The amount takes the height below the label and shrinks to fit it, so a large system font
          doesn't push it out of a one-cell-high widget. -->
-    <LinearLayout
+    <RelativeLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:layout_weight="1">
 
         <TextView
+            android:id="@+id/widget_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:ellipsize="end"
@@ -29,8 +29,8 @@
         <TextView
             android:id="@+id/widget_amount"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_height="match_parent"
+            android:layout_below="@id/widget_label"
             android:autoSizeMaxTextSize="22sp"
             android:autoSizeMinTextSize="12sp"
             android:autoSizeTextType="uniform"
@@ -41,7 +41,7 @@
             android:text="@string/widget_placeholder"
             android:textColor="@color/widget_text"
             android:textStyle="bold" />
-    </LinearLayout>
+    </RelativeLayout>
 
     <ImageButton
         android:id="@+id/widget_add"

@@ -44,7 +44,7 @@ object GoogleSignIn {
             throw SyncException("Sign in with Google didn't work. Please try again.")
         }
         val google = GoogleIdTokenCredential.createFrom(credential.data)
-        return GoogleIdToken(google.idToken, nonce, google.id)
+        return GoogleIdToken(google.idToken, nonce, google.email.orEmpty())
     }
 
     private val GOOGLE_TYPES = setOf(
