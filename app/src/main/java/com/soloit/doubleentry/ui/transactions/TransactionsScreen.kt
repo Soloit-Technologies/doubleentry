@@ -1,6 +1,5 @@
 package com.soloit.doubleentry.ui.transactions
 
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -44,6 +43,8 @@ import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.MonthSelector
 import com.soloit.doubleentry.ui.components.ScreenPadding
 import com.soloit.doubleentry.ui.components.SearchField
+import com.soloit.doubleentry.ui.components.TextAndFigures
+import com.soloit.doubleentry.ui.components.isLargeFont
 
 @Composable
 fun TransactionsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: () -> Unit) {
@@ -116,8 +117,8 @@ private fun TransactionRow(row: TransactionRowUi) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         AccountTypeAvatar(row.categoryType)
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(row.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TextAndFigures(figures = { MoneyText(row.amount, fontWeight = FontWeight.Medium) }) {
+            Text(row.title, style = MaterialTheme.typography.bodyLarge, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
             Text(
                 row.flow,
                 style = MaterialTheme.typography.bodySmall,
@@ -126,7 +127,5 @@ private fun TransactionRow(row: TransactionRowUi) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(12.dp))
-        MoneyText(row.amount, fontWeight = FontWeight.Medium)
     }
 }

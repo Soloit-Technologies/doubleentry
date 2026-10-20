@@ -82,6 +82,8 @@ import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.PickerAction
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SectionHeader
+import com.soloit.doubleentry.ui.components.TextAndFigures
+import com.soloit.doubleentry.ui.components.isLargeFont
 import com.soloit.doubleentry.ui.theme.AppTheme
 import java.time.LocalDate
 import kotlin.math.absoluteValue
@@ -484,18 +486,19 @@ private fun NewRow(index: Int, count: Int, row: NewRowUi, onToggle: () -> Unit, 
     GroupedItem(index, count, onClick = onClick) {
         Row(Modifier.fillMaxWidth().padding(end = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = row.included, onCheckedChange = { onToggle() })
-            Column(Modifier.weight(1f).alpha(if (row.included) 1f else 0.6f)) {
-                Text(row.text.ifBlank { "No text" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${row.date.formatMedium()} · ${row.counter ?: "Choose account"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (!row.isBooked && row.included) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            val alpha = if (row.included) 1f else 0.6f
+            TextAndFigures(figures = { MoneyText(row.amount, tone = AmountTone.Signed, showSign = true, modifier = Modifier.alpha(alpha)) }) {
+                Column(Modifier.alpha(alpha)) {
+                    Text(row.text.ifBlank { "No text" }, style = MaterialTheme.typography.bodyLarge, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${row.date.formatMedium()} · ${row.counter ?: "Choose account"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (!row.isBooked && row.included) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (isLargeFont()) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
-            Spacer(Modifier.width(12.dp))
-            MoneyText(row.amount, tone = AmountTone.Signed, showSign = true, modifier = Modifier.alpha(if (row.included) 1f else 0.6f))
         }
     }
 }
@@ -504,12 +507,10 @@ private fun NewRow(index: Int, count: Int, row: NewRowUi, onToggle: () -> Unit, 
 private fun LedgerRow(index: Int, count: Int, title: String, subtitle: String, amount: Long, onClick: () -> Unit) {
     GroupedItem(index, count, onClick = onClick) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TextAndFigures(figures = { MoneyText(amount, tone = AmountTone.Signed, showSign = true) }) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.width(12.dp))
-            MoneyText(amount, tone = AmountTone.Signed, showSign = true)
         }
     }
 }

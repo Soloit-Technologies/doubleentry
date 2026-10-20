@@ -4,12 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -59,6 +57,7 @@ import com.soloit.doubleentry.ui.components.LinesEditor
 import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.SectionHeader
+import com.soloit.doubleentry.ui.components.TextAndFigures
 import com.soloit.doubleentry.ui.transactions.BookingLines
 import kotlin.math.absoluteValue
 
@@ -119,12 +118,10 @@ fun StatementBookingDialog(
             ) {
                 SectionCard(contentPadding = PaddingValues(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
+                        TextAndFigures(figures = { MoneyText(row.amount, tone = AmountTone.Signed, showSign = true) }) {
                             Text(row.text.ifBlank { "No text" }, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(row.date.formatMedium(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Spacer(Modifier.width(12.dp))
-                        MoneyText(row.amount, tone = AmountTone.Signed, showSign = true)
                     }
                 }
                 OutlinedTextField(

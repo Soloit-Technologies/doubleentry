@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +30,7 @@ import com.soloit.doubleentry.ui.appViewModel
 import com.soloit.doubleentry.ui.components.AmountRow
 import com.soloit.doubleentry.ui.components.AmountTone
 import com.soloit.doubleentry.ui.components.CardDivider
+import com.soloit.doubleentry.ui.components.FigureRow
 import com.soloit.doubleentry.ui.components.LoadingState
 import com.soloit.doubleentry.ui.components.MoneyText
 import com.soloit.doubleentry.ui.components.SectionCard
@@ -56,9 +56,9 @@ fun IncomeStatementReportPage(onOpenSettings: () -> Unit) {
         val previous = state.previous
         item { NetIncomeHero(report, state.period.label, previous, state.previousLabel) }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile("Revenue", report.totalRevenue, Modifier.weight(1f), Icons.AutoMirrored.Rounded.TrendingUp, finance.revenue)
-                StatTile("Expenses", report.totalExpenses, Modifier.weight(1f), Icons.AutoMirrored.Rounded.TrendingDown, finance.expense)
+            FigureRow(spacing = 8.dp) { item ->
+                StatTile("Revenue", report.totalRevenue, item, Icons.AutoMirrored.Rounded.TrendingUp, finance.revenue)
+                StatTile("Expenses", report.totalExpenses, item, Icons.AutoMirrored.Rounded.TrendingDown, finance.expense)
             }
         }
         if (previous != null && state.previousLabel != null) {
