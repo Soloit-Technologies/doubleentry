@@ -64,12 +64,53 @@ class ReportsTest {
         assertEquals(40_000L, report.totalRevenue)
         assertEquals(27_000L, report.totalExpenses)
         assertEquals(13_000L, report.netIncome)
-        assertEquals(28_000L, report.revenueNetOfIncomeTax)
         assertEquals(25_000L, report.ebt)
+        assertEquals(listOf(8910), report.taxRows.map { it.number })
         assertEquals(3_000L, report.deferredFromRevenue)
         assertEquals(10_000L, report.spendableNetIncome)
         assertEquals(listOf("Living"), report.expenses.groups.map { it.title })
         assertEquals(listOf(8910), report.expenses.ungrouped.map { it.number })
+    }
+
+    @Test
+    fun incomeStatementBreakdownStepsAddUp() {
+        val depreciation = Account("dep", 7830, "Car depreciation", AccountType.Expense)
+        val movements = mapOf("sal" to 40_000L, "rent" to 10_000L, "dep" to 2_000L, "tax" to 12_000L)
+        val payslip = tx("pay", Triple(pension, 3_000L, EntryType.Debit), Triple(salary, 3_000L, EntryType.Credit))
+        val report = IncomeStatementCalculator.compute(
+            accounts + depreciation, movements, listOf(payslip),
+            IncomeStatementSettings(taxPrefixes = listOf("891"), depreciationPrefixes = listOf("78"), deferredAssetPrefixes = listOf("194")),
+        )
+        assertEquals(
+            listOf(
+                "Revenue" to 40_000L,
+                "Operating expenses" to 10_000L,
+                "Before tax and depreciation" to 30_000L,
+                "Depreciation" to 2_000L,
+                "Before tax" to 28_000L,
+                "Income tax" to 12_000L,
+                "Net income" to 16_000L,
+                "Routed to deferred assets" to 3_000L,
+                "Spendable net income" to 13_000L,
+            ),
+            report.breakdown.map { it.label to it.amount },
+        )
+        assertEquals(listOf(7830), report.breakdown.single { it.label == "Depreciation" }.accounts.map { it.number })
+
+        val plain = IncomeStatementCalculator.compute(accounts, movements, emptyList(), IncomeStatementSettings())
+        assertEquals(listOf("Revenue", "Expenses", "Net income"), plain.breakdown.map { it.label })
+    }
+
+    @Test
+    fun incomeStatementCountsAnAccountInBothListsOnceAsTax() {
+        val movements = mapOf("sal" to 40_000L, "tax" to 12_000L)
+        val report = IncomeStatementCalculator.compute(
+            accounts, movements, emptyList(),
+            IncomeStatementSettings(taxPrefixes = listOf("891"), depreciationPrefixes = listOf("89")),
+        )
+        assertEquals(12_000L, report.taxExpenses)
+        assertEquals(0L, report.depreciationExpenses)
+        assertEquals(0L, report.operatingExpenses)
     }
 
     @Test
@@ -84,6 +125,21 @@ class ReportsTest {
         )
         assertEquals(listOf("Tax", "Living"), grouped.expenses.groups.map { it.title })
         assertEquals(listOf(6010, 5010), grouped.expenses.groups[1].rows.map { it.number })
+    }
+
+    @Test
+    fun monthlyAverageDividesEveryRowAndKeepsTotalsConsistent() {
+        val movements = mapOf("sal" to 480_000L, "rent" to 120_000L, "food" to 100_000L)
+        val payslip = tx("pay", Triple(pension, 36_000L, EntryType.Debit), Triple(salary, 36_000L, EntryType.Credit))
+        val report = IncomeStatementCalculator.computeMonthlyAverage(
+            accounts, movements, listOf(payslip),
+            IncomeStatementSettings(expenseGroups = listOf(AccountGroup("Living", listOf("5", "6"))), deferredAssetPrefixes = listOf("194")),
+            months = 12,
+        )
+        assertEquals(40_000L, report.totalRevenue)
+        assertEquals(listOf(8_333L, 10_000L), report.expenses.groups.single().rows.map { it.amount }.sorted())
+        assertEquals(18_333L, report.totalExpenses)
+        assertEquals(3_000L, report.deferredFromRevenue)
     }
 
     @Test

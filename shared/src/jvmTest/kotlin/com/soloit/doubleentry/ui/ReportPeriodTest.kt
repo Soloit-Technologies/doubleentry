@@ -1,12 +1,15 @@
 package com.soloit.doubleentry.ui
 
 import com.soloit.doubleentry.ui.components.changeLabel
+import com.soloit.doubleentry.ui.reports.AverageWindow
 import com.soloit.doubleentry.ui.reports.CompareMode
 import com.soloit.doubleentry.ui.reports.PeriodMode
 import com.soloit.doubleentry.ui.reports.ReportPeriod
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
@@ -47,6 +50,30 @@ class ReportPeriodTest {
         val year = ReportPeriod(PeriodMode.Year, year = 2026)
         assertEquals(2025, year.comparedWith(CompareMode.PreviousPeriod)!!.year)
         assertEquals(2025, year.comparedWith(CompareMode.LastYear)!!.year)
+    }
+
+    @Test
+    fun twelveMonthAverageCoversTheYearBeforeASingleMonth() {
+        val month = ReportPeriod(PeriodMode.Month, YearMonth.of(2026, 3))
+        val full = month.averageWindow(historyStart = YearMonth.of(2020, 1))!!
+        assertEquals(AverageWindow(YearMonth.of(2025, 3), YearMonth.of(2026, 2)), full)
+        assertEquals(12, full.months)
+        assertEquals("12-month avg. (Mar 2025–Feb 2026)", full.label)
+        assertNull(ReportPeriod(PeriodMode.YearToDate, YearMonth.of(2026, 3)).averageWindow(YearMonth.of(2020, 1)))
+        assertTrue(CompareMode.TwelveMonthAverage in CompareMode.availableFor(PeriodMode.Month))
+        assertFalse(CompareMode.TwelveMonthAverage in CompareMode.availableFor(PeriodMode.Year))
+    }
+
+    @Test
+    fun twelveMonthAverageStartsWhereTheHistoryDoes() {
+        val october = ReportPeriod(PeriodMode.Month, YearMonth.of(2026, 10))
+        val since = YearMonth.of(2026, 1)
+        val partial = october.averageWindow(since)!!
+        assertEquals(9, partial.months)
+        assertEquals("9-month avg. (Jan–Sep 2026)", partial.label)
+        assertEquals("1-month avg. (Jan 2026)", ReportPeriod(PeriodMode.Month, YearMonth.of(2026, 2)).averageWindow(since)!!.label)
+        assertNull(ReportPeriod(PeriodMode.Month, since).averageWindow(since))
+        assertNull(october.averageWindow(historyStart = null))
     }
 
     @Test
