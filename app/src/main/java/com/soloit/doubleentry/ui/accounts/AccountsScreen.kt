@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Warning
@@ -48,6 +50,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,9 +83,13 @@ import com.soloit.doubleentry.ui.components.TextAndFigures
 import com.soloit.doubleentry.ui.components.color
 import com.soloit.doubleentry.ui.components.fitToWidth
 import com.soloit.doubleentry.ui.components.isLargeFont
+import com.soloit.doubleentry.ui.components.scrollItemToTop
 import com.soloit.doubleentry.ui.theme.AppTheme
 import com.soloit.doubleentry.ui.theme.tabular
 import java.time.YearMonth
+import kotlinx.coroutines.launch
+
+private const val SearchKey = "search"
 
 @Composable
 fun AccountsScreen(
@@ -98,6 +105,8 @@ fun AccountsScreen(
     // Collapsed section names, comma separated (a plain string survives process death).
     var collapsed by rememberSaveable { mutableStateOf("") }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
@@ -116,7 +125,8 @@ fun AccountsScreen(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
+            state = listState,
             contentPadding = ScreenPadding,
         ) {
             item { MonthSelector(state.month, vm::setMonth, Modifier.padding(bottom = 12.dp)) }
@@ -133,12 +143,13 @@ fun AccountsScreen(
                 }
                 else -> {
                     item { NetWorthHero(state, onClick = { onOpenNetWorth(state.month) }) }
-                    item {
+                    item(key = SearchKey) {
                         SearchField(
                             state.query,
                             vm::setQuery,
                             "Search accounts",
                             Modifier.padding(top = 16.dp, bottom = 4.dp),
+                            onFocus = { scope.launch { listState.scrollItemToTop(SearchKey) } },
                         )
                     }
                     if (state.sections.isEmpty()) {

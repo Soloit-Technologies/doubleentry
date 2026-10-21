@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -180,7 +181,7 @@ fun AccountLedgerScreen(
             )
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), state = listState, contentPadding = ScreenPadding) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), state = listState, contentPadding = ScreenPadding) {
             item { SearchField(vm.query, { vm.query = it }, "Search all months", Modifier.padding(bottom = 12.dp)) }
             // A search covers every month, so the month selector and that month's balances step aside.
             if (!state.searching) item { MonthSelector(state.month, vm::setMonth) }

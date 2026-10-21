@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -289,6 +290,7 @@ fun SearchField(
     onQueryChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    onFocus: () -> Unit = {},
 ) {
     OutlinedTextField(
         value = query,
@@ -306,8 +308,16 @@ fun SearchField(
             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
         ),
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocus() },
     )
+}
+
+/**
+ * Scrolls the on-screen item keyed [key] to the top of the list. Used when a search field below a
+ * summary card gets focus, so its results show between it and the keyboard.
+ */
+suspend fun LazyListState.scrollItemToTop(key: Any) {
+    layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.let { animateScrollToItem(it.index) }
 }
 
 @Composable
