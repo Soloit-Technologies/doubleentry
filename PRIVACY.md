@@ -26,8 +26,8 @@ uninstalling it or clearing its storage in Android's app settings.
 
 Cloud backup is optional and off until you sign in under *Settings → Cloud backup & sync*.
 Downloading a backup is free. Uploading is free during early access and will later need a cloud
-backup subscription; we'll tell you in the app before that changes. Each ledger can store up to
-100 MB in the cloud.
+backup subscription; we'll tell you in the app before that changes. Each ledger can store 5 MB in
+the cloud to start with, and more each day after, up to 50 MB.
 
 **What we store**
 

@@ -5,10 +5,17 @@
 --   source 'early_access' and no end), and so does every existing account without a row.
 --   `service_control.early_access` switches this off for accounts made from then on; rows already
 --   given stay until changed by hand (see supabase/README.md, Early access).
--- * Storage: each ledger may store `service_control.ledger_quota_bytes` (100 MB) of rows,
---   tombstones included, counted in ledger_usage by triggers on the synced tables. Over the quota,
---   new rows are refused with `ledger_full`; edits and deletions of existing rows still go through
---   until the ledger is 10% over, so a full ledger can still be tidied up.
+-- * Storage: each ledger may store rows, tombstones included, up to an allowance that grows with
+--   its age: 5 MB to start (`service_control.ledger_quota_start_bytes`), 25 KB more each day
+--   (`ledger_quota_daily_bytes`), at most 50 MB (`ledger_quota_bytes`). That leaves room to import
+--   years of history at once, while no account can fill the database in a day. Counted in
+--   ledger_usage by triggers on the synced tables. Over the allowance, new rows are refused with
+--   `ledger_full`; edits and deletions of existing rows still go through until the ledger is 10%
+--   over, so a full ledger can still be tidied up.
+-- * Database size: a cron job measures the whole database every 15 minutes. Past
+--   `early_access_max_database_bytes` (350 MB) it ends early access for new accounts; past
+--   `max_database_bytes` (425 MB) every ledger refuses new rows with `ledger_full`. Both keep the
+--   project under the plan's 500 MB, however many accounts there are.
 -- * Sharing: at most 20 members per ledger and 20 open invites per ledger.
 --
 -- Safe to re-run.
@@ -18,14 +25,18 @@
 -- 1. Switches
 -- -----------------------------------------------------------------------------
 alter table public.service_control add column if not exists early_access boolean not null default true;
-alter table public.service_control add column if not exists ledger_quota_bytes bigint not null default 104857600;
+alter table public.service_control add column if not exists ledger_quota_bytes bigint not null default 52428800;
+alter table public.service_control add column if not exists ledger_quota_start_bytes bigint not null default 5242880;
+alter table public.service_control add column if not exists ledger_quota_daily_bytes bigint not null default 25600;
+alter table public.service_control add column if not exists early_access_max_database_bytes bigint not null default 367001600;
+alter table public.service_control add column if not exists max_database_bytes bigint not null default 445644800;
+-- Last measured by check_database_size().
+alter table public.service_control add column if not exists database_bytes bigint not null default 0;
 
-do $$
-begin
-  alter table public.service_control add constraint service_control_ledger_quota_bytes_check check (ledger_quota_bytes > 0);
-exception when duplicate_object then null;
-end;
-$$;
+alter table public.service_control drop constraint if exists service_control_storage_check;
+alter table public.service_control add constraint service_control_storage_check check (
+  ledger_quota_bytes > 0 and ledger_quota_start_bytes > 0 and ledger_quota_daily_bytes >= 0
+  and early_access_max_database_bytes > 0 and max_database_bytes > 0 and database_bytes >= 0);
 
 -- -----------------------------------------------------------------------------
 -- 2. Early access
@@ -76,6 +87,21 @@ create table if not exists public.ledger_usage (
 alter table public.ledger_usage enable row level security;
 revoke all on public.ledger_usage from anon, authenticated;
 
+-- What a ledger made then may store now: the start allowance, plus the daily one for each day
+-- since, up to the cap.
+create or replace function public.ledger_allowance(ledger_created_at timestamptz)
+returns bigint
+language sql
+stable
+set search_path = ''
+as $$
+  select least(c.ledger_quota_bytes,
+               c.ledger_quota_start_bytes + c.ledger_quota_daily_bytes * greatest(now()::date - ledger_created_at::date, 0))
+  from public.service_control c where c.id;
+$$;
+
+revoke all on function public.ledger_allowance(timestamptz) from public, anon, authenticated;
+
 -- Statement triggers with transition tables, so an upload of 500 rows updates the count once.
 create or replace function public.count_ledger_usage()
 returns trigger
@@ -84,9 +110,12 @@ security definer
 set search_path = ''
 as $$
 declare
-  quota bigint := (select c.ledger_quota_bytes from public.service_control c where c.id);
-  over boolean;
+  control public.service_control;
+  -- The allowance of a ledger this statement took over it, if any.
+  exceeded bigint;
 begin
+  select * into control from public.service_control c where c.id;
+
   if tg_op = 'DELETE' then
     -- Also runs for rows deleted with their ledger, whose usage row is already gone.
     update public.ledger_usage u set bytes = greatest(u.bytes - d.bytes, 0)
@@ -95,17 +124,26 @@ begin
     return null;
   end if;
 
-  -- New rows need room under the quota; edits that grow the ledger may use 10% more.
+  -- New rows need room under the allowance; edits that grow the ledger may use 10% more.
   if tg_op = 'INSERT' then
+    -- The whole database is nearly full (check_database_size()): no new rows in any ledger.
+    if control.database_bytes > control.max_database_bytes and exists (select from new_rows) then
+      raise exception 'ledger_full' using errcode = 'P0001', detail = 'The cloud storage is full.';
+    end if;
+
     with delta as (
       select n.ledger_id, sum(octet_length(row_to_json(n.*)::text))::bigint as bytes from new_rows n group by n.ledger_id
     ), counted as (
       insert into public.ledger_usage as u (ledger_id, bytes)
       select d.ledger_id, d.bytes from delta d
       on conflict (ledger_id) do update set bytes = u.bytes + excluded.bytes
-      returning u.bytes
+      returning u.ledger_id, u.bytes
     )
-    select coalesce(bool_or(c.bytes > quota), false) into over from counted c;
+    select a.allowance into exceeded from (
+      select c.bytes, public.ledger_allowance(l.created_at) as allowance
+      from counted c join public.ledgers l on l.id = c.ledger_id
+    ) a
+    where a.bytes > a.allowance limit 1;
   else
     with delta as (
       select d.ledger_id, sum(d.bytes)::bigint as bytes from (
@@ -119,14 +157,18 @@ begin
       -- its ledgers, and their usage, are being deleted.
       update public.ledger_usage u set bytes = greatest(u.bytes + d.bytes, 0)
       from delta d where u.ledger_id = d.ledger_id
-      returning u.bytes, d.bytes as grown
+      returning u.ledger_id, u.bytes, d.bytes as grown
     )
-    select coalesce(bool_or(c.grown > 0 and c.bytes > quota + quota / 10), false) into over from counted c;
+    select a.allowance into exceeded from (
+      select c.bytes, c.grown, public.ledger_allowance(l.created_at) as allowance
+      from counted c join public.ledgers l on l.id = c.ledger_id
+    ) a
+    where a.grown > 0 and a.bytes > a.allowance + a.allowance / 10 limit 1;
   end if;
 
-  if over then
+  if exceeded is not null then
     raise exception 'ledger_full' using errcode = 'P0001',
-      detail = format('This ledger has used its %s of cloud storage.', pg_size_pretty(quota));
+      detail = format('This ledger has used its %s of cloud storage for now.', pg_size_pretty(exceeded));
   end if;
   return null;
 end;
@@ -208,3 +250,31 @@ create trigger trg_ledger_invites_limit
 create extension if not exists pg_cron;
 select cron.schedule('purge-ledger-invites', '23 3 * * *',
   $$delete from public.ledger_invites where expires_at < now() - interval '30 days'$$);
+
+-- -----------------------------------------------------------------------------
+-- 5. Size of the whole database
+-- -----------------------------------------------------------------------------
+-- The ledgers' counts leave out indexes, row headers, dead rows and the other tables, so what the
+-- plan's limit applies to is measured instead. Early access, once ended here, stays ended until it's
+-- switched on again by hand. New rows are taken again as soon as a measurement is back under
+-- max_database_bytes (or the limit is raised).
+create or replace function public.check_database_size()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  size bigint := pg_database_size(current_database());
+begin
+  update public.service_control c set
+    database_bytes = size,
+    early_access = c.early_access and size <= c.early_access_max_database_bytes
+  where c.id;
+end;
+$$;
+
+revoke all on function public.check_database_size() from public, anon, authenticated;
+
+select cron.schedule('check-database-size', '*/15 * * * *', $$select public.check_database_size()$$);
+select public.check_database_size();

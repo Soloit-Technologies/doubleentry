@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(55);
+select plan(63);
 
 -- -----------------------------------------------------------------------------
 -- Guards for whatever is added later
@@ -255,6 +255,56 @@ reset role;
 delete from public.accounts where ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 select is((select bytes from public.ledger_usage where ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), 0::bigint,
   'purging rows frees their space');
+
+-- The allowance grows with the ledger's age, up to the cap.
+update public.service_control set ledger_quota_bytes = default, ledger_quota_start_bytes = 1, ledger_quota_daily_bytes = 100000;
+select set_config('request.jwt.claims', '{"sub": "22222222-2222-4222-8222-222222222222", "role": "authenticated"}', true);
+set local role authenticated;
+select throws_ok(
+  $$ insert into public.accounts (ledger_id, id, number, name, type, modified_at)
+     values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', gen_random_uuid(), 1970, 'Too soon', 0, now()) $$,
+  'P0001', 'ledger_full', 'a new ledger stores only the start allowance');
+reset role;
+update public.ledgers set created_at = now() - interval '1 day' where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+select set_config('request.jwt.claims', '{"sub": "22222222-2222-4222-8222-222222222222", "role": "authenticated"}', true);
+set local role authenticated;
+select lives_ok(
+  $$ insert into public.accounts (ledger_id, id, number, name, type, modified_at)
+     values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 1970, 'A day later', 0, now()) $$,
+  'a day later it stores more');
+reset role;
+update public.service_control set ledger_quota_bytes = 1;
+select set_config('request.jwt.claims', '{"sub": "22222222-2222-4222-8222-222222222222", "role": "authenticated"}', true);
+set local role authenticated;
+select throws_ok(
+  $$ insert into public.accounts (ledger_id, id, number, name, type, modified_at)
+     values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', gen_random_uuid(), 1971, 'Over the cap', 0, now()) $$,
+  'P0001', 'ledger_full', 'but never more than the cap');
+reset role;
+
+-- -----------------------------------------------------------------------------
+-- Size of the whole database
+-- -----------------------------------------------------------------------------
+update public.service_control set ledger_quota_bytes = default, ledger_quota_start_bytes = default,
+  ledger_quota_daily_bytes = default, early_access = true, early_access_max_database_bytes = 1, max_database_bytes = 1;
+select public.check_database_size();
+select ok((select database_bytes > 0 and not early_access from public.service_control),
+  'a nearly full database ends early access for new accounts');
+select set_config('request.jwt.claims', '{"sub": "22222222-2222-4222-8222-222222222222", "role": "authenticated"}', true);
+set local role authenticated;
+select throws_ok(
+  $$ insert into public.accounts (ledger_id, id, number, name, type, modified_at)
+     values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', gen_random_uuid(), 1972, 'Database full', 0, now()) $$,
+  'P0001', 'ledger_full', 'a full database takes no new rows in any ledger');
+select lives_ok(
+  $$ update public.accounts set name = 'Still editable', modified_at = now() + interval '3 seconds' where id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' $$,
+  'but existing rows can still be edited');
+select throws_ok($$ select public.check_database_size() $$, '42501', null, 'only the server measures the database');
+reset role;
+update public.service_control set early_access_max_database_bytes = default, max_database_bytes = default;
+select public.check_database_size();
+select ok((select not early_access from public.service_control),
+  'early access stays ended until switched on by hand');
 
 -- -----------------------------------------------------------------------------
 -- Members and invites per ledger
