@@ -1,6 +1,4 @@
-<p align="center"><img src="desktopApp/icons/DoubleEntry.svg" width="112" alt="DoubleEntry icon"></p>
-
-# DoubleEntry
+# <img src="desktopApp/icons/DoubleEntry.svg" width="40" align="center" alt=""> DoubleEntry
 
 Personal double-entry bookkeeping for Android and Windows, written in Kotlin, with an optional
 Supabase backend for cloud backup and sync. The bookkeeping rules, reports, statement import and
