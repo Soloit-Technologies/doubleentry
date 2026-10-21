@@ -225,6 +225,6 @@ DoubleEntry is open source. Copyright © Soloit Technologies AB.
   shipped in the official apps on every platform.
 - **Name and icon.** The licenses don't cover the DoubleEntry name, the Soloit name or the app icon
   and artwork. Forks must use a different name and icon and must not present themselves as the
-  official app.
+  official app. More in [`TRADEMARKS.md`](TRADEMARKS.md).
 
 iOS and Windows versions are planned. No date yet.
