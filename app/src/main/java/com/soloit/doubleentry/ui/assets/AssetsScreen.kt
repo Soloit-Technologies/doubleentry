@@ -101,7 +101,7 @@ fun AssetsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: ()
                             vm::setQuery,
                             "Search assets",
                             Modifier.padding(vertical = 4.dp),
-                            onFocus = { scope.launch { listState.scrollItemToTop(SearchKey) } },
+                            onActivate = { scope.launch { listState.scrollItemToTop(SearchKey) } },
                         )
                     }
                     items(state.assets, key = { it.id }) { asset -> AssetCard(asset) { onOpen(asset.id) } }

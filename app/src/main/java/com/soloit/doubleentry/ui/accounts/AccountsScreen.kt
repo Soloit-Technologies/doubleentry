@@ -149,7 +149,7 @@ fun AccountsScreen(
                             vm::setQuery,
                             "Search accounts",
                             Modifier.padding(top = 16.dp, bottom = 4.dp),
-                            onFocus = { scope.launch { listState.scrollItemToTop(SearchKey) } },
+                            onActivate = { scope.launch { listState.scrollItemToTop(SearchKey) } },
                         )
                     }
                     if (state.sections.isEmpty()) {

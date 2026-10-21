@@ -134,7 +134,7 @@ fun InvoicesScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: 
                     state.query,
                     vm::setQuery,
                     "Search invoices",
-                    onFocus = { scope.launch { listState.scrollItemToTop(SearchKey) } },
+                    onActivate = { scope.launch { listState.scrollItemToTop(SearchKey) } },
                 )
             }
             if (state.rows.isEmpty()) {
