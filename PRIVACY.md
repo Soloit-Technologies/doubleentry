@@ -122,5 +122,5 @@ effect.
 ## Contact
 
 Soloit Technologies AB, [privacy@soloit.se](mailto:privacy@soloit.se). Questions about the app
-can also go to the [issue tracker](https://github.com/Soloit-Technologies/doubleentry-android/issues);
+can also go to the [issue tracker](https://github.com/Soloit-Technologies/doubleentry/issues);
 issues are public, so don't include personal or financial details there.

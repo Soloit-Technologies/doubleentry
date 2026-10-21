@@ -1,7 +1,7 @@
 # Security
 
 Please report vulnerabilities privately through
-[GitHub's private vulnerability reporting](https://github.com/Soloit-Technologies/doubleentry-android/security/advisories/new),
+[GitHub's private vulnerability reporting](https://github.com/Soloit-Technologies/doubleentry/security/advisories/new),
 not in a public issue. Include what you found, how to reproduce it, and what it lets an attacker do.
 You'll get an answer within a week.
 
