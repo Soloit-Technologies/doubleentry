@@ -58,7 +58,7 @@ not a personal one.
 
 | Section | Answer |
 |---|---|
-| Privacy policy | `https://github.com/Soloit-Technologies/doubleentry-android/blob/main/PRIVACY.md` |
+| Privacy policy | `https://github.com/Soloit-Technologies/doubleentry/blob/main/PRIVACY.md` |
 | App access | All functionality is available without special access |
 | Ads | No ads |
 | Content rating | IARC questionnaire: category *Utility, productivity, communication or other*; answer *No* throughout. Expect *Everyone / PEGI 3* |
@@ -175,7 +175,7 @@ server enforces this is in [`supabase/README.md`](../supabase/README.md#accounts
 | App access | Cloud backup needs an account. Reviewers can sign in with any Google account, but would then have to buy. Instead, create a Google account for them (e.g. a new Gmail address, without 2-step verification), sign in with it once in the app so the account exists, give it complimentary access (SQL in `supabase/README.md`), and enter its address and password here |
 | Data safety → collection | **Yes**, the app collects data. *Personal info → Email address* and *Name* (from the Google account; account management, required for cloud backup). *Financial info → Other financial info* (the ledger, for app functionality, optional: only with cloud backup). *Financial info → Purchase history* (subscription status, app functionality). *App info and performance → Diagnostics* (sync error reports: kind of error, app version, no ledger content; linked to the account; analytics, to find and fix sync problems). None of it is shared with third parties or used for ads |
 | Data safety → security | Encrypted in transit: yes (HTTPS). Users can request deletion: yes |
-| Data deletion | In the app: *Cloud backup & sync → Delete account*. Web link for deletion without the app: `https://github.com/Soloit-Technologies/doubleentry-android/blob/main/PRIVACY.md#deleting-your-account` (by email to privacy@soloit.se) |
+| Data deletion | In the app: *Cloud backup & sync → Delete account*. Web link for deletion without the app: `https://github.com/Soloit-Technologies/doubleentry/blob/main/PRIVACY.md#deleting-your-account` (by email to privacy@soloit.se) |
 | Privacy policy | [`PRIVACY.md`](../PRIVACY.md) covers what is stored in the cloud, who sees it (shared ledgers), where (Supabase, `eu-west-1`), how long (until the account is deleted; error reports at most 90 days) and that payments are handled by Google Play. Keep it in step with `supabase/` |
 | Store listing | Mention the subscription in the full description: free app, optional paid cloud backup, prices in the listing come from Google Play. Rewrite the offline-only claims, which would then be misleading: "Your ledger stays on your phone. There is no sign-up, no ads and no tracking." in `full_description.txt` and "Private, offline, no account." in `short_description.txt` |
 

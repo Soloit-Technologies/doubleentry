@@ -283,7 +283,7 @@ private fun AboutSection() {
         DetailRow("Data folder", AppDirectories.data.path)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { runCatching { Desktop.getDesktop().open(AppDirectories.data) } }) { Text("Open data folder") }
-            Button(onClick = { runCatching { Desktop.getDesktop().browse(java.net.URI("https://github.com/Soloit-Technologies/doubleentry-android")) } }) { Text("Source code") }
+            Button(onClick = { runCatching { Desktop.getDesktop().browse(java.net.URI("https://github.com/Soloit-Technologies/doubleentry")) } }) { Text("Source code") }
         }
         Secondary("DoubleEntry is free software under the Mozilla Public License 2.0.")
     }

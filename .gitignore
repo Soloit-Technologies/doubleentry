@@ -8,6 +8,9 @@ build/
 .idea/
 .kotlin/
 
+# VS Code Java extension output
+bin/
+
 # Machine-specific and secret configuration
 local.properties
 keystore.properties
