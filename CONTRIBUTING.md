@@ -22,4 +22,4 @@ DoubleEntry is licensed under the [Mozilla Public License 2.0](LICENSE). By subm
 request, you agree that your contribution is licensed under the same terms.
 
 The name *DoubleEntry* and its logo identify the official app; forks published elsewhere should use
-their own name and application id.
+their own name and application id (see [`TRADEMARKS.md`](TRADEMARKS.md)).
