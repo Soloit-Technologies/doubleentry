@@ -1,3 +1,5 @@
+<p align="center"><img src="desktopApp/icons/DoubleEntry.svg" width="112" alt="DoubleEntry icon"></p>
+
 # DoubleEntry
 
 Personal double-entry bookkeeping for Android and Windows, written in Kotlin, with an optional
