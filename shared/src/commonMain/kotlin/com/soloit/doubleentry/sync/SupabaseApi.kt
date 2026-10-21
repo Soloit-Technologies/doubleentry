@@ -40,6 +40,13 @@ class SessionExpiredException(cause: Throwable? = null) : SyncException("Your se
 class CloudAccessRequiredException(cause: Throwable? = null) :
     SyncException("Cloud backup isn't active for this account, so changes aren't uploaded.", cause)
 
+/**
+ * The server refused new rows because the ledger has used its cloud storage (`ledger_full`).
+ * Edits to rows already in the cloud still go through; new ones stay on this device.
+ */
+class LedgerFullException(cause: Throwable? = null) :
+    SyncException("This ledger has used all its cloud storage, so new changes stay on this device.", cause)
+
 /** The Google Play purchase is already linked to a different DoubleEntry account. */
 class PurchaseOwnedElsewhereException(cause: Throwable? = null) :
     SyncException("This Google Play subscription belongs to another DoubleEntry account. Sign in with that account to use it.", cause)
@@ -65,7 +72,7 @@ data class AuthUser(val id: String? = null, val email: String? = null)
 @Serializable
 data class CloudAccess(
     val active: Boolean = false,
-    /** `google_play` or `complimentary`; null without any subscription. */
+    /** `google_play`, `complimentary` or `early_access`; null without any subscription. */
     val source: String? = null,
     @SerialName("base_plan_id") val basePlanId: String? = null,
     /** Google's subscription state, lower case: active, in_grace_period, canceled, on_hold, expired, … */
@@ -74,6 +81,9 @@ data class CloudAccess(
     @SerialName("auto_renewing") val autoRenewing: Boolean = false,
 ) {
     val complimentary: Boolean get() = source == "complimentary"
+
+    /** Free while cloud backup is in early access. */
+    val earlyAccess: Boolean get() = source == "early_access"
     val expiresAtMillis: Long? get() = expiresAt?.let { runCatching { parseTimestamp(it) / 1000 }.getOrNull() }
 }
 
@@ -452,6 +462,7 @@ class SupabaseApi(
             if (it.code == 403 && op == Operation.Sync && "42501" in body) throw CloudAccessRequiredException(technical)
             if (it.code == 409 && op == Operation.Purchase) throw PurchaseOwnedElsewhereException(technical)
             val code = errorCode(body)
+            if (op == Operation.Sync && code == "ledger_full") throw LedgerFullException(technical)
             if (it.code == 404) throw NotFoundException(friendlyMessage(op, it.code, code), technical)
             throw SyncException(friendlyMessage(op, it.code, code), technical)
         }
@@ -491,6 +502,8 @@ class SupabaseApi(
             errorCode == "not_owner" -> "Only the ledger's owner can do that."
             errorCode == "owner_cannot_leave" -> "You own this ledger, so you can't leave it."
             errorCode == "not_member" -> "You're no longer a member of that ledger."
+            errorCode == "too_many_invites" -> "This ledger has 20 unused invites. Wait for some to be used or to expire, then try again."
+            errorCode == "too_many_members" -> "This ledger already has 20 members, the most it can have."
             errorCode == "23514" && op == Operation.Ledger -> "Choose a name of 1 to 100 characters."
             status >= 500 -> "The cloud service is temporarily unavailable. Please try again in a few minutes."
             status == 408 || status == 429 -> "The cloud service is busy right now. Please wait a moment and try again."

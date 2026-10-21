@@ -56,8 +56,9 @@ Deno.test("an expiry already past stays in the past", () => {
 
 const row = (token: string, expires: number): SubscriptionRow => ({ ...toRow(purchase("ACTIVE", expires), token, now) });
 
-Deno.test("complimentary access without an end is never replaced by a purchase", () => {
+Deno.test("free access without an end is never replaced by a purchase", () => {
   assertEquals(replacesStored({ source: "complimentary", purchase_token: null, expires_at: null }, row("token", now + 365 * day)), false);
+  assertEquals(replacesStored({ source: "early_access", purchase_token: null, expires_at: null }, row("token", now + 365 * day)), false);
 });
 
 Deno.test("the same purchase always updates, also when it ends sooner (refund, expiry)", () => {

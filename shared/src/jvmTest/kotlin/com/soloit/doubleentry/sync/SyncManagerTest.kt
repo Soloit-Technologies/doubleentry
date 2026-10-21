@@ -358,6 +358,29 @@ class SyncManagerTest {
     }
 
     @Test
+    fun aFullLedgerKeepsNewChangesOnTheDeviceUntilThereIsRoom() = runBlocking<Unit> {
+        val a = Device("a")
+        a.ledgerWithOneTransaction("Backed up")
+        a.sync.signIn("me@example.com", "pw")
+        server.fullLedgers += server.ledgerIdFor("me@example.com")
+
+        val accounts = a.t.ledger.getAccounts()
+        a.t.post(day, "Not yet", accounts.first { it.number == 5010 }, accounts.first { it.number == 1910 }, 50_00)
+        a.sync.syncNow()
+        val status = a.sync.status.value
+        assertNull(status.lastError)
+        assertEquals(SyncAttention.LedgerFull, status.attention)
+        assertEquals(setOf("Backed up"), cloudTitles())
+        assertTrue("A full ledger isn't a bug to report", server.errorReports.isEmpty())
+
+        server.fullLedgers.clear()
+        a.sync.syncNow()
+        assertEquals(false, a.sync.status.value.ledgerFull)
+        assertNull(a.sync.status.value.attention)
+        assertEquals(setOf("Backed up", "Not yet"), cloudTitles())
+    }
+
+    @Test
     fun aLedgerWaitingToReplaceTheCloudIsNotMergedWithItWithoutASubscription() = runBlocking<Unit> {
         val a = Device("a")
         a.ledgerWithOneTransaction("Cloud ledger")

@@ -29,6 +29,7 @@ supabase/
 | `20261018000001_sync_error_reports.sql` | `sync_error_reports`: unexpected sync failures the app sends in, without ledger data; users can only add their own, 50 a day (see [Sync error reports](#sync-error-reports)) |
 | `20261019000000_tighten_table_grants.sql` | Table privileges no wider than the policies: nothing for signed-out users, no delete or truncate for signed-in users, only select on `ledgers`, `ledger_members` and `cloud_subscriptions`, nothing on `ledger_invites`; the same defaults for tables added later |
 | `20261020000000_ledger_replacement.sql` | A replaced ledger refuses older edits: `ledgers.replaced_at`, `mark_ledger_replaced()` (called by the app when an import, "delete all" or a sign-in replaces the cloud ledger) and a trigger that skips writes edited before then, such as an offline device's |
+| `20261021000000_early_access_and_limits.sql` | Free backup during early access (`early_access` rows in `cloud_subscriptions` for every account, switched by `service_control.early_access`), a storage allowance per ledger that grows with its age (`ledger_usage`, `ledger_allowance()`, `service_control.ledger_quota_*`, `ledger_full`), a cron job that measures the database and ends early access or refuses new rows when it nears the plan's size (`check_database_size()`), at most 20 members and 20 open invites per ledger (see [Early access](#early-access) and [Limits](#limits)) |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -171,6 +172,32 @@ the service role:
   on conflict (user_id) do update set source = 'complimentary', state = 'active', expires_at = null;
   ```
   The migration gave every account that existed at the time complimentary access.
+- **Early access** (no end date) for every account while early access is on, see below.
+
+### Early access
+
+Until paid backup launches, cloud backup is free. Every account gets a `cloud_subscriptions` row
+with source `early_access` when it's created (a trigger on `auth.users`), and the app shows
+"Cloud backup is free during early access" instead of the plans. A Google Play purchase never
+replaces an early-access row, just as it never replaces a complimentary one.
+
+When paid backup launches:
+
+```sql
+-- New accounts no longer get early access; they see the plans.
+update public.service_control set early_access = false;
+
+-- Either let early-access accounts keep free backup (nothing to do), or end it on a date,
+-- after which they see the plans and keep what's backed up:
+update public.cloud_subscriptions set expires_at = '2027-06-30'
+where source = 'early_access' and expires_at is null;
+```
+
+Tell users before you end it: the store listing and the app promise free backup only "during
+early access".
+
+Early access also ends by itself when the database passes `early_access_max_database_bytes`
+(see [Limits](#limits)). It stays off until you switch it on again.
 
 ### Edge Functions
 
@@ -230,6 +257,56 @@ which the server rejects after that migration; update the app on every device wh
 The same goes for `20261006000002_transaction_lines_and_edit_times.sql` (older builds don't send
 `modified_at` or `lines`) and `20261016000000_shared_ledgers.sql` (older builds upsert with
 `on_conflict=user_id,id` and don't send `ledger_id`): their uploads fail.
+
+## Limits
+
+Free backup is open to anyone with a Google account, so the server caps what one account can use:
+
+| What | Limit | Refused with |
+|---|---|---|
+| Stored rows per ledger (JSON size, tombstones included, without indexes) | 5 MB to start (`service_control.ledger_quota_start_bytes`), 25 KB more each day since the ledger was made (`ledger_quota_daily_bytes`), at most 50 MB (`ledger_quota_bytes`). A transaction is about 600 bytes | `ledger_full` on uploads with new rows; edits and deletions go through until 10% over |
+| The whole database (`pg_database_size`, measured every 15 minutes into `service_control.database_bytes`) | Past `early_access_max_database_bytes` (350 MB), early access ends for new accounts. Past `max_database_bytes` (425 MB), every ledger refuses new rows | `ledger_full` on uploads with new rows; edits and deletions go through |
+| Members per ledger | 20 | `too_many_members` |
+| Open (unused, unexpired) invites per ledger | 20 | `too_many_invites` |
+| Sync error reports per user | 50 a day | dropped silently |
+
+Ledgers can't be made by hand (only `own_ledger()`, one per account), so the allowance also caps an
+account. It starts with room to import years of history (5 MB is about 8,700 transactions) and
+grows faster than any household books (25 KB is about 40 transactions a day), but no account can
+fill the database in a day. `ledger_usage` is kept by statement triggers on the synced tables; the
+app shows "Cloud storage is full" and keeps new changes on the device. Invites that can't be used
+are deleted 30 days after they expire.
+
+The allowances alone can't protect the database from many accounts, so `check_database_size()`
+(pg_cron, every 15 minutes) measures what the plan's 500 MB limit applies to: indexes, dead rows
+and the other tables included. The JSON counts are close to the rows' size on disk (20,000
+transactions counted 12 MB and took 11 MB with their indexes). Once over `max_database_bytes`,
+new rows are taken again only after a measurement is back under it, and deleting rows doesn't make
+the database smaller by itself: purge tombstones (below), then `vacuum full` the synced tables
+(it locks them while it runs), or move to a bigger plan and raise the limits.
+
+```sql
+-- The largest ledgers, and what each may store now.
+select l.id, u.email, pg_size_pretty(g.bytes), pg_size_pretty(public.ledger_allowance(l.created_at))
+from public.ledger_usage g
+join public.ledgers l on l.id = g.ledger_id join auth.users u on u.id = l.owner_id
+order by g.bytes desc limit 20;
+
+-- The database's size when last measured, and measuring it now.
+select pg_size_pretty(database_bytes), early_access from public.service_control;
+select public.check_database_size();
+
+-- More room for everyone: a higher cap, or faster growth.
+update public.service_control set ledger_quota_bytes = 100 * 1024 * 1024, ledger_quota_daily_bytes = 50 * 1024;
+
+-- After moving to a plan with 8 GB.
+update public.service_control set early_access_max_database_bytes = 6 * 1024 * 1024 * 1024::bigint,
+  max_database_bytes = 7 * 1024 * 1024 * 1024::bigint;
+update public.service_control set early_access = true;  -- if it ended by itself and should go on
+```
+
+Deleting rows in the app tombstones them, which doesn't free room. Purging old tombstones
+([`queries/purge_tombstones.sql`](queries/purge_tombstones.sql)) does.
 
 ## Stopping sync
 

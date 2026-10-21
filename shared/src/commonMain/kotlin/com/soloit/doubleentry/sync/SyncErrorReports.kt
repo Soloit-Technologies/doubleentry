@@ -27,10 +27,11 @@ data class SyncErrorReport(
     companion object {
         /**
          * Expected states, shown to the user and not bugs: no connection, an ended session, no
-         * subscription.
+         * subscription, a full ledger.
          */
         fun isReportable(error: Throwable): Boolean =
-            error !is OfflineException && error !is SessionExpiredException && error !is CloudAccessRequiredException
+            error !is OfflineException && error !is SessionExpiredException && error !is CloudAccessRequiredException &&
+                error !is LedgerFullException
 
         fun of(error: Throwable, appVersion: Int, pendingChanges: Int): SyncErrorReport {
             val chain = generateSequence(error) { it.cause }.take(5).toList()

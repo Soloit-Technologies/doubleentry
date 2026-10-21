@@ -34,7 +34,8 @@ import java.time.ZoneOffset
  * its user is a member of (like row-level security): their own ([ledgerIdFor], returned by
  * `rpc/own_ledger`) and any added to [members]; the plain token "token" reaches everything.
  * Uploads need the ledger owner's cloud access ([withoutAccess] lists users who have none), read
- * with `rpc/cloud_access` and `rpc/ledger_access`. The sharing functions (invites, members,
+ * with `rpc/cloud_access` and `rpc/ledger_access`. A ledger in [fullLedgers] has used its cloud
+ * storage: uploads with a new row are refused with `ledger_full`, edits go through. The sharing functions (invites, members,
  * renaming) work like the migration's, with the same refusals.
  *
  * Failures can be injected with [fail]: a request can be refused before the server applies it, or
@@ -47,6 +48,9 @@ class FakePostgrest {
 
     /** Users without a backup subscription: their uploads are refused like row-level security does. */
     val withoutAccess = mutableSetOf<String>()
+
+    /** Ledgers that have used their cloud storage (`ledger_usage` over the quota). */
+    val fullLedgers = mutableSetOf<String>()
 
     /** Ledgers users were added to, besides their own, by user id; they're editors there. */
     val members = mutableMapOf<String, MutableSet<String>>()
@@ -272,6 +276,8 @@ class FakePostgrest {
                 if (reachable != null && sent.any { ledger(it.jsonObject).let { l -> l !in reachable || ownerOf(l!!) in withoutAccess } }) {
                     return refused(request)
                 }
+                // The usage trigger: a full ledger takes no new rows, and refuses the whole upload.
+                if (sent.any { ledger(it.jsonObject) in fullLedgers && rows[key(it.jsonObject)] == null }) return raise(request, "ledger_full")
                 JsonArray(
                     sent.mapNotNull { element ->
                         val row = element.jsonObject

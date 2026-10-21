@@ -49,6 +49,7 @@ fun SyncBanner(status: SyncStatus, onOpen: () -> Unit, onDismissReplaced: () -> 
                 SyncAttention.SignInAgain -> Icons.AutoMirrored.Rounded.Login
                 SyncAttention.LostAccess -> Icons.Rounded.PersonOff
                 SyncAttention.NotBackedUp -> Icons.Rounded.CloudOff
+                SyncAttention.LedgerFull -> Icons.Rounded.CloudOff
                 SyncAttention.Failing -> Icons.Rounded.ErrorOutline
                 SyncAttention.Offline -> Icons.Rounded.CloudOff
                 SyncAttention.Paused -> Icons.Rounded.PauseCircleOutline
