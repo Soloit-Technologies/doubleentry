@@ -7,7 +7,8 @@
 -- the new schema (the next change is then checked against it). Cover new tables and columns.
 --
 -- Two users: Ada owns a ledger shared with Bo (editor), with a bit of everything in it,
--- deleted rows included; Bo also has an empty ledger and no subscription.
+-- deleted rows included; Bo also has an empty ledger. Ada pays through Google Play; Bo has the
+-- early-access subscription every new account gets (trg_users_grant_early_access).
 -- =============================================================================
 
 insert into auth.users (id, email, aud, role) values
@@ -15,7 +16,11 @@ insert into auth.users (id, email, aud, role) values
   ('b0000000-0000-4000-8000-00000000000b', 'bo@example.com', 'authenticated', 'authenticated');
 
 insert into public.cloud_subscriptions (user_id, source, product_id, base_plan_id, purchase_token, state, expires_at, auto_renewing)
-values ('a0000000-0000-4000-8000-00000000000a', 'google_play', 'cloud_backup', 'yearly', 'token-ada', 'active', now() + interval '300 days', true);
+values ('a0000000-0000-4000-8000-00000000000a', 'google_play', 'cloud_backup', 'yearly', 'token-ada', 'active', now() + interval '300 days', true)
+on conflict (user_id) do update set
+  source = excluded.source, product_id = excluded.product_id, base_plan_id = excluded.base_plan_id,
+  purchase_token = excluded.purchase_token, state = excluded.state,
+  expires_at = excluded.expires_at, auto_renewing = excluded.auto_renewing;
 
 insert into public.ledgers (id, owner_id, name) values
   ('1ed00000-0000-4000-8000-00000000000a', 'a0000000-0000-4000-8000-00000000000a', 'Household'),

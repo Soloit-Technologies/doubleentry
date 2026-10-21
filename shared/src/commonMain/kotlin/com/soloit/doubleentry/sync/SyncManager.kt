@@ -57,6 +57,8 @@ data class SyncStatus(
     val ledgerId: String? = null,
     /** The server has stopped sync (for every app, or for this build); changes wait on this device. */
     val serviceBlock: ServiceBlock? = null,
+    /** The ledger has used its cloud storage: the last upload was refused, and changes wait on this device. */
+    val ledgerFull: Boolean = false,
 ) {
     /** Feature flag on and Supabase configured: signing in is possible. */
     val available: Boolean get() = featureEnabled && configured
@@ -84,6 +86,7 @@ data class SyncStatus(
             needsSignIn -> SyncAttention.SignInAgain
             lostLedgerAccess -> SyncAttention.LostAccess
             notBackedUp && pendingChanges > 0 -> SyncAttention.NotBackedUp
+            ledgerFull && pendingChanges > 0 -> SyncAttention.LedgerFull
             !enabled && pendingChanges > 0 -> SyncAttention.Paused
             lastError != null && pendingChanges > 0 -> if (offline) SyncAttention.Offline else SyncAttention.Failing
             replacedChanges > 0 -> SyncAttention.Replaced
@@ -91,7 +94,7 @@ data class SyncStatus(
         }
 }
 
-enum class SyncAttention { UpdateRequired, ServicePaused, SignInAgain, LostAccess, NotBackedUp, Failing, Offline, Paused, Replaced }
+enum class SyncAttention { UpdateRequired, ServicePaused, SignInAgain, LostAccess, NotBackedUp, LedgerFull, Failing, Offline, Paused, Replaced }
 
 /** Why the server stopped sync ([SyncControl]): [message] is written for the user. */
 data class ServiceBlock(val updateRequired: Boolean, val message: String) {
@@ -304,6 +307,7 @@ class SyncManager(
                     recordReplaced(engine.pushAll(this).replacedLocalChanges)
                     timing.step("push")
                     prefs.lastSyncAtMillis = System.currentTimeMillis()
+                    _status.update { it.copy(ledgerFull = false) }
                 }
                 succeeded()
                 _status.update { it.copy(lastSyncAtMillis = prefs.lastSyncAtMillis) }
@@ -312,6 +316,11 @@ class SyncManager(
             } catch (e: CloudAccessRequiredException) {
                 // The subscription ended since the check: same as having none.
                 storeAccess(CloudAccess(active = false))
+                succeeded()
+            } catch (e: LedgerFullException) {
+                // Not a failure to retry or report: uploads resume once the ledger has room.
+                Log.i(TAG, "Ledger full", e)
+                _status.update { it.copy(ledgerFull = true) }
                 succeeded()
             } catch (e: Exception) {
                 fail(e)
@@ -724,7 +733,7 @@ class SyncManager(
 
     private fun publish() = _status.update {
         val base = snapshot().copy(isSyncing = it.isSyncing, pendingChanges = it.pendingChanges, serviceBlock = it.serviceBlock)
-        if (prefs.userId == null) base else base.copy(lastError = it.lastError, offline = it.offline, needsSignIn = it.needsSignIn)
+        if (prefs.userId == null) base else base.copy(lastError = it.lastError, offline = it.offline, needsSignIn = it.needsSignIn, ledgerFull = it.ledgerFull)
     }
 
     private fun snapshot() = SyncStatus(

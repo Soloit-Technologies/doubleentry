@@ -145,6 +145,13 @@ internal fun BackupPlanCard(access: CloudAccess?, billing: CloudBilling?) {
         access.active && access.complimentary -> SectionCard(contentPadding = PaddingValues(20.dp)) {
             PlanHeader(Icons.Rounded.CloudDone, "Cloud backup is included", "Your account has cloud backup at no cost.")
         }
+        access.active && access.earlyAccess -> SectionCard(contentPadding = PaddingValues(20.dp)) {
+            PlanHeader(
+                Icons.Rounded.CloudDone,
+                "Cloud backup is free during early access",
+                "Back up and sync at no cost while DoubleEntry is in early access.",
+            )
+        }
         access.active -> SectionCard(contentPadding = PaddingValues(20.dp)) {
             val plan = when (access.basePlanId) {
                 "yearly" -> "Yearly plan"

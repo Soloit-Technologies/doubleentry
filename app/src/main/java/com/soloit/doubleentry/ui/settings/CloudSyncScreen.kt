@@ -163,6 +163,19 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
 
                 BackupPlanCard(status.access, container.billing)
 
+                if (status.ledgerFull) {
+                    SectionCard(contentPadding = PaddingValues(20.dp), containerColor = MaterialTheme.colorScheme.errorContainer) {
+                        Text("Cloud storage is full", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "This ledger has used all its cloud storage, so new changes stay on this device and aren't backed up. " +
+                                "Everything backed up before is safe.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+
                 if (status.needsSignIn) {
                     SectionCard(contentPadding = PaddingValues(20.dp), containerColor = MaterialTheme.colorScheme.errorContainer) {
                         Text("Sign in again", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)

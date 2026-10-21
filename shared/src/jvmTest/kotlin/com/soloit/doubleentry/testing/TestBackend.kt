@@ -34,6 +34,9 @@ interface TestBackend {
 
     fun setCloudAccess(user: TestUser, active: Boolean)
 
+    /** Makes [ledgerId] look as if it had used all its cloud storage. */
+    fun fillLedger(ledgerId: String)
+
     /** Every row of [ledgerId] in [table], deleted ones included, as the service role sees them. */
     fun rows(table: String, ledgerId: String): List<JsonObject>
 }
@@ -52,6 +55,10 @@ class FakeBackend(val server: FakePostgrest = FakePostgrest()) : TestBackend {
 
     override fun setCloudAccess(user: TestUser, active: Boolean) {
         if (active) server.withoutAccess -= user.id else server.withoutAccess += user.id
+    }
+
+    override fun fillLedger(ledgerId: String) {
+        server.fullLedgers += ledgerId
     }
 
     override fun rows(table: String, ledgerId: String) = server.rows(table).filter { it["ledger_id"]?.jsonPrimitive?.content == ledgerId }
@@ -97,6 +104,18 @@ class LocalBackend private constructor(private val url: String, anonKey: String,
         } else {
             admin(Request.Builder().url("$url/rest/v1/cloud_subscriptions?user_id=eq.${user.id}").delete())
         }
+    }
+
+    override fun fillLedger(ledgerId: String) {
+        val row = buildJsonObject {
+            put("ledger_id", ledgerId)
+            put("bytes", 1_000_000_000_000L)
+        }
+        admin(
+            Request.Builder().url("$url/rest/v1/ledger_usage?on_conflict=ledger_id")
+                .header("Prefer", "resolution=merge-duplicates")
+                .post(row.toString().toRequestBody(jsonMedia)),
+        )
     }
 
     override fun rows(table: String, ledgerId: String): List<JsonObject> {

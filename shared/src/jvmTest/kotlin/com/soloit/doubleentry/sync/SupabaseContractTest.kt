@@ -260,6 +260,17 @@ abstract class SupabaseContract {
     }
 
     @Test
+    fun aFullLedgerRefusesNewRowsButTakesEdits() = runBlocking<Unit> {
+        val me = backend.newUser("me")
+        val row = upsert(me, account(me.ledgerId, 1910, start)).single()
+
+        backend.fillLedger(me.ledgerId)
+        failsWith<LedgerFullException> { upsert(me, account(me.ledgerId, 1920, start)) }
+        upsert(me, row.copy(name = "Bank", modifiedAt = formatTimestamp(start + 1), updatedAt = null))
+        assertEquals(listOf("Bank"), accounts(me).map { it.name })
+    }
+
+    @Test
     fun invitedMembersShareTheLedgerUntilRemoved() = runBlocking<Unit> {
         val owner = backend.newUser("owner")
         val guest = backend.newUser("guest")

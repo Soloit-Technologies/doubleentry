@@ -18,6 +18,7 @@ fun SyncStatus.attentionText(): String? = when (attention) {
     SyncAttention.LostAccess -> "You no longer have access to this shared ledger"
     SyncAttention.NotBackedUp -> (if (sharedLedger) "The owner's cloud backup isn't active" else "Cloud backup isn't active") +
         " · ${changesText(pendingChanges)} only on this device"
+    SyncAttention.LedgerFull -> "Cloud storage is full · ${changesText(pendingChanges)} only on this device"
     SyncAttention.Failing -> "Sync isn't working · ${changesText(pendingChanges)} not uploaded yet"
     SyncAttention.Offline -> "Offline · ${changesText(pendingChanges)} will upload when you're back online"
     SyncAttention.Paused -> "Sync is paused · ${changesText(pendingChanges)} only on this device"
