@@ -128,6 +128,7 @@ fun AccountLedgerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                // A long name is cut short here; the card below spells it out in full.
                 title = {
                     Column {
                         Text(state.account?.name ?: "Account", maxLines = if (isLargeFont()) 2 else 1, overflow = TextOverflow.Ellipsis)
@@ -187,17 +188,23 @@ fun AccountLedgerScreen(
                 item { LoadingState() }
                 return@LazyColumn
             }
-            if (!state.searching) item {
+            item {
                 SectionCard(
                     modifier = Modifier.padding(top = 12.dp),contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         state.account?.let { AccountTypeAvatar(it.type, size = 48) }
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Closing balance", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            MoneyText(state.closing, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                            Text(state.account?.name ?: "Account", style = MaterialTheme.typography.titleLarge)
+                            state.account?.let {
+                                Text("#${it.number} · ${it.type.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
+                    if (state.searching) return@SectionCard
+                    Spacer(Modifier.padding(top = 16.dp))
+                    Text("Closing balance", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    MoneyText(state.closing, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.padding(top = 12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                         Column {
