@@ -103,12 +103,6 @@ interface TransactionDao : SyncDao<TransactionEntity> {
     )
     suspend fun liveWithTitleLike(text: String, limit: Int): List<TransactionEntity>
 
-    @Query("SELECT * FROM transactions WHERE deleted_at IS NULL AND description = :description AND id != :excludeId")
-    suspend fun liveByDescription(description: String, excludeId: String): List<TransactionEntity>
-
-    @Query("SELECT * FROM transactions WHERE deleted_at IS NULL AND substr(description, -length(:suffix)) = :suffix")
-    suspend fun liveByDescriptionSuffix(suffix: String): List<TransactionEntity>
-
     @Query(
         """SELECT COUNT(*) FROM transactions t WHERE t.deleted_at IS NULL AND EXISTS (
            SELECT 1 FROM transaction_entries e WHERE e.transaction_id = t.id AND e.account_id = :accountId)""",

@@ -50,9 +50,7 @@ class DepreciationTest {
 
     @Test
     fun descriptionsMatchDotNetFormat() {
-        val id = "7d0c5b2e-91a4-4f3e-8c6b-2a1f0e9d8c7b"
         assertEquals("Monthly depreciation for 2026-03", Depreciation.description(LocalDate.of(2026, 3, 1)))
-        assertEquals("Monthly writeoff for 2026-03 (Asset #$id)", Depreciation.legacyDescription(id, LocalDate.of(2026, 3, 1)))
         assertEquals(LocalDate.of(2024, 2, 29), Depreciation.postingDate(LocalDate.of(2024, 2, 1)))
         assertEquals(LocalDate.of(2026, 2, 1), Depreciation.lastCompletedMonth(LocalDate.of(2026, 3, 15)))
     }
