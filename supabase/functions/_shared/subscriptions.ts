@@ -54,12 +54,12 @@ export interface StoredSubscription {
 }
 
 /**
- * Whether [row] replaces the subscription stored for its user. Complimentary access without an
- * end is never replaced, and a different purchase only replaces the stored one when it lasts at
+ * Whether [row] replaces the subscription stored for its user. Free access without an end
+ * (complimentary or early access) is never replaced, and a different purchase only replaces the stored one when it lasts at
  * least as long (an old, expired purchase restored on a new phone doesn't cut a current one short).
  */
 export function replacesStored(existing: StoredSubscription, row: SubscriptionRow): boolean {
-  if (existing.source === "complimentary" && existing.expires_at === null) return false;
+  if (existing.source !== "google_play" && existing.expires_at === null) return false;
   const samePurchase = existing.purchase_token === row.purchase_token;
   return samePurchase || !existing.expires_at || Date.parse(existing.expires_at) <= Date.parse(row.expires_at);
 }

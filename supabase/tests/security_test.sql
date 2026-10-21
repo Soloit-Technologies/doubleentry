@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(40);
+select plan(55);
 
 -- -----------------------------------------------------------------------------
 -- Guards for whatever is added later
@@ -50,6 +50,8 @@ select is(
 -- -----------------------------------------------------------------------------
 -- A ledger with an owner (who has cloud access), an editor, a viewer, and a stranger
 -- -----------------------------------------------------------------------------
+-- Without early access, so that only the accounts given access below have it.
+update public.service_control set early_access = false;
 insert into auth.users (id, email, aud, role) values
   ('11111111-1111-4111-8111-111111111111', 'owner@example.com', 'authenticated', 'authenticated'),
   ('22222222-2222-4222-8222-222222222222', 'editor@example.com', 'authenticated', 'authenticated'),
@@ -206,6 +208,81 @@ insert into public.sync_error_reports (app_version, kind) select 13, 'Loop' from
 reset role;
 select is((select count(*) from public.sync_error_reports where user_id = '22222222-2222-4222-8222-222222222222'), 50::bigint,
   'a device stuck in a loop files at most 50 reports a day');
+
+-- -----------------------------------------------------------------------------
+-- Early access
+-- -----------------------------------------------------------------------------
+select is((select count(*) from public.cloud_subscriptions where user_id = '22222222-2222-4222-8222-222222222222'), 0::bigint,
+  'without early access a new account gets no cloud backup');
+update public.service_control set early_access = true;
+insert into auth.users (id, email, aud, role) values
+  ('55555555-5555-4555-8555-555555555555', 'newcomer@example.com', 'authenticated', 'authenticated');
+select is((select source from public.cloud_subscriptions where user_id = '55555555-5555-4555-8555-555555555555'), 'early_access',
+  'during early access a new account gets cloud backup');
+select is((select expires_at from public.cloud_subscriptions where user_id = '55555555-5555-4555-8555-555555555555'), null,
+  'with no end');
+
+-- -----------------------------------------------------------------------------
+-- Storage per ledger
+-- -----------------------------------------------------------------------------
+update public.cloud_subscriptions set expires_at = null where user_id = '11111111-1111-4111-8111-111111111111';
+select is((select bytes from public.ledger_usage where ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+  (select sum(octet_length(row_to_json(a.*)::text))::bigint from public.accounts a where a.ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+  'the usage follows inserts, edits and skipped writes');
+update public.service_control set ledger_quota_bytes = (select bytes + 50 from public.ledger_usage where ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+
+select set_config('request.jwt.claims', '{"sub": "22222222-2222-4222-8222-222222222222", "role": "authenticated"}', true);
+set local role authenticated;
+select throws_ok($$ select count(*) from public.ledger_usage $$, '42501', null, 'the usage can''t be read or changed directly');
+select throws_ok(
+  $$ insert into public.accounts (ledger_id, id, number, name, type, modified_at)
+     values ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', gen_random_uuid(), 1950, 'One too many', 0, now()) $$,
+  'P0001', 'ledger_full', 'a full ledger takes no new rows');
+select lives_ok(
+  $$ update public.accounts set name = 'Same time 2', modified_at = now() where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' $$,
+  'but existing rows can still be edited');
+select lives_ok(
+  $$ update public.accounts set deleted_at = now(), modified_at = now() + interval '1 second' where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' $$,
+  'and deleted');
+reset role;
+update public.service_control set ledger_quota_bytes = 1;
+select set_config('request.jwt.claims', '{"sub": "22222222-2222-4222-8222-222222222222", "role": "authenticated"}', true);
+set local role authenticated;
+select throws_ok(
+  $$ update public.accounts set name = repeat('x', 500), modified_at = now() + interval '2 seconds' where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' $$,
+  'P0001', 'ledger_full', 'edits can''t grow a ledger far over its quota');
+reset role;
+delete from public.accounts where ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+select is((select bytes from public.ledger_usage where ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), 0::bigint,
+  'purging rows frees their space');
+
+-- -----------------------------------------------------------------------------
+-- Members and invites per ledger
+-- -----------------------------------------------------------------------------
+select set_config('request.jwt.claims', '{"sub": "11111111-1111-4111-8111-111111111111", "role": "authenticated"}', true);
+set local role authenticated;
+select lives_ok($$ select public.create_invite('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'viewer') from generate_series(1, 19) $$,
+  'a ledger can have 20 open invites');
+select throws_ok($$ select public.create_invite('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'viewer') $$, 'P0001', 'too_many_invites',
+  'but not 21');
+reset role;
+insert into auth.users (id, email, aud, role)
+select gen_random_uuid(), 'member' || i || '@example.com', 'authenticated', 'authenticated' from generate_series(1, 18) i;
+insert into public.ledger_members (ledger_id, user_id, role)
+select 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', u.id, 'viewer' from auth.users u where u.email like 'member%@example.com' and u.email <> 'member18@example.com';
+select throws_ok(
+  $$ insert into public.ledger_members (ledger_id, user_id, role)
+     select 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', u.id, 'viewer' from auth.users u where u.email = 'member18@example.com' $$,
+  'P0001', 'too_many_members', 'a ledger has at most 20 members');
+
+-- Deleting the owner takes the ledger and its usage along, also with an editor's rows in it.
+update public.service_control set ledger_quota_bytes = default;
+insert into public.accounts (ledger_id, id, user_id, number, name, type, modified_at) values
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', gen_random_uuid(), '22222222-2222-4222-8222-222222222222', 1960, 'Left behind', 0, now());
+select lives_ok($$ delete from auth.users where id in ('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222') $$,
+  'accounts with rows in a ledger can be deleted');
+select is((select count(*) from public.ledger_usage where ledger_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), 0::bigint,
+  'and the ledger''s usage goes with it');
 
 select * from finish();
 rollback;

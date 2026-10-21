@@ -23,8 +23,9 @@ Material 3 on Android, Compose Desktop with Fluent on Windows). The plan for mor
 - **Assets.** Automatic monthly depreciation write-offs, with a repair tool for missing ones.
 - **Invoices.** Booking, due-date tracking, payment in full or in instalments, and an optional daily reminder notification.
 - **Cloud backup & sync.** Offline-first local database, last-edit-wins sync with Supabase, realtime updates between
-  devices. Accounts are created in the app; uploading is a Google Play subscription (see
-  [`docs/google-play.md`](docs/google-play.md#paid-cloud-backup)), downloading a backup is always free.
+  devices. Accounts are created in the app. Uploading is free during early access and later a Google Play
+  subscription (see [`docs/google-play.md`](docs/google-play.md#paid-cloud-backup)); downloading a backup is
+  always free.
 - **Backups.** JSON export/import. CSV export of transactions and balances.
 - Light/dark theme, optional Material You (wallpaper) colors, optional app lock (screen lock or biometrics),
   a net-worth home-screen widget and launcher shortcuts.

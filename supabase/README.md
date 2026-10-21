@@ -29,6 +29,7 @@ supabase/
 | `20261018000001_sync_error_reports.sql` | `sync_error_reports`: unexpected sync failures the app sends in, without ledger data; users can only add their own, 50 a day (see [Sync error reports](#sync-error-reports)) |
 | `20261019000000_tighten_table_grants.sql` | Table privileges no wider than the policies: nothing for signed-out users, no delete or truncate for signed-in users, only select on `ledgers`, `ledger_members` and `cloud_subscriptions`, nothing on `ledger_invites`; the same defaults for tables added later |
 | `20261020000000_ledger_replacement.sql` | A replaced ledger refuses older edits: `ledgers.replaced_at`, `mark_ledger_replaced()` (called by the app when an import, "delete all" or a sign-in replaces the cloud ledger) and a trigger that skips writes edited before then, such as an offline device's |
+| `20261021000000_early_access_and_limits.sql` | Free backup during early access (`early_access` rows in `cloud_subscriptions` for every account, switched by `service_control.early_access`), a storage quota per ledger (`ledger_usage`, `service_control.ledger_quota_bytes`, `ledger_full`), at most 20 members and 20 open invites per ledger (see [Early access](#early-access) and [Limits](#limits)) |
 
 Every migration is idempotent (`create … if not exists`, `drop policy if exists` + `create`) and
 leaves existing data alone. That matters because the four core tables were originally created
@@ -171,6 +172,29 @@ the service role:
   on conflict (user_id) do update set source = 'complimentary', state = 'active', expires_at = null;
   ```
   The migration gave every account that existed at the time complimentary access.
+- **Early access** (no end date) for every account while early access is on, see below.
+
+### Early access
+
+Until paid backup launches, cloud backup is free. Every account gets a `cloud_subscriptions` row
+with source `early_access` when it's created (a trigger on `auth.users`), and the app shows
+"Cloud backup is free during early access" instead of the plans. A Google Play purchase never
+replaces an early-access row, just as it never replaces a complimentary one.
+
+When paid backup launches:
+
+```sql
+-- New accounts no longer get early access; they see the plans.
+update public.service_control set early_access = false;
+
+-- Either let early-access accounts keep free backup (nothing to do), or end it on a date,
+-- after which they see the plans and keep what's backed up:
+update public.cloud_subscriptions set expires_at = '2027-06-30'
+where source = 'early_access' and expires_at is null;
+```
+
+Tell users before you end it: the store listing and the app promise free backup only "during
+early access".
 
 ### Edge Functions
 
@@ -230,6 +254,35 @@ which the server rejects after that migration; update the app on every device wh
 The same goes for `20261006000002_transaction_lines_and_edit_times.sql` (older builds don't send
 `modified_at` or `lines`) and `20261016000000_shared_ledgers.sql` (older builds upsert with
 `on_conflict=user_id,id` and don't send `ledger_id`): their uploads fail.
+
+## Limits
+
+Free backup is open to anyone with a Google account, so the server caps what one account can use:
+
+| What | Limit | Refused with |
+|---|---|---|
+| Stored rows per ledger (JSON size, tombstones included, without indexes) | `service_control.ledger_quota_bytes`, 100 MB (a transaction is about 600 bytes) | `ledger_full` on uploads with new rows; edits and deletions go through until 10% over |
+| Members per ledger | 20 | `too_many_members` |
+| Open (unused, unexpired) invites per ledger | 20 | `too_many_invites` |
+| Sync error reports per user | 50 a day | dropped silently |
+
+Ledgers can't be made by hand (only `own_ledger()`, one per account), so the quota also caps an
+account. `ledger_usage` is kept by statement triggers on the synced tables; the app shows
+"Cloud storage is full" and keeps new changes on the device. Invites that can't be used are
+deleted 30 days after they expire.
+
+```sql
+-- The largest ledgers.
+select l.id, u.email, pg_size_pretty(g.bytes) from public.ledger_usage g
+join public.ledgers l on l.id = g.ledger_id join auth.users u on u.id = l.owner_id
+order by g.bytes desc limit 20;
+
+-- More room for everyone.
+update public.service_control set ledger_quota_bytes = 200 * 1024 * 1024;
+```
+
+Deleting rows in the app tombstones them, which doesn't free room. Purging old tombstones
+([`queries/purge_tombstones.sql`](queries/purge_tombstones.sql)) does.
 
 ## Stopping sync
 

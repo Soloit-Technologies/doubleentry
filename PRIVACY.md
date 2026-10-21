@@ -1,6 +1,6 @@
 # DoubleEntry privacy policy
 
-*Effective 17 October 2026*
+*Effective 21 October 2026*
 
 DoubleEntry is a personal bookkeeping app for Android published by Soloit Technologies AB, Sweden
 ("we"). This policy explains what happens to your information when you use the app. We are the
@@ -25,7 +25,9 @@ uninstalling it or clearing its storage in Android's app settings.
 ## Cloud backup & sync
 
 Cloud backup is optional and off until you sign in under *Settings → Cloud backup & sync*.
-Downloading a backup is free; uploading needs a cloud backup subscription.
+Downloading a backup is free. Uploading is free during early access and will later need a cloud
+backup subscription; we'll tell you in the app before that changes. Each ledger can store up to
+100 MB in the cloud.
 
 **What we store**
 
@@ -35,8 +37,10 @@ Downloading a backup is free; uploading needs a cloud backup subscription.
   each row which member last changed it and when.
 - **Shared ledgers:** if you share a ledger or join someone else's, the members and their roles.
   Invite codes are stored only as a hash and stop working after 7 days.
-- **Your subscription:** whether your cloud backup subscription is active, its plan, when it ends
-  and Google Play's purchase token for it. We never see your payment details.
+- **Your subscription:** whether your cloud backup subscription is active (or free during early
+  access), its plan, when it ends and Google Play's purchase token for it. We never see your
+  payment details.
+- **Storage used:** how much cloud storage each ledger uses.
 - **Sync error reports:** when a sync fails unexpectedly, the app sends the kind of error, a
   technical message without any ledger content, the app version and how many changes were
   waiting. These are deleted after 90 days.
