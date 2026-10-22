@@ -1,0 +1,8 @@
+- Cloud backup & sync is free during early access.
+- New Net worth tab in Reports, and the widget shows your 12-month net worth trend.
+- The income statement shows how revenue adds up to net income, and compares a month with the 12-month average.
+- Trend charts fit their values.
+- An account's full name shows on its balance card.
+- Search results stay clear of the keyboard.
+- Readable with a large system font.
+- Sync picks up changes again as soon as the network is back.
