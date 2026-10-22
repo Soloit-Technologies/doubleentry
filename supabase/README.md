@@ -134,7 +134,7 @@ supabase.anonKey=<anon key printed by supabase start>
 
 Debug builds allow plain HTTP to `10.0.2.2`/`localhost` (see `app/src/debug/`). Create a test
 user with *Authentication → Add user* in the local Studio (http://127.0.0.1:54323) and sign in with
-email, or export `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=<web client id>` before `supabase start`
+email (signing up with email is refused, as in the hosted project), or export `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=<web client id>` before `supabase start`
 to test Sign in with Google locally.
 
 ## Accounts and paid backup
@@ -145,18 +145,31 @@ Credential Manager and exchanges it for a session (`POST /auth/v1/token?grant_ty
 creates the account. A Google sign-in with the same verified email as an existing account is linked
 to that account, so accounts made with email and password before keep their ledger.
 
-Google is the only way to sign in. The hosted project has the email provider switched off; the local
-stack keeps it on, because the contract tests and local development sign in with email and password.
+New accounts are only created with Google. Email and password are for the few accounts made by hand:
+people who can't use Google (internal users) and app reviewers. The email provider is on so they
+can sign in, and a *Before User Created* hook (`public.hook_before_user_created`, migration
+`20261022000000_refuse_email_signups.sql`) refuses every email sign-up, so nobody can create a
+password account with the anon key. Users made with the admin API, which the dashboard's
+*Add user* uses, don't pass through the hook. The contract tests create their users that way too.
+
+To give someone a password account: *Authentication → Users → Add user → Create new user*, enter
+their email and a password, tick *Auto Confirm User*, and send them the password by a separate
+channel. They choose *Sign in with email* in the app. To change the password later, edit the user in
+the same place. A password account and a Google account with the same verified email are the same
+account.
 
 In the hosted project, set this once in the dashboard (`config.toml` only covers the local stack):
 
 1. *Authentication → Sign In / Providers → Google*: enable, and put the OAuth **web** client id in
    *Client IDs* (comma-separated if there are several). The client secret is only needed for browser
    sign-in, which the app doesn't use. Leave *Skip nonce check* off.
-2. *Authentication → Sign In / Providers*: *Allow new users to sign up* on (Google creates accounts
-   with it); under *Email*, *Allow new users to sign up* off. In the hosted project that switch
-   turns off the email provider altogether, and `supabase config push` sets it from
-   `auth.email.enable_signup`, so never push this repository's `config.toml` as it is.
+2. *Authentication → Hooks → Before User Created*: enable it with the Postgres function
+   `public.hook_before_user_created` (the migration creates it). Do this before the next step, or
+   anyone can sign up with email in the meantime.
+3. *Authentication → Sign In / Providers*: *Allow new users to sign up* on (Google creates accounts
+   with it); enable *Email*, with its *Allow new users to sign up* on as well: in the hosted project
+   that switch turns off the email provider altogether, so it has to stay on and the hook does the
+   refusing. Minimum password length 8.
 
 Creating the OAuth clients in Google Cloud is described in the main README
 ([Sign in with Google](../README.md#sign-in-with-google)).

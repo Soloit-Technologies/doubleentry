@@ -80,8 +80,8 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
     val context = LocalActivity.current ?: LocalContext.current
 
     /**
-     * Renews an expired session with Google; first sign-ins go through [AccountForms]. Accounts made
-     * with a password sign in with Google as well: it links to the account with the same email.
+     * Renews an expired session with Google; first sign-ins go through [AccountForms], and accounts
+     * signed in with a password renew through [EmailSignIn].
      */
     fun signInAgain() {
         busy = true
@@ -182,14 +182,18 @@ fun CloudSyncScreen(onBack: () -> Unit, onOpenLedgers: () -> Unit) {
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "Your session has ended, so nothing is syncing. " +
-                                "Sign in with Google as ${status.signedInEmail} to continue." +
+                                (if (status.signedInWithGoogle) "Sign in with Google as ${status.signedInEmail} to continue." else "Enter the password for ${status.signedInEmail} to continue.") +
                                 if (status.pendingChanges > 0) " ${changesText(status.pendingChanges)} on this device will then be uploaded." else "",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
                         Spacer(Modifier.height(12.dp))
-                        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
-                        GoogleButton(busy, label = "Sign in with Google again", onClick = ::signInAgain)
+                        if (status.signedInWithGoogle) {
+                            error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
+                            GoogleButton(busy, label = "Sign in with Google again", onClick = ::signInAgain)
+                        } else {
+                            EmailSignIn(sync, scope, onQuestion = { it?.let { q -> question = q } }, email = status.signedInEmail.orEmpty(), label = "Sign in again")
+                        }
                     }
                 }
 

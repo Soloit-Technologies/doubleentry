@@ -39,12 +39,17 @@ enable_signup = true
 minimum_password_length = 8
 
 [auth.email]
-# The app signs in with Google only. This setting switches email sign-in off altogether ("Email
-# logins are disabled"), so it stays on here: the contract tests and local development sign in
-# with email. The hosted project has it off (see README); don't push this file as it is.
+# Email and password are for accounts made by hand (internal users, app reviewers); everyone else
+# signs up with Google. This setting switches email sign-in off altogether ("Email logins are
+# disabled"), so it stays on; the hook below refuses every email sign-up. Accounts made with the
+# admin API (the dashboard's Add user, the contract tests) don't pass through it.
 enable_signup = true
 otp_length = 6
 otp_expiry = 3600
+
+[auth.hook.before_user_created]
+enabled = true
+uri = "pg-functions://postgres/public/hook_before_user_created"
 
 # Sign in with Google: the Android app sends a Google ID token (grant_type=id_token). client_id is
 # the OAuth web client id the tokens are issued for; the secret is used by browser sign-in, which

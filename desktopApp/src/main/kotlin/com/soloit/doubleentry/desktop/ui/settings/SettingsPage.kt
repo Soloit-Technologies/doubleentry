@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -20,6 +22,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.soloit.doubleentry.data.ReminderPrefs
 import com.soloit.doubleentry.data.ThemeMode
@@ -33,6 +38,7 @@ import com.soloit.doubleentry.desktop.ui.components.Layer
 import com.soloit.doubleentry.desktop.ui.components.rememberViewModel
 import com.soloit.doubleentry.sync.SignInChoice
 import com.soloit.doubleentry.sync.SignInQuestion
+import com.soloit.doubleentry.sync.SupabaseApi
 import com.soloit.doubleentry.ui.settings.DataManagementViewModel
 import com.soloit.doubleentry.ui.settings.attentionText
 import com.soloit.doubleentry.ui.settings.changesText
@@ -45,8 +51,10 @@ import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.ProgressRing
 import io.github.composefluent.component.RadioButton
+import io.github.composefluent.component.SubtleButton
 import io.github.composefluent.component.Switcher
 import io.github.composefluent.component.Text
+import io.github.composefluent.component.TextField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -95,6 +103,7 @@ private fun CloudSection() {
     var signingIn by remember { mutableStateOf<Job?>(null) }
     var question by remember { mutableStateOf<SignInQuestion?>(null) }
     var syncing by remember { mutableStateOf(false) }
+    var withEmail by remember { mutableStateOf(false) }
 
     Section("Cloud backup") {
         when {
@@ -122,6 +131,11 @@ private fun CloudSection() {
                         Button(onClick = { signingIn?.cancel() }) { Text("Cancel") }
                     }
                 }
+                if (withEmail) {
+                    EmailSignIn(onQuestion = { question = it })
+                } else {
+                    SubtleButton(onClick = { withEmail = true }) { Text("Have a password? Sign in with email") }
+                }
             }
             else -> {
                 DetailRow("Signed in as", status.signedInEmail.orEmpty())
@@ -147,10 +161,13 @@ private fun CloudSection() {
                         syncing = true
                         scope.launch { try { sync.syncNow() } finally { syncing = false } }
                     }, disabled = syncing || status.isSyncing) { Text(if (syncing || status.isSyncing) "Syncing…" else "Sync now") }
-                    if (status.needsSignIn) {
+                    if (status.needsSignIn && status.signedInWithGoogle) {
                         AccentButton(onClick = { scope.launch { runCatching { question = app.container.signIn.signIn() }.onFailure { app.showError("Sign in", it.message) } } }) { Text("Sign in again") }
                     }
                     Button(onClick = { scope.launch { app.core.sessions.signOut() } }) { Text("Sign out") }
+                }
+                if (status.needsSignIn && !status.signedInWithGoogle) {
+                    EmailSignIn(onQuestion = { it?.let { q -> question = q } }, email = status.signedInEmail.orEmpty(), label = "Sign in again")
                 }
             }
         }
@@ -175,6 +192,52 @@ private fun CloudSection() {
             },
             size = io.github.composefluent.component.DialogSize.Max,
         )
+    }
+}
+
+/**
+ * Signing in with email and password, for the few accounts made by hand in the dashboard (people
+ * who can't use Google, app reviewers); nobody can sign up this way. [email] fills in the address,
+ * as when a session is renewed. [onQuestion] receives the sign-in question, if any.
+ */
+@Composable
+private fun EmailSignIn(onQuestion: (SignInQuestion?) -> Unit, email: String = "", label: String = "Sign in") {
+    val app = LocalApp.current
+    val scope = rememberCoroutineScope()
+    var address by remember { mutableStateOf(email) }
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    val ready = !busy && address.isNotBlank() && password.isNotEmpty()
+
+    fun signIn() {
+        if (!ready) return
+        busy = true
+        scope.launch {
+            try {
+                onQuestion(app.core.sync.signIn(address, password))
+                password = ""
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                app.showError("Sign in", SupabaseApi.userMessage(e))
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    Column(Modifier.widthIn(max = 360.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextField(
+            address, { address = it }, Modifier.fillMaxWidth(), singleLine = true, header = { Text("Email") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+        )
+        TextField(
+            password, { password = it }, Modifier.fillMaxWidth(), singleLine = true, header = { Text("Password") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { signIn() }),
+        )
+        AccentButton(onClick = ::signIn, disabled = !ready) { Text(if (busy) "Signing in…" else label) }
     }
 }
 
