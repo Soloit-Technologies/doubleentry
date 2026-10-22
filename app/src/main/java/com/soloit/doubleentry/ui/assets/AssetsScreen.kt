@@ -9,10 +9,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -30,6 +32,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,14 +54,20 @@ import com.soloit.doubleentry.ui.components.SearchField
 import com.soloit.doubleentry.ui.components.SectionCard
 import com.soloit.doubleentry.ui.components.TextAndFigures
 import com.soloit.doubleentry.ui.components.isLargeFont
+import com.soloit.doubleentry.ui.components.scrollItemToTop
 import com.soloit.doubleentry.ui.theme.tabular
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
+
+private const val SearchKey = "search"
 
 @Composable
 fun AssetsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: () -> Unit) {
     val vm = appViewModel { AssetsViewModel(it.assets) }
     val state by vm.state.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
@@ -74,7 +83,7 @@ fun AssetsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: ()
             ExtendedFloatingActionButton(onClick = onNew, icon = { Icon(Icons.Rounded.Add, null) }, text = { Text("Asset") })
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), state = listState, contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             when {
                 state.loading -> item { LoadingState() }
                 state.totalCost == 0L && state.query.isBlank() -> item {
@@ -86,7 +95,15 @@ fun AssetsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: ()
                 }
                 else -> {
                     item { AssetsSummary(state) }
-                    item { SearchField(state.query, vm::setQuery, "Search assets", Modifier.padding(vertical = 4.dp)) }
+                    item(key = SearchKey) {
+                        SearchField(
+                            state.query,
+                            vm::setQuery,
+                            "Search assets",
+                            Modifier.padding(vertical = 4.dp),
+                            onActivate = { scope.launch { listState.scrollItemToTop(SearchKey) } },
+                        )
+                    }
                     items(state.assets, key = { it.id }) { asset -> AssetCard(asset) { onOpen(asset.id) } }
                 }
             }

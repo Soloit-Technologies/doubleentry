@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Add
@@ -29,6 +31,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -49,7 +52,11 @@ import com.soloit.doubleentry.ui.components.SegmentedChoice
 import com.soloit.doubleentry.ui.components.StatusChip
 import com.soloit.doubleentry.ui.components.TextAndFigures
 import com.soloit.doubleentry.ui.components.isLargeFont
+import com.soloit.doubleentry.ui.components.scrollItemToTop
 import com.soloit.doubleentry.ui.theme.AppTheme
+import kotlinx.coroutines.launch
+
+private const val SearchKey = "search"
 
 @Composable
 fun DueStatusChip(status: DueStatus, modifier: Modifier = Modifier) {
@@ -69,6 +76,8 @@ fun InvoicesScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: 
     val vm = appViewModel { InvoicesViewModel(it.invoices, it.ledger) }
     val state by vm.state.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val finance = AppTheme.finance
 
     Scaffold(
@@ -85,7 +94,7 @@ fun InvoicesScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: 
             ExtendedFloatingActionButton(onClick = onNew, icon = { Icon(Icons.Rounded.Add, null) }, text = { Text("Invoice") })
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), state = listState, contentPadding = ScreenPadding, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (state.loading) {
                 item { LoadingState() }
                 return@LazyColumn
@@ -120,7 +129,14 @@ fun InvoicesScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettings: 
                     label = { if (it == InvoiceTab.Unpaid) "Unpaid (${state.unpaidCount})" else "Paid (${state.paidCount})" },
                 )
             }
-            item { SearchField(state.query, vm::setQuery, "Search invoices") }
+            item(key = SearchKey) {
+                SearchField(
+                    state.query,
+                    vm::setQuery,
+                    "Search invoices",
+                    onActivate = { scope.launch { listState.scrollItemToTop(SearchKey) } },
+                )
+            }
             if (state.rows.isEmpty()) {
                 item {
                     EmptyState(

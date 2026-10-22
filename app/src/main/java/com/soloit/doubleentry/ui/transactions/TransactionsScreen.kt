@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -66,7 +67,7 @@ fun TransactionsScreen(onOpen: (String) -> Unit, onNew: () -> Unit, onOpenSettin
             ExtendedFloatingActionButton(onClick = onNew, icon = { Icon(Icons.Rounded.Add, null) }, text = { Text("Transaction") })
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = ScreenPadding) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), contentPadding = ScreenPadding) {
             item { SearchField(vm.query, { vm.query = it }, "Search all transactions", Modifier.padding(bottom = 12.dp)) }
             // A search always covers every month, so the month selector steps aside while one is active.
             if (!state.searching) item { MonthSelector(state.month, vm::setMonth, Modifier.padding(bottom = 12.dp)) }

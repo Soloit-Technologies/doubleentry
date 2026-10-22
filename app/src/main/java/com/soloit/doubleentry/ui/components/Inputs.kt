@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -45,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -283,13 +285,23 @@ fun <T> SegmentedChoice(
     }
 }
 
+/**
+ * [onActivate] runs when the field gets focus and on every tap, since a tap that brings the keyboard
+ * back to a field that kept its focus doesn't change focus.
+ */
 @Composable
 fun SearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    onActivate: () -> Unit = {},
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val activate by rememberUpdatedState(onActivate)
+    LaunchedEffect(interaction) {
+        interaction.interactions.collect { if (it is PressInteraction.Release) activate() }
+    }
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
@@ -306,8 +318,17 @@ fun SearchField(
             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
         ),
-        modifier = modifier.fillMaxWidth(),
+        interactionSource = interaction,
+        modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onActivate() },
     )
+}
+
+/**
+ * Scrolls the on-screen item keyed [key] to the top of the list. Used when a search field below a
+ * summary card is tapped, so its results show between it and the keyboard.
+ */
+suspend fun LazyListState.scrollItemToTop(key: Any) {
+    layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.let { animateScrollToItem(it.index) }
 }
 
 @Composable
