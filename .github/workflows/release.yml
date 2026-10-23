@@ -19,6 +19,8 @@ name: Release
 #   secret SIGNING_KEY_PASSWORD
 # Optional, to upload the bundle to the internal testing track as a draft:
 #   secret PLAY_SERVICE_ACCOUNT_JSON  a Play Console service account key (JSON)
+# The upload then also needs release notes for the new versionCode in every locale under
+# fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt.
 # The very first bundle of an app must be uploaded by hand in the Play Console.
 
 on:
@@ -52,6 +54,19 @@ jobs:
           if [ -z "$KEYSTORE" ]; then echo "::error::SIGNING_KEYSTORE_BASE64 is not set"; exit 1; fi
           echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/upload-key.jks"
 
+      # The upload action wants whatsnew-<locale> files; fastlane keeps changelogs/<versionCode>.txt.
+      - name: Release notes
+        if: env.PLAY_UPLOAD == 'true'
+        run: |
+          code=$(sed -n 's/^app\.versionCode=//p' gradle.properties)
+          mkdir -p "$RUNNER_TEMP/whatsnew"
+          for dir in fastlane/metadata/android/*; do
+            locale=$(basename "$dir")
+            notes="$dir/changelogs/$code.txt"
+            if [ ! -f "$notes" ]; then echo "::error::$notes is missing"; exit 1; fi
+            cp "$notes" "$RUNNER_TEMP/whatsnew/whatsnew-$locale"
+          done
+
       - name: Unit tests and signed release bundle
         env:
           SIGNING_STORE_FILE: ${{ runner.temp }}/upload-key.jks
@@ -79,5 +94,6 @@ jobs:
           packageName: com.soloit.doubleentry
           releaseFiles: app/build/outputs/bundle/release/app-release.aab
           mappingFile: app/build/outputs/mapping/release/mapping.txt
-          track: internal
+          tracks: internal
           status: draft
+          whatsNewDirectory: ${{ runner.temp }}/whatsnew
