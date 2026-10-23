@@ -3,6 +3,8 @@ package com.soloit.doubleentry.ui.settings
 import android.content.Context
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -73,6 +75,7 @@ import java.util.Date
 internal fun ColumnScope.AccountForms(sync: SyncManager, scope: CoroutineScope, googleClientId: String, onQuestion: (SignInQuestion?) -> Unit) {
     val context = LocalActivity.current ?: LocalContext.current
     var withEmail by rememberSaveable { mutableStateOf(false) }
+    var scrollToEmail by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var hint by remember { mutableStateOf<String?>(null) }
@@ -109,9 +112,16 @@ internal fun ColumnScope.AccountForms(sync: SyncManager, scope: CoroutineScope, 
     hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     if (withEmail) {
-        EmailSignIn(sync, scope, onQuestion)
+        // The form opens at the bottom of the screen; scroll it all, down to the Sign in button,
+        // into view so the password field isn't left hidden below the email field.
+        val formInView = remember { BringIntoViewRequester() }
+        LaunchedEffect(scrollToEmail) {
+            if (scrollToEmail) formInView.bringIntoView()
+            scrollToEmail = false
+        }
+        EmailSignIn(sync, scope, onQuestion, modifier = Modifier.bringIntoViewRequester(formInView))
     } else {
-        TextButton(onClick = { withEmail = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+        TextButton(onClick = { withEmail = true; scrollToEmail = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
             Text("Have a password? Sign in with email", textAlign = TextAlign.Center)
         }
     }
@@ -123,7 +133,14 @@ internal fun ColumnScope.AccountForms(sync: SyncManager, scope: CoroutineScope, 
  * as when a session is renewed. [onQuestion] receives the sign-in question, if any.
  */
 @Composable
-internal fun EmailSignIn(sync: SyncManager, scope: CoroutineScope, onQuestion: (SignInQuestion?) -> Unit, email: String = "", label: String = "Sign in") {
+internal fun EmailSignIn(
+    sync: SyncManager,
+    scope: CoroutineScope,
+    onQuestion: (SignInQuestion?) -> Unit,
+    modifier: Modifier = Modifier,
+    email: String = "",
+    label: String = "Sign in",
+) {
     var address by rememberSaveable { mutableStateOf(email) }
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -150,7 +167,7 @@ internal fun EmailSignIn(sync: SyncManager, scope: CoroutineScope, onQuestion: (
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
             value = address,
             onValueChange = { address = it },
