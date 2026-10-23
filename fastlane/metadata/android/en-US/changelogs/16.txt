@@ -1,0 +1,1 @@
+- The email sign-in form now scrolls fully into view when you open it, so the password field and Sign in button are easy to find.
