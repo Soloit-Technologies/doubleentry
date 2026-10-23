@@ -1,17 +1,20 @@
-DoubleEntry is personal bookkeeping done the way accountants do it: every transaction is a balanced entry between accounts, so your balance sheet, income statement and net worth always add up.
+DoubleEntry is personal bookkeeping done the way accountants do it: every transaction is a balanced entry between accounts, so your balance sheet, income statement and net worth always add up. To the cent.
 
-Your ledger stays on your phone. There is no sign-up, no ads and no tracking.
+The app is free and open source, with every feature included, no limits on accounts or transactions, and no ads or tracking. It works offline and needs no account. Your ledger stays on your phone unless you turn on cloud backup.
+
+DoubleEntry is for people who want real books for their own money, not a quick expense tracker. You book each transaction yourself and decide which account every line goes to. The app explains each account type, starts you off with a ready-made chart of accounts and suggests the same lines next time.
 
 <b>Accounts</b>
 • Net worth at a glance, with accounts grouped by type
 • A monthly ledger per account with a running balance
 • Reconcile an account against a bank statement; later changes to a reconciled period are flagged
-• A ready-made chart of accounts to start from
+• A ready-made personal chart of accounts to start from
 
 <b>Bank statement import</b>
-• Import your bank's CSV/TSV export into an account
+• Import your bank's CSV, TSV or Excel (.xlsx) export into an account
 • Delimiter, encoding, columns, dates and number formats are detected for you
-• Rows already in the ledger are skipped, and new rows are booked like your earlier transactions with the same text
+• Rows already in the ledger are skipped. New rows are booked like your earlier transactions with the same text, can be split across several accounts, and can pay an open invoice
+• DoubleEntry never connects to your bank: you download the statement and import it yourself
 
 <b>Transactions</b>
 • Balanced multi-line entries with auto-balancing
@@ -23,16 +26,26 @@ Your ledger stays on your phone. There is no sign-up, no ads and no tracking.
 Rent, salary and subscriptions post themselves weekly, monthly, quarterly or yearly.
 
 <b>Reports</b>
-• Balance sheet, income statement (EBITDA, EBT, spendable net income) and cash flow
+• Balance sheet, net worth over time, income statement (EBITDA, EBT, spendable net income) and cash flow
 • Cost trends chart by group or account
-• Month, year-to-date or full year, compared with the previous period or the same period last year
+• Month, year-to-date or full year, compared with the previous period, the same period last year or an average month
 
 <b>Assets and invoices</b>
 • Automatic monthly depreciation of assets
 • Invoices with due dates, payments in full or in instalments, and an optional daily reminder
 
+<b>Cloud backup & sync (optional)</b>
+• Sign in with Google to back up changes as you make them, restore on a new phone and keep several devices in sync
+• Share a ledger with your partner
+• Free during early access. After that, uploading changes will need a subscription. The app tells you before that happens, and restoring your backup stays free
+• With cloud backup on, your ledger is stored on our server and linked to your Google account. Deleting the account deletes the data
+
 <b>Your data, your way</b>
 • Full JSON backup and restore, and CSV export of transactions and balances
 • Optional app lock with screen lock or biometrics
 • Light and dark theme, optional Material You colors
-• A net-worth home-screen widget and launcher shortcuts
+• A home-screen widget with your net worth and its 12-month trend, and launcher shortcuts
+
+<b>Good to know</b>
+• Each ledger uses one currency, and amounts are shown without a currency symbol
+• You don't need to be an accountant, but expect the first month to take some practice. The guide at doubleentry.eu explains double entry in about ten minutes and walks you through getting started
