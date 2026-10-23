@@ -1,0 +1,2 @@
+- Sign in with email and password if we've set up a password account for you.
+- Asset details stay readable next to long account names.
