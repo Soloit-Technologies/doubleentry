@@ -332,8 +332,8 @@ class SyncManager(
     }
 
     /**
-     * Signs in with email and password, which only the local stack and the tests use (the app signs
-     * in with Google). When this device's data and the account's could conflict, returns a question
+     * Signs in with email and password, for accounts made by hand in the dashboard (everyone else
+     * signs in with Google). When this device's data and the account's could conflict, returns a question
      * and waits for [completeSignIn] (or [cancelSignIn]); otherwise syncs right away and returns null.
      */
     suspend fun signIn(email: String, password: String): SignInQuestion? {

@@ -32,7 +32,9 @@ the cloud to start with, and more each day after, up to 50 MB.
 **What we store**
 
 - **Your account:** your Google account's email address and the profile details Google shares at
-  sign-in (name and profile picture), and when you signed up and last signed in.
+  sign-in (name and profile picture), and when you signed up and last signed in. If we made you an
+  account with a password instead, we store your email address and a hash of the password, never
+  the password itself.
 - **Your ledger:** the bookkeeping data listed above and the settings that go with it, and for
   each row which member last changed it and when.
 - **Shared ledgers:** if you share a ledger or join someone else's, the members and their roles.

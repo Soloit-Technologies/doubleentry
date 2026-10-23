@@ -149,7 +149,7 @@ server enforces this is in [`supabase/README.md`](../supabase/README.md#accounts
      voided purchases, and all one-time products*, and press *Send test notification*. The
      function answers it with 200 and stores nothing.
 5. **Supabase.** Apply the migrations, set the Edge Function secrets, deploy the functions and
-   enable the Google provider (all in `supabase/README.md`).
+   enable the Google provider, the sign-up hook and the email provider (all in `supabase/README.md`).
 6. **Sign in with Google.** Create the OAuth clients, including one for the Play app signing key's
    SHA-1 (README → *Sign in with Google*). Without that one, Google sign-in fails in the app
    installed from Play while it works in your own builds.
@@ -172,7 +172,7 @@ server enforces this is in [`supabase/README.md`](../supabase/README.md#accounts
 
 | Section | New answer |
 |---|---|
-| App access | Cloud backup needs an account. Reviewers can sign in with any Google account, but would then have to buy. Instead, create a Google account for them (e.g. a new Gmail address, without 2-step verification), sign in with it once in the app so the account exists, give it complimentary access (SQL in `supabase/README.md`), and enter its address and password here |
+| App access | Cloud backup needs an account. Reviewers can sign in with any Google account, but would then have to buy. Instead, create a password account for them in the Supabase dashboard (*Authentication → Add user*, see `supabase/README.md`), give it complimentary access (SQL in the same file), and enter its address and password here with the instruction: *Settings → Cloud backup & sync → Have a password? Sign in with email* |
 | Data safety → collection | **Yes**, the app collects data. *Personal info → Email address* and *Name* (from the Google account; account management, required for cloud backup). *Financial info → Other financial info* (the ledger, for app functionality, optional: only with cloud backup). *Financial info → Purchase history* (subscription status, app functionality). *App info and performance → Diagnostics* (sync error reports: kind of error, app version, no ledger content; linked to the account; analytics, to find and fix sync problems). None of it is shared with third parties or used for ads |
 | Data safety → security | Encrypted in transit: yes (HTTPS). Users can request deletion: yes |
 | Data deletion | In the app: *Cloud backup & sync → Delete account*. Web link for deletion without the app: `https://github.com/Soloit-Technologies/doubleentry/blob/main/PRIVACY.md#deleting-your-account` (by email to privacy@soloit.se) |

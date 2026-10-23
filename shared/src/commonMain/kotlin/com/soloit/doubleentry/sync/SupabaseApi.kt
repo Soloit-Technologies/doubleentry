@@ -166,8 +166,8 @@ class SupabaseApi(
     enum class Operation { SignIn, GoogleSignIn, Session, Sync, Account, Purchase, Ledger }
 
     /**
-     * `POST /auth/v1/token?grant_type=password`. Only the local stack and the tests sign in with email;
-     * the hosted project has email sign-in switched off.
+     * `POST /auth/v1/token?grant_type=password`. Only accounts made by hand in the dashboard have a
+     * password (people who can't use Google, app reviewers); the server refuses email sign-ups.
      */
     suspend fun signIn(email: String, password: String): AuthTokenResponse {
         val body = buildJsonObject { put("email", email); put("password", password) }
