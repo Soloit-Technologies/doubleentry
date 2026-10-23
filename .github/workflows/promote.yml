@@ -1,0 +1,93 @@
+name: Promote
+
+# Puts a bundle that the Release workflow already uploaded onto another Google Play track, such as
+# production. Play won't take the same versionCode twice, so a release moves between tracks this way
+# instead of being built again.
+#
+# Run it by hand (Actions → Promote → Run workflow) from main. It needs the PLAY_SERVICE_ACCOUNT_JSON
+# secret of the play-release environment, and that service account needs release permission for the
+# target track. The release notes come from
+# fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt.
+#
+# With status "draft" the release only shows up in the Play Console, where it is sent for review and
+# rolled out by hand. With "completed" it is sent for review and goes live once Google approves it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: Track to put the release on
+        type: choice
+        options: [production, beta, alpha, internal]
+        default: production
+      version_code:
+        description: versionCode to promote (empty means the one in gradle.properties)
+        type: string
+        default: ''
+      status:
+        description: Release status
+        type: choice
+        options: [draft, completed]
+        default: draft
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: play-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - run: pip install google-auth==2.40.3 requests==2.32.4
+
+      - name: Promote on Google Play
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          TRACK: ${{ inputs.track }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          STATUS: ${{ inputs.status }}
+        shell: python
+        run: |
+          import json, os, pathlib, re, sys
+          from google.auth.transport.requests import AuthorizedSession
+          from google.oauth2 import service_account
+
+          package = "com.soloit.doubleentry"
+          props = pathlib.Path("gradle.properties").read_text()
+          code = os.environ["VERSION_CODE"].strip() or re.search(r"^app\.versionCode=(\d+)", props, re.M)[1]
+          name = re.search(r"^app\.versionName=(.+)$", props, re.M)[1].strip()
+          if os.environ["VERSION_CODE"].strip():
+              name = code  # the versionName in gradle.properties belongs to a different versionCode
+
+          notes = []
+          for notes_file in sorted(pathlib.Path("fastlane/metadata/android").glob(f"*/changelogs/{code}.txt")):
+              notes.append({"language": notes_file.parent.parent.name, "text": notes_file.read_text().strip()})
+          if not notes:
+              sys.exit(f"::error::No release notes for versionCode {code}")
+
+          key = os.environ["PLAY_SERVICE_ACCOUNT_JSON"]
+          if not key:
+              sys.exit("::error::PLAY_SERVICE_ACCOUNT_JSON is not set")
+          credentials = service_account.Credentials.from_service_account_info(
+              json.loads(key), scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          session = AuthorizedSession(credentials)
+          base = f"https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{package}/edits"
+
+          def call(method, url, **kwargs):
+              response = session.request(method, url, **kwargs)
+              if not response.ok:
+                  sys.exit(f"::error::{method} {url} failed with {response.status_code}: {response.text}")
+              return response.json()
+
+          edit = call("POST", base)["id"]
+          track = os.environ["TRACK"]
+          release = {"name": name, "versionCodes": [code], "status": os.environ["STATUS"], "releaseNotes": notes}
+          call("PUT", f"{base}/{edit}/tracks/{track}", json={"track": track, "releases": [release]})
+          call("POST", f"{base}/{edit}:commit")
+          print(f"versionCode {code} ({name}) is now a {release['status']} release on the {track} track")
