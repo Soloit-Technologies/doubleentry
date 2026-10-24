@@ -3,10 +3,9 @@ package com.soloit.doubleentry
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.SystemBarStyle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.CompositionLocalProvider
@@ -18,6 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
@@ -61,6 +62,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        drawEdgeToEdge()
         val container = (application as DoubleEntryApp).container
         if (savedInstanceState == null) launchRequest.value = Launch.parse(intent)
 
@@ -76,12 +78,10 @@ class MainActivity : FragmentActivity() {
                 ThemeMode.Dark -> true
             }
             DisposableEffect(dark) {
-                val style = if (dark) {
-                    SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
-                } else {
-                    SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                WindowInsetsControllerCompat(window, window.decorView).run {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
                 }
-                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
                 onDispose {}
             }
             // With the lock on, keep balances out of the recent-apps thumbnail.
@@ -104,6 +104,20 @@ class MainActivity : FragmentActivity() {
                     if (locked) LockScreen(onUnlocked = container.appLock::unlock)
                 }
             }
+        }
+    }
+
+    /**
+     * What `enableEdgeToEdge()` does for fully transparent bars, without the calls Android 15
+     * deprecated (Play flags those even behind SDK checks): the theme makes the bars transparent and
+     * sets the cutout mode for API 28-29, and the bar icons follow the app theme in [onCreate].
+     */
+    private fun drawEdgeToEdge() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        // No scrim behind three-button navigation. The status bar's contrast isn't enforced by default.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         }
     }
 
