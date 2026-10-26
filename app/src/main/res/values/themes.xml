@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Compose draws the UI; this theme only sets the window background behind it. -->
     <style name="Theme.DoubleEntry" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/window_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- For API 28-29; MainActivity switches to "always" on 30+. Not set in code: Play flags code
+             that sets the short-edges mode, which Android 15 deprecated. -->
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="28">shortEdges</item>
     </style>
 
     <style name="Theme.DoubleEntry.Starting" parent="Theme.SplashScreen">
